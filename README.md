@@ -48,6 +48,11 @@ npm run dev:backend
 - `GET /api/assets/maps/{map_id}`：查看地图资源缓存状态。
 - `POST /api/assets/maps/{map_id}/ensure`：按需下载并校验地图资源。
 - `GET /api/assets/maps/{map_id}/image`：返回本地缓存地图 PNG。
+- `POST /api/ingest/tournaments`：采集 tournament 列表元数据。
+- `POST /api/ingest/tournaments/{tournament_id}`：采集 tournament 下的 match 与 telemetry URL 元数据。
+- `POST /api/ingest/matches/{match_id}/telemetry`：下载指定 match 的 telemetry 到本地缓存。
+- `GET /api/ingest/jobs/{job_id}`：查看采集任务状态。
+- `POST /api/ingest/jobs/{job_id}/retry`：按任务类型重试可重试采集任务。
 
 ### 5. 启动前端
 
@@ -77,7 +82,9 @@ cp .env.example .env
 
 重要约束：
 
-- `PUBG_API_KEY` 只由后端读取，不进入前端。
+- `PUBG_API_KEY` 只由后端读取，不进入前端；真实采集 tournament 列表和 tournament 详情时必须配置。
+- `PUBG_API_BASE_URL` 默认是 `https://api.pubg.com`。
+- `PUBG_TELEMETRY_CACHE_DIR` 默认是 `data/telemetry`，用于保存下载后的 telemetry JSON。
 - `PUBG_ASSETS_CACHE_DIR` 默认是 `data/assets/pubg-api-assets`，用于缓存官方地图资源。
 - `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` raw 资源。
 - `LLM_API_KEY` 只用于可选解释层，失败时必须降级为规则解释。

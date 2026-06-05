@@ -9,6 +9,7 @@ DEFAULT_CONFIG_DIR = PROJECT_ROOT / "config"
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_DATABASE_PATH = DEFAULT_DATA_DIR / "pubg_zone_predictor.sqlite3"
 DEFAULT_ASSETS_CACHE_DIR = DEFAULT_DATA_DIR / "assets" / "pubg-api-assets"
+DEFAULT_TELEMETRY_CACHE_DIR = DEFAULT_DATA_DIR / "telemetry"
 
 
 class Settings(BaseSettings):
@@ -22,6 +23,13 @@ class Settings(BaseSettings):
     assets_base_url: str = Field(
         default="https://raw.githubusercontent.com/pubg/api-assets/master",
         alias="PUBG_ASSETS_BASE_URL",
+    )
+    pubg_api_key: str | None = Field(default=None, alias="PUBG_API_KEY")
+    pubg_api_base_url: str = Field(default="https://api.pubg.com", alias="PUBG_API_BASE_URL")
+    pubg_api_timeout_seconds: int = Field(default=30, alias="PUBG_API_TIMEOUT_SECONDS")
+    telemetry_cache_dir: Path = Field(
+        default=DEFAULT_TELEMETRY_CACHE_DIR,
+        alias="PUBG_TELEMETRY_CACHE_DIR",
     )
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
