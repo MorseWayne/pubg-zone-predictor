@@ -1,0 +1,200 @@
+:root {
+  color: #e6edf3;
+  background: #07111f;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 960px;
+  min-height: 100vh;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 32px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(35, 134, 54, 0.28), transparent 34%),
+    radial-gradient(circle at 86% 18%, rgba(31, 111, 235, 0.22), transparent 30%),
+    #07111f;
+}
+
+.hero-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px;
+  border: 1px solid rgba(230, 237, 243, 0.12);
+  border-radius: 24px;
+  background: rgba(13, 22, 36, 0.84);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #7ee787;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 12px;
+  font-size: clamp(32px, 5vw, 56px);
+  line-height: 1.05;
+}
+
+.lede {
+  max-width: 820px;
+  margin-bottom: 0;
+  color: #9fb0c3;
+  line-height: 1.7;
+}
+
+.health-badge {
+  min-width: 220px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(230, 237, 243, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.health-badge span,
+.health-badge strong,
+.health-badge small {
+  display: block;
+}
+
+.health-badge strong {
+  margin: 4px 0;
+}
+
+.health-badge small {
+  color: #9fb0c3;
+}
+
+.health-badge.ok {
+  border-color: rgba(126, 231, 135, 0.34);
+}
+
+.health-badge.error {
+  border-color: rgba(255, 123, 114, 0.5);
+  color: #ffb8b3;
+}
+
+.health-badge.pending {
+  color: #d29922;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.map-placeholder,
+.control-panel {
+  min-height: 560px;
+  border: 1px solid rgba(230, 237, 243, 0.12);
+  border-radius: 24px;
+  background: rgba(13, 22, 36, 0.72);
+}
+
+.map-placeholder {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #9fb0c3;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.circle {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.circle.current {
+  width: 280px;
+  height: 280px;
+  border: 2px solid rgba(88, 166, 255, 0.78);
+  color: #58a6ff;
+}
+
+.circle.next {
+  right: 22%;
+  bottom: 22%;
+  width: 180px;
+  height: 180px;
+  border: 2px dashed rgba(126, 231, 135, 0.78);
+  color: #7ee787;
+}
+
+.route-line {
+  position: absolute;
+  width: 320px;
+  height: 4px;
+  transform: rotate(-24deg);
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #f2cc60, transparent);
+}
+
+.control-panel {
+  padding: 24px;
+}
+
+.control-panel label {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  color: #c9d1d9;
+  font-weight: 700;
+}
+
+.control-panel select,
+.control-panel button {
+  width: 100%;
+  border: 1px solid rgba(230, 237, 243, 0.16);
+  border-radius: 12px;
+  color: #e6edf3;
+  background: #0d1624;
+}
+
+.control-panel select {
+  padding: 11px 12px;
+}
+
+.control-panel button {
+  margin-top: 24px;
+  padding: 13px 16px;
+  cursor: not-allowed;
+  color: #07111f;
+  font-weight: 800;
+  background: #7ee787;
+}

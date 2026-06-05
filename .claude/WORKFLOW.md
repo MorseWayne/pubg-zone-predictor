@@ -8,7 +8,7 @@ Claude Code 开发工作的轻量级可恢复台账。
 id: WF-2026-06-05-001
 level: 3
 status: In Progress
-current_phase: P1 — 搭建可运行项目骨架与配置边界
+current_phase: P2 — 建立 SQLite 数据层
 updated: 2026-06-05
 -->
 
@@ -17,15 +17,15 @@ Status: In Progress
 Level: 3
 Started: 2026-06-05
 Last updated: 2026-06-05
-Current phase: P1 — 搭建可运行项目骨架与配置边界
+Current phase: P2 — 建立 SQLite 数据层
 
 Intent:
 - 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测与宏观路线 MVP。
 
 Plan:
 - [done] P0 — 初始化 Git 与 GitHub 仓库：创建本地 git 仓库、确认默认分支、配置远程 GitHub 仓库，并提交当前规划文档。
-- [doing] P1 — 搭建可运行项目骨架与配置边界：创建 FastAPI 后端、React 前端、共享配置目录、开发启动脚本和基础健康检查。
-- [todo] P2 — 建立 SQLite 数据层：实现完整 DDL、迁移入口、repository 基础、唯一键/upsert/外键和测试数据库夹具。
+- [done] P1 — 搭建可运行项目骨架与配置边界：创建 FastAPI 后端、React 前端、共享配置目录、开发启动脚本和基础健康检查。
+- [doing] P2 — 建立 SQLite 数据层：实现完整 DDL、迁移入口、repository 基础、唯一键/upsert/外键和测试数据库夹具。
 - [todo] P3 — 实现配置与地图资产服务：提供地图配置、Zone phase 配置、坐标转换、官方地图资源按需缓存、PNG/LFS pointer 校验和 fallback。
 - [todo] P4 — 实现 PUBG 数据采集任务：封装 API key 配置、tournament/match/telemetry 拉取、ingest_jobs 状态、重试、跳过和局部失败记录。
 - [todo] P5 — 实现 telemetry parser：解析圈阶段、队伍/roster、玩家位置降采样、life events，并保证重复解析幂等。
@@ -37,11 +37,12 @@ Plan:
 - [todo] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
 
 Current todo:
-- [ ] P1 — 搭建可运行项目骨架与配置边界。
+- [ ] P2 — 建立 SQLite 数据层。
 
 Changes:
 - 根据已评审设计文档创建 Level 3 可恢复实施计划，按纵切交付顺序拆为 P1-P11。
 - 用户要求在 P1 前增加 Git/GitHub 初始化步骤，新增 P0 并设为当前执行项。
+- P1 已完成：建立 FastAPI/React 骨架、共享配置样例、启动脚本和基础验证命令；前端安装脚本显式清理用户级 npm allow-scripts 环境以适配 npm 11。
 
 Prerequisites:
 - `PUBG_API_KEY` 只在真实采集验证时需要；P1-P5 可先用 mock/fixture 开发。
@@ -50,7 +51,7 @@ Prerequisites:
 - LLM 配置是可选能力；未配置或失败必须走规则解释降级。
 
 Resume next:
-- 执行 P1：确认包管理器和目录布局，然后创建可启动的 FastAPI + React 项目骨架、配置加载入口和健康检查。
+- 执行 P2：创建 SQLite schema/迁移入口和基础 repository，先覆盖规格中的核心表、主键、唯一键、索引与外键约束。
 
 ## Backlog / Future
 

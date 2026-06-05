@@ -1,0 +1,14 @@
+{
+  "name": "pubg-zone-predictor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup:backend": "python3 -m venv .venv && .venv/bin/python -m pip install --upgrade pip && .venv/bin/python -m pip install -e '.[dev]'",
+    "setup:frontend": "env -u npm_config_allow_scripts -u NPM_CONFIG_ALLOW_SCRIPTS npm --prefix frontend install",
+    "dev:backend": ".venv/bin/uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "test:backend": ".venv/bin/pytest backend/tests",
+    "build:frontend": "npm --prefix frontend run build"
+  }
+}
