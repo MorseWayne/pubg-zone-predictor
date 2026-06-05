@@ -8,7 +8,7 @@ Claude Code 开发工作的轻量级可恢复台账。
 id: WF-2026-06-05-001
 level: 3
 status: In Progress
-current_phase: P0 — 初始化 Git 与 GitHub 仓库
+current_phase: P1 — 搭建可运行项目骨架与配置边界
 updated: 2026-06-05
 -->
 
@@ -23,8 +23,8 @@ Intent:
 - 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测与宏观路线 MVP。
 
 Plan:
-- [doing] P0 — 初始化 Git 与 GitHub 仓库：创建本地 git 仓库、确认默认分支、配置远程 GitHub 仓库，并提交当前规划文档。
-- [todo] P1 — 搭建可运行项目骨架与配置边界：创建 FastAPI 后端、React 前端、共享配置目录、开发启动脚本和基础健康检查。
+- [done] P0 — 初始化 Git 与 GitHub 仓库：创建本地 git 仓库、确认默认分支、配置远程 GitHub 仓库，并提交当前规划文档。
+- [doing] P1 — 搭建可运行项目骨架与配置边界：创建 FastAPI 后端、React 前端、共享配置目录、开发启动脚本和基础健康检查。
 - [todo] P2 — 建立 SQLite 数据层：实现完整 DDL、迁移入口、repository 基础、唯一键/upsert/外键和测试数据库夹具。
 - [todo] P3 — 实现配置与地图资产服务：提供地图配置、Zone phase 配置、坐标转换、官方地图资源按需缓存、PNG/LFS pointer 校验和 fallback。
 - [todo] P4 — 实现 PUBG 数据采集任务：封装 API key 配置、tournament/match/telemetry 拉取、ingest_jobs 状态、重试、跳过和局部失败记录。
@@ -37,7 +37,7 @@ Plan:
 - [todo] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
 
 Current todo:
-- [ ] P0 — 初始化 Git 与 GitHub 仓库。
+- [ ] P1 — 搭建可运行项目骨架与配置边界。
 
 Changes:
 - 根据已评审设计文档创建 Level 3 可恢复实施计划，按纵切交付顺序拆为 P1-P11。
