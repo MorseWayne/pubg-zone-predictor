@@ -1,0 +1,82 @@
+[
+  {
+    "_T": "LogGameStatePeriodic",
+    "common": {"isGame": 1},
+    "gameState": {
+      "elapsedTime": 60,
+      "numAliveTeams": 16,
+      "numAlivePlayers": 64,
+      "poisonGasWarningPosition": {"x": 400000, "y": 410000},
+      "poisonGasWarningRadius": 400000
+    }
+  },
+  {
+    "_T": "LogGameStatePeriodic",
+    "common": {"isGame": 1},
+    "gameState": {
+      "elapsedTime": 65,
+      "numAliveTeams": 16,
+      "numAlivePlayers": 64,
+      "poisonGasWarningPosition": {"x": 401000, "y": 411000},
+      "poisonGasWarningRadius": 399000
+    }
+  },
+  {
+    "_T": "LogGameStatePeriodic",
+    "common": {"isGame": 2},
+    "gameState": {
+      "elapsedTime": 260,
+      "numAliveTeams": 15,
+      "numAlivePlayers": 58,
+      "poisonGasWarningPosition": {"x": 420000, "y": 430000},
+      "poisonGasWarningRadius": 230000
+    }
+  },
+  {
+    "_T": "LogPlayerPosition",
+    "common": {"isGame": 1, "elapsedTime": 61.2},
+    "character": {
+      "accountId": "account-1",
+      "name": "PlayerOne",
+      "teamId": 101,
+      "health": 100,
+      "location": {"x": 1000, "y": 2000, "z": 300}
+    }
+  },
+  {
+    "_T": "LogPlayerPosition",
+    "common": {"isGame": 1, "elapsedTime": 63.8},
+    "character": {
+      "accountId": "account-1",
+      "name": "PlayerOne",
+      "teamId": 101,
+      "health": 100,
+      "location": {"x": 1100, "y": 2100, "z": 300}
+    }
+  },
+  {
+    "_T": "LogPlayerPosition",
+    "common": {"isGame": 2, "elapsedTime": 266.0},
+    "character": {
+      "name": "UnknownTeamPlayer",
+      "health": 90,
+      "location": {"x": 2000, "y": 3000}
+    }
+  },
+  {
+    "_T": "LogPlayerKill",
+    "common": {"isGame": 2, "elapsedTime": 270.0},
+    "attacker": {
+      "accountId": "account-1",
+      "name": "PlayerOne",
+      "teamId": 101,
+      "location": {"x": 2050, "y": 3050}
+    },
+    "victim": {
+      "accountId": "account-2",
+      "name": "PlayerTwo",
+      "teamId": 102,
+      "location": {"x": 2100, "y": 3100}
+    }
+  }
+]

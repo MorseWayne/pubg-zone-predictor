@@ -35,6 +35,10 @@ class FakeIngestService:
         assert match_id == "match-1"
         return _job(job_id="job_telemetry")
 
+    def parse_match_telemetry(self, match_id: str) -> IngestJobResult:
+        assert match_id == "match-1"
+        return _job(job_id="job_parse")
+
     def get_job(self, job_id: str) -> IngestJobResult:
         assert job_id == "job_tournament"
         return _job(job_id=job_id)
@@ -72,3 +76,15 @@ def test_retry_job_api_returns_new_job() -> None:
     body = response.json()
     assert body["id"] == "job_retry"
     assert body["retry_count"] == 1
+
+
+def test_parse_match_telemetry_api_returns_job_status() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.post("/api/ingest/matches/match-1/telemetry/parse")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "job_parse"

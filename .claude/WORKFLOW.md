@@ -8,7 +8,7 @@ Claude Code 开发工作的轻量级可恢复台账。
 id: WF-2026-06-05-001
 level: 3
 status: In Progress
-current_phase: P5 — 实现 telemetry parser
+current_phase: P6 — 实现热点统计
 updated: 2026-06-05
 -->
 
@@ -17,7 +17,7 @@ Status: In Progress
 Level: 3
 Started: 2026-06-05
 Last updated: 2026-06-05
-Current phase: P5 — 实现 telemetry parser
+Current phase: P6 — 实现热点统计
 
 Intent:
 - 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测与宏观路线 MVP。
@@ -28,8 +28,8 @@ Plan:
 - [done] P2 — 建立 SQLite 数据层：实现完整 DDL、迁移入口、repository 基础、唯一键/upsert/外键和测试数据库夹具。
 - [done] P3 — 实现配置与地图资产服务：提供地图配置、Zone phase 配置、坐标转换、官方地图资源按需缓存、PNG/LFS pointer 校验和 fallback。
 - [done] P4 — 实现 PUBG 数据采集任务：封装 API key 配置、tournament/match/telemetry 拉取、ingest_jobs 状态、重试、跳过和局部失败记录。
-- [doing] P5 — 实现 telemetry parser：解析圈阶段、队伍/roster、玩家位置降采样、life events，并保证重复解析幂等。
-- [todo] P6 — 实现热点统计：基于 player_position_samples 聚合 hotspot_tiles，按 match/team 归一化，处理样本不足和 64x64 默认网格。
+- [done] P5 — 实现 telemetry parser：解析圈阶段、队伍/roster、玩家位置降采样、life events，并保证重复解析幂等。
+- [doing] P6 — 实现热点统计：基于 player_position_samples 聚合 hotspot_tiles，按 match/team 归一化，处理样本不足和 64x64 默认网格。
 - [todo] P7 — 实现训练与评估：构造 circle_phases 训练样本，训练统计基线与传统 ML 修正，写入 model_runs/model_metrics，支持样本不足降级。
 - [todo] P8 — 实现预测、路线与解释服务：输出下一圈、最终圈、宏观路线、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释降级。
 - [todo] P9 — 实现 React 地图工作台：地图选择、当前 Zone、当前圈中心、战队位置、策略切换、overlay、错误展示和预测结果面板。
@@ -37,7 +37,7 @@ Plan:
 - [todo] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
 
 Current todo:
-- [ ] P5 — 实现 telemetry parser。
+- [ ] P6 — 实现热点统计。
 
 Changes:
 - 根据已评审设计文档创建 Level 3 可恢复实施计划，按纵切交付顺序拆为 P1-P11。
@@ -46,6 +46,7 @@ Changes:
 - P2 已完成：建立 SQLite 初始 schema、迁移 CLI、连接工厂、基础 repository、测试夹具和数据层验证。
 - P3 已完成：实现地图/Zone/LLM 状态配置 API、坐标转换工具、统一错误结构和地图资产缓存/下载/PNG 校验服务。
 - P4 已完成：实现 PUBG API client、ingest job 服务/API、tournament/match/telemetry 元数据采集、局部失败计数和 retry。
+- P5 已完成：实现 telemetry parser、parse job/API、圈阶段/roster/位置降采样/life event 写库和 fixture 幂等测试。
 
 Prerequisites:
 - `PUBG_API_KEY` 只在真实采集验证时需要；P1-P5 可先用 mock/fixture 开发。
@@ -54,7 +55,7 @@ Prerequisites:
 - LLM 配置是可选能力；未配置或失败必须走规则解释降级。
 
 Resume next:
-- 执行 P5：实现 telemetry parser，解析 LogGameStatePeriodic、roster/team、玩家位置降采样和 life events，并补充 fixture 测试。
+- 执行 P6：实现热点统计服务/API，基于 player_position_samples 按 match/team 归一化聚合 hotspot_tiles，并处理样本不足 warning。
 
 ## Backlog / Future
 

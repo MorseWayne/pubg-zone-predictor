@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -61,7 +62,21 @@ class FakePubgClient:
 
     def download_telemetry(self, telemetry_url: str) -> bytes:
         assert telemetry_url == "https://telemetry.test/match-1.json"
-        return b"[]"
+        return json.dumps(
+            [
+                {
+                    "_T": "LogGameStatePeriodic",
+                    "common": {"isGame": 1},
+                    "gameState": {
+                        "elapsedTime": 60,
+                        "numAliveTeams": 16,
+                        "numAlivePlayers": 64,
+                        "poisonGasWarningPosition": {"x": 400000, "y": 410000},
+                        "poisonGasWarningRadius": 400000,
+                    },
+                }
+            ]
+        ).encode()
 
 
 def test_ingest_tournaments_upserts_tournament_rows(
@@ -116,8 +131,27 @@ def test_download_match_telemetry_caches_content_and_updates_asset(
     )
     assert job.status == "completed"
     assert job.success_count == 1
-    assert Path(asset["cache_path"]).read_bytes() == b"[]"
+    assert Path(asset["cache_path"]).read_text(encoding="utf-8").startswith("[")
     assert len(asset["content_hash"]) == 64
+
+
+def test_parse_match_telemetry_writes_training_rows(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    service.ingest_tournament("tournament-1")
+    service.download_match_telemetry("match-1")
+
+    job = service.parse_match_telemetry("match-1")
+
+    repo = SQLiteRepository(migrated_connection)
+    asset = repo.fetch_one("SELECT parse_status FROM telemetry_assets WHERE match_id = 'match-1'")
+    assert job.status == "completed"
+    assert job.job_type == "telemetry_parse"
+    assert job.success_count == 1
+    assert asset["parse_status"] == "completed"
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM circle_phases")["count"] == 1
 
 
 def test_retry_job_starts_new_job_with_incremented_retry_count(

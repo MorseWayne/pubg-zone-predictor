@@ -12,6 +12,7 @@ from uuid import uuid4
 from app.core.errors import AppError
 from app.db.repository import SQLiteRepository
 from app.services.pubg_api import PubgApiClient
+from app.services.telemetry_parser import TelemetryParser
 
 TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
 
@@ -163,6 +164,74 @@ class IngestService:
             self._fail_job(job_id, exc.code, exc.message)
         return self.get_job(job_id)
 
+    def parse_match_telemetry(self, match_id: str, *, retry_count: int = 0) -> IngestJobResult:
+        job_id = self._create_job("telemetry_parse", match_id, retry_count=retry_count)
+        try:
+            asset = self.repo.fetch_one(
+                "SELECT cache_path FROM telemetry_assets WHERE match_id = ?",
+                (match_id,),
+            )
+            if asset is None or not asset["cache_path"]:
+                raise AppError(
+                    code="TELEMETRY_CACHE_NOT_FOUND",
+                    message=f"telemetry cache is not known for match '{match_id}'",
+                    status_code=404,
+                    details={"match_id": match_id},
+                )
+
+            cache_path = Path(asset["cache_path"])
+            if not cache_path.exists():
+                raise AppError(
+                    code="TELEMETRY_CACHE_NOT_FOUND",
+                    message=f"telemetry cache file was not found for match '{match_id}'",
+                    status_code=404,
+                    details={"match_id": match_id, "cache_path": str(cache_path)},
+                )
+
+            events = _read_telemetry_events(cache_path)
+            parse_result = TelemetryParser(self.connection).parse_match(match_id, events)
+            parsed_count = (
+                parse_result.circle_phase_count
+                + parse_result.position_sample_count
+                + parse_result.life_event_count
+            )
+            self.repo.execute(
+                """
+                UPDATE telemetry_assets
+                SET parse_status = 'completed',
+                    error_message = ?
+                WHERE match_id = ?
+                """,
+                (
+                    json.dumps(parse_result.warnings, ensure_ascii=False)
+                    if parse_result.warnings
+                    else None,
+                    match_id,
+                ),
+            )
+            self._complete_job(
+                job_id,
+                {
+                    "total_count": parse_result.event_count,
+                    "success_count": parsed_count,
+                    "skipped_count": len(parse_result.warnings),
+                    "failed_count": 0,
+                },
+                warnings=parse_result.warnings,
+            )
+        except AppError as exc:
+            self.repo.execute(
+                """
+                UPDATE telemetry_assets
+                SET parse_status = 'failed',
+                    error_message = ?
+                WHERE match_id = ?
+                """,
+                (exc.message, match_id),
+            )
+            self._fail_job(job_id, exc.code, exc.message)
+        return self.get_job(job_id)
+
     def get_job(self, job_id: str) -> IngestJobResult:
         row = self.repo.fetch_one("SELECT * FROM ingest_jobs WHERE id = ?", (job_id,))
         if row is None:
@@ -183,6 +252,8 @@ class IngestService:
             return self.ingest_tournament(job.source_ref, retry_count=next_retry_count)
         if job.job_type == "telemetry_download" and job.source_ref:
             return self.download_match_telemetry(job.source_ref, retry_count=next_retry_count)
+        if job.job_type == "telemetry_parse" and job.source_ref:
+            return self.parse_match_telemetry(job.source_ref, retry_count=next_retry_count)
         raise AppError(
             code="INGEST_JOB_NOT_RETRYABLE",
             message=f"ingest job '{job_id}' cannot be retried",
@@ -334,6 +405,26 @@ class IngestService:
             error_message=row["error_message"] if row["status"] != "completed" else None,
             warnings=warnings,
         )
+
+
+def _read_telemetry_events(cache_path: Path) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AppError(
+            code="TELEMETRY_CACHE_INVALID",
+            message="telemetry cache file is not valid JSON",
+            status_code=400,
+            details={"cache_path": str(cache_path)},
+        ) from exc
+    if not isinstance(payload, list):
+        raise AppError(
+            code="TELEMETRY_FORMAT_INVALID",
+            message="telemetry content must be a JSON array",
+            status_code=400,
+            details={"cache_path": str(cache_path)},
+        )
+    return payload
 
 
 def _empty_stats(*, total_count: int) -> dict[str, int]:

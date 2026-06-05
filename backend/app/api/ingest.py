@@ -77,6 +77,14 @@ def download_match_telemetry(
     return _job_response(ingest_service.download_match_telemetry(match_id))
 
 
+@router.post("/matches/{match_id}/telemetry/parse")
+def parse_match_telemetry(
+    match_id: str,
+    ingest_service: IngestServiceDep,
+) -> dict[str, object]:
+    return _job_response(ingest_service.parse_match_telemetry(match_id))
+
+
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
     return _job_response(ingest_service.get_job(job_id))

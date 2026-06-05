@@ -51,6 +51,7 @@ npm run dev:backend
 - `POST /api/ingest/tournaments`：采集 tournament 列表元数据。
 - `POST /api/ingest/tournaments/{tournament_id}`：采集 tournament 下的 match 与 telemetry URL 元数据。
 - `POST /api/ingest/matches/{match_id}/telemetry`：下载指定 match 的 telemetry 到本地缓存。
+- `POST /api/ingest/matches/{match_id}/telemetry/parse`：解析本地 telemetry 缓存并写入圈阶段、roster、位置样本和 life events。
 - `GET /api/ingest/jobs/{job_id}`：查看采集任务状态。
 - `POST /api/ingest/jobs/{job_id}/retry`：按任务类型重试可重试采集任务。
 
