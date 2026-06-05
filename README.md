@@ -4,9 +4,10 @@
 
 ## 技术栈
 
-- 后端：FastAPI + SQLite（后续 P2 接入数据层）
+- 后端：FastAPI + SQLite
 - 前端：React + Vite + TypeScript
 - 配置：根目录 `config/`，运行时由后端统一读取
+- 数据库：默认 `data/pubg_zone_predictor.sqlite3`，通过迁移脚本初始化
 - 本地数据：默认写入 `data/`，不提交到 git
 
 ## 本地开发
@@ -23,7 +24,15 @@ npm run setup:backend
 npm run setup:frontend
 ```
 
-### 3. 启动后端
+### 3. 初始化数据库
+
+```bash
+npm run db:migrate
+```
+
+默认数据库路径：`data/pubg_zone_predictor.sqlite3`。
+
+### 4. 启动后端
 
 ```bash
 npm run dev:backend
@@ -31,7 +40,7 @@ npm run dev:backend
 
 后端健康检查：<http://127.0.0.1:8000/api/health>
 
-### 4. 启动前端
+### 5. 启动前端
 
 另开一个终端：
 
@@ -44,6 +53,7 @@ npm run dev:frontend
 ## 验证命令
 
 ```bash
+npm run db:migrate
 npm run test:backend
 npm run build:frontend
 ```

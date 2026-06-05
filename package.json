@@ -8,6 +8,7 @@
     "setup:frontend": "env -u npm_config_allow_scripts -u NPM_CONFIG_ALLOW_SCRIPTS npm --prefix frontend install",
     "dev:backend": ".venv/bin/uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload",
     "dev:frontend": "npm --prefix frontend run dev",
+    "db:migrate": ".venv/bin/python -m app.db.cli migrate",
     "test:backend": ".venv/bin/pytest backend/tests",
     "build:frontend": "npm --prefix frontend run build"
   }
