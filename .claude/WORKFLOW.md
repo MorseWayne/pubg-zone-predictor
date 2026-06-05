@@ -8,7 +8,7 @@ Claude Code 开发工作的轻量级可恢复台账。
 id: WF-2026-06-05-001
 level: 3
 status: In Progress
-current_phase: P6 — 实现热点统计
+current_phase: P7 — 实现训练与评估
 updated: 2026-06-05
 -->
 
@@ -17,7 +17,7 @@ Status: In Progress
 Level: 3
 Started: 2026-06-05
 Last updated: 2026-06-05
-Current phase: P6 — 实现热点统计
+Current phase: P7 — 实现训练与评估
 
 Intent:
 - 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测与宏观路线 MVP。
@@ -29,15 +29,15 @@ Plan:
 - [done] P3 — 实现配置与地图资产服务：提供地图配置、Zone phase 配置、坐标转换、官方地图资源按需缓存、PNG/LFS pointer 校验和 fallback。
 - [done] P4 — 实现 PUBG 数据采集任务：封装 API key 配置、tournament/match/telemetry 拉取、ingest_jobs 状态、重试、跳过和局部失败记录。
 - [done] P5 — 实现 telemetry parser：解析圈阶段、队伍/roster、玩家位置降采样、life events，并保证重复解析幂等。
-- [doing] P6 — 实现热点统计：基于 player_position_samples 聚合 hotspot_tiles，按 match/team 归一化，处理样本不足和 64x64 默认网格。
-- [todo] P7 — 实现训练与评估：构造 circle_phases 训练样本，训练统计基线与传统 ML 修正，写入 model_runs/model_metrics，支持样本不足降级。
+- [done] P6 — 实现热点统计：基于 player_position_samples 聚合 hotspot_tiles，按 match/team 归一化，处理样本不足和 64x64 默认网格。
+- [doing] P7 — 实现训练与评估：构造 circle_phases 训练样本，训练统计基线与传统 ML 修正，写入 model_runs/model_metrics，支持样本不足降级。
 - [todo] P8 — 实现预测、路线与解释服务：输出下一圈、最终圈、宏观路线、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释降级。
 - [todo] P9 — 实现 React 地图工作台：地图选择、当前 Zone、当前圈中心、战队位置、策略切换、overlay、错误展示和预测结果面板。
 - [todo] P10 — 补齐端到端 API 与前端联调：串通采集/训练/预测/资源加载的本地纵切流程，确保前端只访问 FastAPI。
 - [todo] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
 
 Current todo:
-- [ ] P6 — 实现热点统计。
+- [ ] P7 — 实现训练与评估。
 
 Changes:
 - 根据已评审设计文档创建 Level 3 可恢复实施计划，按纵切交付顺序拆为 P1-P11。
@@ -47,6 +47,7 @@ Changes:
 - P3 已完成：实现地图/Zone/LLM 状态配置 API、坐标转换工具、统一错误结构和地图资产缓存/下载/PNG 校验服务。
 - P4 已完成：实现 PUBG API client、ingest job 服务/API、tournament/match/telemetry 元数据采集、局部失败计数和 retry。
 - P5 已完成：实现 telemetry parser、parse job/API、圈阶段/roster/位置降采样/life event 写库和 fixture 幂等测试。
+- P6 已完成：实现热点统计服务/API，按 match/team/tile 去重归一化，写入 hotspot_tiles 并返回样本不足 warning。
 
 Prerequisites:
 - `PUBG_API_KEY` 只在真实采集验证时需要；P1-P5 可先用 mock/fixture 开发。
@@ -55,7 +56,7 @@ Prerequisites:
 - LLM 配置是可选能力；未配置或失败必须走规则解释降级。
 
 Resume next:
-- 执行 P6：实现热点统计服务/API，基于 player_position_samples 按 match/team 归一化聚合 hotspot_tiles，并处理样本不足 warning。
+- 执行 P7：实现训练样本构造、统计基线/传统 ML 训练入口、中心误差指标写入 model_runs/model_metrics，并覆盖样本不足降级。
 
 ## Backlog / Future
 
