@@ -8,6 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_DIR = PROJECT_ROOT / "config"
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_DATABASE_PATH = DEFAULT_DATA_DIR / "pubg_zone_predictor.sqlite3"
+DEFAULT_ASSETS_CACHE_DIR = DEFAULT_DATA_DIR / "assets" / "pubg-api-assets"
 
 
 class Settings(BaseSettings):
@@ -17,10 +18,21 @@ class Settings(BaseSettings):
     config_dir: Path = Field(default=DEFAULT_CONFIG_DIR, alias="APP_CONFIG_DIR")
     data_dir: Path = Field(default=DEFAULT_DATA_DIR, alias="APP_DATA_DIR")
     database_path: Path = Field(default=DEFAULT_DATABASE_PATH, alias="APP_DATABASE_PATH")
+    assets_cache_dir: Path = Field(default=DEFAULT_ASSETS_CACHE_DIR, alias="PUBG_ASSETS_CACHE_DIR")
+    assets_base_url: str = Field(
+        default="https://raw.githubusercontent.com/pubg/api-assets/master",
+        alias="PUBG_ASSETS_BASE_URL",
+    )
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="APP_CORS_ORIGINS",
     )
+
+    llm_enabled: bool = Field(default=False, alias="LLM_ENABLED")
+    llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
+    llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
+    llm_model: str | None = Field(default=None, alias="LLM_MODEL")
+    llm_timeout_seconds: int = Field(default=15, alias="LLM_TIMEOUT_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=PROJECT_ROOT / ".env",

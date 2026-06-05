@@ -40,6 +40,15 @@ npm run dev:backend
 
 后端健康检查：<http://127.0.0.1:8000/api/health>
 
+常用基础 API：
+
+- `GET /api/config/maps`：读取已配置地图。
+- `GET /api/config/zone-phases?map_id=erangel&game_mode=default`：读取 Zone 半径配置。
+- `POST /api/config/maps/{map_id}/coordinates/convert`：在 world / normalized / pixel 坐标间转换。
+- `GET /api/assets/maps/{map_id}`：查看地图资源缓存状态。
+- `POST /api/assets/maps/{map_id}/ensure`：按需下载并校验地图资源。
+- `GET /api/assets/maps/{map_id}/image`：返回本地缓存地图 PNG。
+
 ### 5. 启动前端
 
 另开一个终端：
@@ -69,5 +78,7 @@ cp .env.example .env
 重要约束：
 
 - `PUBG_API_KEY` 只由后端读取，不进入前端。
+- `PUBG_ASSETS_CACHE_DIR` 默认是 `data/assets/pubg-api-assets`，用于缓存官方地图资源。
+- `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` raw 资源。
 - `LLM_API_KEY` 只用于可选解释层，失败时必须降级为规则解释。
 - CI 默认不调用 PUBG API、GitHub 官方资源或外部 LLM。
