@@ -16,3 +16,15 @@ zone_phase_config:
             6: { radius: 23000, label: "Zone 6", enabled: true }
             7: { radius: 12000, label: "Zone 7", enabled: true }
             8: { radius: 7700, label: "Final", enabled: true, is_final_candidate: true }
+    miramar:
+      game_modes:
+        default:
+          phases:
+            1: { radius: 400000, label: "Zone 1", enabled: true }
+            2: { radius: 230000, label: "Zone 2", enabled: true }
+            3: { radius: 120000, label: "Zone 3", enabled: true }
+            4: { radius: 67000, label: "Zone 4", enabled: true }
+            5: { radius: 40000, label: "Zone 5", enabled: true }
+            6: { radius: 23000, label: "Zone 6", enabled: true }
+            7: { radius: 12000, label: "Zone 7", enabled: true }
+            8: { radius: 7700, label: "Final", enabled: true, is_final_candidate: true }

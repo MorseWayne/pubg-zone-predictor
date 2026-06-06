@@ -8,9 +8,14 @@ def test_list_maps_reads_yaml_config() -> None:
 
     maps = service.list_maps()
 
-    assert maps[0]["map_id"] == "erangel"
+    map_ids = [map_config["map_id"] for map_config in maps]
+
+    assert map_ids == ["erangel", "miramar"]
     assert maps[0]["display_name"] == "Erangel"
     assert maps[0]["coordinate"]["max_x"] == 816000
+    assert maps[1]["display_name"] == "Miramar"
+    assert maps[1]["telemetry_names"] == ["Desert_Main"]
+    assert maps[1]["assets"]["high"] == "Assets/Maps/Miramar_Main_High_Res.png"
 
 
 def test_get_zone_phases_returns_supported_prediction_config() -> None:
@@ -24,4 +29,16 @@ def test_get_zone_phases_returns_supported_prediction_config() -> None:
     assert config["final_phase"] == 8
     assert config["supported_prediction_phases"] == [1, 2, 3, 4, 5, 6, 7]
     assert config["phases"][0]["phase"] == 1
+    assert config["phases"][-1]["is_final_candidate"] is True
+
+
+def test_get_zone_phases_supports_miramar() -> None:
+    service = ConfigService(Path("config"))
+
+    config = service.get_zone_phases("miramar")
+
+    assert config["map_id"] == "miramar"
+    assert config["final_phase"] == 8
+    assert config["supported_prediction_phases"] == [1, 2, 3, 4, 5, 6, 7]
+    assert config["phases"][0]["radius"] == 400000
     assert config["phases"][-1]["is_final_candidate"] is True

@@ -16,3 +16,19 @@ maps:
       low: Assets/Maps/Erangel_Main_Low_Res.png
       no_text_high: Assets/Maps/Erangel_Main_No_Text_High_Res.png
       high: Assets/Maps/Erangel_Main_High_Res.png
+  miramar:
+    display_name: Miramar
+    telemetry_names:
+      - Desert_Main
+    world_size: 816000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 816000
+      max_y: 816000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Miramar_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Miramar_Main_Low_Res.png
+      no_text_high: Assets/Maps/Miramar_Main_No_Text_High_Res.png
+      high: Assets/Maps/Miramar_Main_High_Res.png

@@ -27,6 +27,7 @@ vite.config.d.ts
 
 # Local runtime data and generated artifacts
 data/
+.superpowers/
 *.sqlite
 *.sqlite3
 *.db

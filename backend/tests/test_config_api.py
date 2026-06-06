@@ -9,7 +9,11 @@ def test_list_maps_api_returns_configured_maps() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["maps"][0]["map_id"] == "erangel"
+    map_ids = [map_config["map_id"] for map_config in body["maps"]]
+
+    assert map_ids == ["erangel", "miramar"]
+    assert body["maps"][1]["display_name"] == "Miramar"
+    assert body["maps"][1]["assets"]["high"] == "Assets/Maps/Miramar_Main_High_Res.png"
 
 
 def test_zone_phases_api_returns_mvp_config() -> None:
@@ -21,6 +25,18 @@ def test_zone_phases_api_returns_mvp_config() -> None:
     body = response.json()
     assert body["final_phase"] == 8
     assert body["supported_prediction_phases"] == [1, 2, 3, 4, 5, 6, 7]
+
+
+def test_zone_phases_api_supports_miramar() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/config/zone-phases", params={"map_id": "miramar"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["map_id"] == "miramar"
+    assert body["final_phase"] == 8
+    assert body["phases"][-1]["is_final_candidate"] is True
 
 
 def test_unknown_map_uses_uniform_error_shape() -> None:

@@ -6,7 +6,7 @@ Claude Code 开发工作的轻量级可恢复台账。
 
 ## Backlog / Future
 
-- [ ] 高分辨率地图资产自动选择 — MVP 优先 No Text Low Res，High Res 仅作为后续增强。
+- [ ] 地图资源 UI 切换（High/No Text/Low）— 当前按用户要求默认 High 且严格失败；资源版本切换后续再做。
 - [ ] 道路/桥梁/水域/建筑级真实寻路 — 超出第一版宏观路线范围。
 - [ ] 多候选圈预测与概率热区 — MVP 只输出单一推荐结果。
 - [ ] 自动训练、模型回滚和多用户协作 — MVP 明确本地单机、手动训练。
@@ -14,6 +14,81 @@ Claude Code 开发工作的轻量级可恢复台账。
 - [ ] 完整采集控制台和浏览器 E2E 自动化 — P10/P11 未纳入 MVP 默认范围，后续按需增强。
 
 ## Completed
+
+### WF-2026-06-06-003 — 顶部战术导航与 Tab 操作面板
+Completed: 2026-06-06
+Level: 2
+
+Close summary:
+- Outcome: 已将常用地图操作迁移到水平顶部战术导航栏，并通过同页 Tab 将地图工作台与操作面板拆分；地图 Tab 不再被控制面板遮挡。
+- Validation: `npm run build:frontend` 通过。
+- Gaps: 未启动浏览器做实际视觉/交互验收。
+
+Archived execution:
+- Intent: 将常用地图操作移到水平顶部导航栏，地图与操作面板通过同页 Tab 切换，避免控制面板遮挡地图。
+- Plan:
+  - [done] P1 — 实现顶部战术导航、地图 Tab 和操作面板 Tab。
+  - [done] P2 — 更新样式并运行前端构建验证。
+- Key changes:
+  - 顶部导航包含地图/Zone 选择、地图工作台/操作面板 Tab、设置圈心/设置队伍、圈心/队伍状态与清除。
+  - 地图 Tab 只展示固定大 Canvas；操作面板 Tab 展示状态、数据准备、路线策略、LLM、生成预测和预测结果。
+- Validation:
+  - `npm run build:frontend` 通过。
+- Deferred / gaps:
+  - 浏览器人工确认地图固定高度、Tab 切换体验和顶部导航拥挤程度。
+
+### WF-2026-06-06-002 — 地图半沉浸式 UI 与坐标清除
+Completed: 2026-06-06
+Level: 2
+
+Close summary:
+- Outcome: 已将地图工作区改为半沉浸式布局，控制面板变为右侧浮层；当前圈中心和战队位置坐标卡片支持分别清除；清除/切换地图/切换 Zone 会清空旧预测并保护在途预测请求不回写过期结果。
+- Validation: `npm run build:frontend` 通过。
+- Gaps: 未启动浏览器做人工视觉/交互验收。
+
+Archived execution:
+- Intent: 放大地图可视区域，将控制面板改为右侧浮层，并允许分别清除当前圈中心和战队位置。
+- Plan:
+  - [done] P1 — 实现半沉浸式地图布局。
+  - [done] P2 — 实现坐标卡片清除行为。
+  - [done] P3 — 保护预测请求一致性。
+  - [done] P4 — 运行前端构建验证并记录结果。
+- Key changes:
+  - 依据 `docs/superpowers/specs/2026-06-06-map-immersive-panel-design.md` 执行；用户确认采用半沉浸式右侧浮层和坐标卡片“清除”按钮。
+  - `workspace-grid` 改为地图主体工作区，`.control-panel` 改为右侧半透明浮层并支持滚动。
+  - 新增坐标清除 handler 与预测请求 abort/token 保护。
+- Validation:
+  - `npm run build:frontend` 通过。
+- Deferred / gaps:
+  - 浏览器人工确认地图可视区域、浮层遮挡程度、清除按钮和拖拽/缩放联动留待本地验收。
+
+### WF-2026-06-06-001 — UI 地图 Canvas 优化
+Completed: 2026-06-06
+Level: 3
+
+Close summary:
+- Outcome: 已将地图工作台升级为 Miramar 默认、High Res 带文字资源严格加载、Canvas 绘制底图/热点/圈/路线/标记，并支持单击标点、拖拽平移、滚轮缩放、缩放按钮和重置视图。
+- Validation: 配置/资产关键测试 19 passed；`npm run test:backend` 69 passed（1 个 Starlette/httpx deprecation warning）；`.venv/bin/ruff check .` 通过；`npm run build:frontend` 通过。
+- Gaps: 未启动浏览器进行真实 high-res 下载和人工交互验收；真实 Miramar telemetry 样本 smoke 未执行。
+
+Archived execution:
+- Intent: 将地图工作台升级为 Miramar 默认、高分辨率地图严格加载、Canvas 渲染，并支持拖动/缩放/单击标点。
+- Plan:
+  - [done] P1 — 写入并审查设计文档，用户已同意继续。
+  - [done] P2 — 更新地图配置与高分辨率资产策略。
+  - [done] P3 — 实现 Canvas 地图渲染、坐标转换和交互控件。
+  - [done] P4 — 接入现有预测、热点、圈和路线数据流。
+  - [done] P5 — 执行后端、前端构建和自动化验证；人工交互验收未执行。
+- Key changes:
+  - 新增 `docs/superpowers/specs/2026-06-06-ui-map-canvas-optimization-design.md` 并按 spec review 修正实现约束。
+  - 新增 Miramar `Desert_Main` map/zone 配置；默认资产契约改为 `high`；`high`/`no_text_high` 不再回退 low-res。
+  - 前端新增 Canvas transform 工具和 `InteractiveMapCanvas`，`App` 默认选择 Miramar 并通过 Canvas 回传 world 坐标。
+- Validation:
+  - `.venv/bin/pytest backend/tests/services/test_config_service.py backend/tests/test_config_api.py backend/tests/services/test_assets.py backend/tests/test_assets_api.py`（19 passed，1 warning）。
+  - `npm run test:backend`（69 passed，1 warning）、`.venv/bin/ruff check .`、`npm run build:frontend` 通过。
+- Deferred / gaps:
+  - 浏览器人工交互验收、真实 high-res 下载和真实 Miramar telemetry smoke 留待用户本地运行确认。
+
 
 ### WF-2026-06-05-001 — PUBG 圈型预测工具 MVP 实施计划
 Completed: 2026-06-06

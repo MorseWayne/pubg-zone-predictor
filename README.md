@@ -43,7 +43,7 @@ npm run dev:backend
 常用基础 API：
 
 - `GET /api/config/maps`：读取已配置地图。
-- `GET /api/config/zone-phases?map_id=erangel&game_mode=default`：读取 Zone 半径配置。
+- `GET /api/config/zone-phases?map_id=miramar&game_mode=default`：读取 Zone 半径配置。
 - `POST /api/config/maps/{map_id}/coordinates/convert`：在 world / normalized / pixel 坐标间转换。
 - `GET /api/assets/maps/{map_id}`：查看地图资源缓存状态。
 - `POST /api/assets/maps/{map_id}/ensure`：按需下载并校验地图资源。
@@ -54,9 +54,9 @@ npm run dev:backend
 - `POST /api/ingest/matches/{match_id}/telemetry/parse`：解析本地 telemetry 缓存并写入圈阶段、roster、位置样本和 life events。
 - `GET /api/ingest/jobs/{job_id}`：查看采集任务状态。
 - `POST /api/ingest/jobs/{job_id}/retry`：按任务类型重试可重试采集任务。
-- `POST /api/hotspots/generate?map_id=erangel&phase=1`：基于玩家位置样本生成热点网格。
-- `GET /api/hotspots?map_id=erangel&phase=1`：读取最近一次生成的热点网格。
-- `POST /api/training/runs?map_id=erangel`：基于圈阶段样本训练统计基线并写入评估指标。
+- `POST /api/hotspots/generate?map_id=miramar&phase=1`：基于玩家位置样本生成热点网格。
+- `GET /api/hotspots?map_id=miramar&phase=1`：读取最近一次生成的热点网格。
+- `POST /api/training/runs?map_id=miramar`：基于圈阶段样本训练统计基线并写入评估指标。
 - `GET /api/training/runs`：查看最近训练运行。
 - `GET /api/training/runs/{run_id}`：查看单次训练运行及指标。
 - `GET /api/training/runs/{run_id}/metrics`：查看单次训练运行的中心误差指标。
@@ -110,6 +110,7 @@ cp .env.example .env
 - `PUBG_TELEMETRY_CACHE_DIR` 默认是 `data/telemetry`，用于保存下载后的 telemetry JSON。
 - `APP_MODEL_DIR` 默认是 `data/models`，用于保存本地训练产物 JSON。
 - `PUBG_ASSETS_CACHE_DIR` 默认是 `data/assets/pubg-api-assets`，用于缓存官方地图资源。
-- `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` raw 资源。
+- `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` media 资源，以便下载 Git LFS 中的 high-res PNG 实际内容。
+- `PUBG_ASSETS_TIMEOUT_SECONDS` 默认 `120`，high-res 地图文件较大，网络较慢时可调高。
 - `LLM_API_KEY` 只用于可选解释层，失败时必须降级为规则解释。
 - CI 默认不调用 PUBG API、GitHub 官方资源或外部 LLM。

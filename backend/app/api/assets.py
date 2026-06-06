@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from app.api.config import get_config_service
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
-from app.services.assets import AssetManager, MapAsset
+from app.services.assets import DEFAULT_ASSET_KEY, AssetManager, MapAsset
 from app.services.config_service import ConfigService
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
@@ -23,6 +23,7 @@ def get_asset_manager(
         config_service=config_service,
         cache_dir=settings.assets_cache_dir,
         base_url=settings.assets_base_url,
+        timeout_seconds=settings.assets_download_timeout_seconds,
     )
 
 
@@ -33,7 +34,7 @@ AssetManagerDep = Annotated[AssetManager, Depends(get_asset_manager)]
 def get_map_asset(
     map_id: str,
     asset_manager: AssetManagerDep,
-    asset_key: str = "no_text_low",
+    asset_key: str = DEFAULT_ASSET_KEY,
 ) -> dict[str, object]:
     return _asset_response(asset_manager.get_map_asset_metadata(map_id, asset_key))
 
@@ -42,7 +43,7 @@ def get_map_asset(
 def ensure_map_asset(
     map_id: str,
     asset_manager: AssetManagerDep,
-    asset_key: str = "no_text_low",
+    asset_key: str = DEFAULT_ASSET_KEY,
 ) -> dict[str, object]:
     return _asset_response(asset_manager.ensure_map_asset(map_id, asset_key))
 
@@ -51,7 +52,7 @@ def ensure_map_asset(
 def get_map_asset_image(
     map_id: str,
     asset_manager: AssetManagerDep,
-    asset_key: str = "no_text_low",
+    asset_key: str = DEFAULT_ASSET_KEY,
 ) -> FileResponse:
     asset = asset_manager.get_map_asset_metadata(map_id, asset_key)
     if not asset.cached:

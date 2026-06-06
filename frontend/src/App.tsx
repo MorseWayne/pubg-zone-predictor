@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { InteractiveMapCanvas } from "./components/InteractiveMapCanvas";
 
 type HealthState =
   | { status: "loading" }
@@ -131,6 +132,7 @@ type TrainingRunResult = {
 
 type RouteStrategy = "edge" | "center" | "slow" | "avoid_hotspots";
 type ClickMode = "current_circle_center" | "team_area";
+type WorkspaceTab = "map" | "operations";
 
 const routeStrategies: Array<{ value: RouteStrategy; label: string; description: string }> = [
   { value: "edge", label: "贴边进圈", description: "目标点偏向预测安全区边缘。" },
@@ -148,7 +150,8 @@ export default function App() {
   const [health, setHealth] = useState<HealthState>({ status: "loading" });
   const [maps, setMaps] = useState<MapConfig[]>([]);
   const [mapsState, setMapsState] = useState<LoadState>({ status: "loading" });
-  const [selectedMapId, setSelectedMapId] = useState("erangel");
+  const [selectedMapId, setSelectedMapId] = useState("miramar");
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>("map");
   const [zoneConfig, setZoneConfig] = useState<ZoneConfig | null>(null);
   const [zoneState, setZoneState] = useState<LoadState>({ status: "idle" });
   const [assetState, setAssetState] = useState<LoadState>({ status: "idle" });
@@ -166,6 +169,8 @@ export default function App() {
   const [hotspotResult, setHotspotResult] = useState<HotspotGenerateResult | null>(null);
   const [trainingRunState, setTrainingRunState] = useState<LoadState>({ status: "idle" });
   const [trainingResult, setTrainingResult] = useState<TrainingRunResult | null>(null);
+  const predictAbortControllerRef = useRef<AbortController | null>(null);
+  const predictRequestIdRef = useRef(0);
 
   const selectedMap = useMemo(
     () => maps.find((map) => map.map_id === selectedMapId) ?? null,
@@ -188,6 +193,15 @@ export default function App() {
     : trainingRunState.status === "error"
       ? "error"
       : "not_trained";
+  const resetPredictionState = useCallback((abortInFlight = true) => {
+    if (abortInFlight) {
+      predictAbortControllerRef.current?.abort();
+    }
+    predictRequestIdRef.current += 1;
+    setPrediction(null);
+    setPredictError(null);
+    setPredictState({ status: "idle" });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,7 +237,7 @@ export default function App() {
         }
         setMaps(body.maps);
         if (body.maps.length > 0 && !body.maps.some((map) => map.map_id === selectedMapId)) {
-          setSelectedMapId(body.maps[0].map_id);
+          setSelectedMapId(body.maps.find((map) => map.map_id === "miramar")?.map_id ?? body.maps[0].map_id);
         }
         setMapsState({ status: "ready" });
       })
@@ -249,8 +263,10 @@ export default function App() {
     setZoneState({ status: "loading" });
     setAssetState({ status: "loading" });
     setAssetImageUrl(null);
-    setPrediction(null);
-    setPredictError(null);
+    setCurrentCircleCenter(null);
+    setTeamArea(null);
+    setClickMode("current_circle_center");
+    resetPredictionState();
     setHotspotRunState({ status: "idle" });
     setHotspotResult(null);
     setTrainingRunState({ status: "idle" });
@@ -293,7 +309,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMapId]);
+  }, [resetPredictionState, selectedMapId]);
 
   function retryAssetLoad() {
     setAssetState({ status: "loading" });
@@ -356,34 +372,62 @@ export default function App() {
       });
   }
 
-  function handleMapClick(event: React.MouseEvent<HTMLDivElement>) {
-    if (!mapReady || !selectedMap) {
-      return;
-    }
-    const rect = event.currentTarget.getBoundingClientRect();
-    const normalized = {
-      x: (event.clientX - rect.left) / rect.width,
-      y: (event.clientY - rect.top) / rect.height,
-    };
-    const worldPoint = normalizedToWorld(normalized, selectedMap.coordinate);
-    if (clickMode === "current_circle_center") {
-      setCurrentCircleCenter(worldPoint);
-      setClickMode("team_area");
-    } else {
-      setTeamArea(worldPoint);
-    }
+  const handleSetCurrentCircleCenter = useCallback((point: Point) => {
+    setCurrentCircleCenter(point);
+    setClickMode("team_area");
+    resetPredictionState();
+  }, [resetPredictionState]);
+
+  const handleSetTeamArea = useCallback((point: Point) => {
+    setTeamArea(point);
+    resetPredictionState();
+  }, [resetPredictionState]);
+
+  const clearCurrentCircleCenter = useCallback(() => {
+    setCurrentCircleCenter(null);
+    setClickMode("current_circle_center");
+    resetPredictionState();
+  }, [resetPredictionState]);
+
+  const clearTeamArea = useCallback(() => {
+    setTeamArea(null);
+    setClickMode("team_area");
+    resetPredictionState();
+  }, [resetPredictionState]);
+
+  const handleMapImageError = useCallback((message: string) => {
+    setAssetState({ status: "error", message });
+    setAssetImageUrl(null);
+  }, []);
+
+  function handleMapSelection(mapId: string) {
+    setSelectedMapId(mapId);
+    setActiveTab("map");
+  }
+
+  function handlePhaseSelection(phase: number) {
+    setCurrentPhase(phase);
+    setHotspotResult(null);
+    setHotspotRunState({ status: "idle" });
+    resetPredictionState();
   }
 
   function submitPrediction() {
     if (!canPredict || !currentCircleCenter || !teamArea) {
       return;
     }
+    predictAbortControllerRef.current?.abort();
+    const requestId = predictRequestIdRef.current + 1;
+    predictRequestIdRef.current = requestId;
+    const abortController = new AbortController();
+    predictAbortControllerRef.current = abortController;
     setPredictState({ status: "loading" });
     setPredictError(null);
 
     fetchJson<PredictionResult>("/api/predict", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: abortController.signal,
       body: JSON.stringify({
         map_id: selectedMapId,
         current_phase: currentPhase,
@@ -394,12 +438,23 @@ export default function App() {
       }),
     })
       .then((body) => {
+        if (predictRequestIdRef.current !== requestId || abortController.signal.aborted) {
+          return;
+        }
         setPrediction(body);
         setPredictState({ status: "ready" });
       })
       .catch((error: unknown) => {
+        if (predictRequestIdRef.current !== requestId || abortController.signal.aborted) {
+          return;
+        }
         setPredictState({ status: "error", message: "预测失败" });
         setPredictError(error instanceof Error ? error.message : "预测失败");
+      })
+      .finally(() => {
+        if (predictRequestIdRef.current === requestId) {
+          predictAbortControllerRef.current = null;
+        }
       });
   }
 
@@ -414,13 +469,52 @@ export default function App() {
         <HealthBadge health={health} />
       </section>
 
-      <section className="workspace-grid">
-        <div className="map-card">
-          <div className="map-toolbar">
-            <div>
-              <strong>{selectedMap?.display_name ?? "地图加载中"}</strong>
-              <span>{mapReady ? "底图已就绪" : "底图未就绪，地图交互已禁用"}</span>
-            </div>
+      <section className="workspace-shell">
+        <nav className="tactical-nav" aria-label="战术导航">
+          <div className="tab-switch" role="tablist" aria-label="工作区切换">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "map"}
+              className={activeTab === "map" ? "active" : ""}
+              onClick={() => setActiveTab("map")}
+            >
+              地图工作台
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "operations"}
+              className={activeTab === "operations" ? "active" : ""}
+              onClick={() => setActiveTab("operations")}
+            >
+              操作面板
+            </button>
+          </div>
+
+          <div className="tactical-controls">
+            <label className="nav-field">
+              <span>地图</span>
+              <select value={selectedMapId} onChange={(event) => handleMapSelection(event.target.value)}>
+                {maps.map((map) => (
+                  <option key={map.map_id} value={map.map_id}>
+                    {map.display_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="nav-field compact">
+              <span>Zone</span>
+              <select value={currentPhase} onChange={(event) => handlePhaseSelection(Number(event.target.value))} disabled={!zoneConfig}>
+                {(zoneConfig?.supported_prediction_phases ?? [1]).map((phase) => (
+                  <option key={phase} value={phase}>
+                    {phase}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <div className="mode-switch" role="group" aria-label="地图点击模式">
               {clickModes.map((mode) => (
                 <button
@@ -428,135 +522,149 @@ export default function App() {
                   type="button"
                   className={clickMode === mode.value ? "active" : ""}
                   disabled={!mapReady}
-                  onClick={() => setClickMode(mode.value)}
+                  onClick={() => {
+                    setClickMode(mode.value);
+                    setActiveTab("map");
+                  }}
                 >
                   {mode.label}
                 </button>
               ))}
             </div>
-          </div>
 
-          <div className={`map-frame ${mapReady ? "ready" : "disabled"}`} onClick={handleMapClick}>
-            {assetImageUrl ? <img src={assetImageUrl} alt={`${selectedMap?.display_name ?? "PUBG"} 地图`} /> : null}
-            {selectedMap ? (
-              <MapOverlay
-                map={selectedMap}
-                currentPhaseRadius={currentPhaseConfig?.radius ?? 0}
-                currentCircleCenter={currentCircleCenter}
-                teamArea={teamArea}
-                prediction={prediction}
-              />
-            ) : null}
-            {!mapReady ? (
-              <div className="map-blocker">
-                <strong>{assetState.status === "error" ? "地图资源不可用" : "准备地图资源中…"}</strong>
-                <span>
-                  {assetState.status === "error"
-                    ? assetState.message
-                    : "底图加载完成后才能点击地图和生成预测。"}
-                </span>
-                {assetState.status === "error" ? (
-                  <button type="button" onClick={retryAssetLoad}>
-                    重试加载地图
-                  </button>
-                ) : null}
+            <div className="nav-coordinate">
+              <span>圈心</span>
+              <strong>{currentCircleCenter ? "已设置" : "未设置"}</strong>
+              {currentCircleCenter ? (
+                <button type="button" onClick={clearCurrentCircleCenter}>
+                  清除
+                </button>
+              ) : null}
+            </div>
+
+            <div className="nav-coordinate">
+              <span>队伍</span>
+              <strong>{teamArea ? "已设置" : "未设置"}</strong>
+              {teamArea ? (
+                <button type="button" onClick={clearTeamArea}>
+                  清除
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </nav>
+
+        <div className={`workspace-tab map-tab ${activeTab === "map" ? "active" : "hidden"}`} role="tabpanel" aria-label="地图工作台">
+          <div className="map-card">
+            <div className="map-toolbar">
+              <div>
+                <strong>{selectedMap?.display_name ?? "地图加载中"}</strong>
+                <span>{mapReady ? "底图已就绪" : "底图未就绪，地图交互已禁用"}</span>
               </div>
-            ) : null}
+            </div>
+
+            <div className={`map-frame ${mapReady ? "ready" : "disabled"}`}>
+              {selectedMap ? (
+                <InteractiveMapCanvas
+                  map={selectedMap}
+                  imageUrl={assetImageUrl}
+                  enabled={mapReady}
+                  currentPhaseRadius={currentPhaseConfig?.radius ?? 0}
+                  currentCircleCenter={currentCircleCenter}
+                  teamArea={teamArea}
+                  prediction={prediction}
+                  clickMode={clickMode}
+                  onSetCurrentCircleCenter={handleSetCurrentCircleCenter}
+                  onSetTeamArea={handleSetTeamArea}
+                  onImageError={handleMapImageError}
+                />
+              ) : null}
+              {!mapReady ? (
+                <div className="map-blocker">
+                  <strong>{assetState.status === "error" ? "地图资源不可用" : "准备地图资源中…"}</strong>
+                  <span>
+                    {assetState.status === "error"
+                      ? assetState.message
+                      : "底图加载完成后才能点击地图和生成预测。"}
+                  </span>
+                  {assetState.status === "error" ? (
+                    <button type="button" onClick={retryAssetLoad}>
+                      重试加载地图
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
-        <aside className="control-panel prediction-panel">
-          <h2>控制面板</h2>
-          <StatusLine label="地图配置" state={mapsState} />
-          <StatusLine label="Zone 配置" state={zoneState} />
-          <StatusLine label="地图资源" state={assetState} />
+        <div className={`workspace-tab operations-tab ${activeTab === "operations" ? "active" : "hidden"}`} role="tabpanel" aria-label="操作面板">
+          <aside className="control-panel prediction-panel">
+            <div className="section-heading">
+              <h2>操作面板</h2>
+              <p>数据准备、路线策略、预测和解释集中在这里；地图切换和标点操作在顶部战术导航栏完成。</p>
+            </div>
+            <StatusLine label="地图配置" state={mapsState} />
+            <StatusLine label="Zone 配置" state={zoneState} />
+            <StatusLine label="地图资源" state={assetState} />
 
-          <DataPrepPanel
-            hotspotReadiness={hotspotReadiness}
-            modelReadiness={modelReadiness}
-            hotspotRunState={hotspotRunState}
-            hotspotResult={hotspotResult}
-            trainingRunState={trainingRunState}
-            trainingResult={trainingResult}
-            canGenerateHotspots={Boolean(zoneConfig)}
-            canTrain={Boolean(selectedMap)}
-            onGenerateHotspots={generateHotspots}
-            onTrain={trainCurrentMap}
-          />
-
-          <label>
-            地图
-            <select value={selectedMapId} onChange={(event) => setSelectedMapId(event.target.value)}>
-              {maps.map((map) => (
-                <option key={map.map_id} value={map.map_id}>
-                  {map.display_name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            当前 Zone
-            <select
-              value={currentPhase}
-              onChange={(event) => {
-                setCurrentPhase(Number(event.target.value));
-                setHotspotResult(null);
-                setHotspotRunState({ status: "idle" });
-              }}
-              disabled={!zoneConfig}
-            >
-              {(zoneConfig?.supported_prediction_phases ?? [1]).map((phase) => (
-                <option key={phase} value={phase}>
-                  Zone {phase}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            路线策略
-            <select
-              value={routeStrategy}
-              onChange={(event) => setRouteStrategy(event.target.value as RouteStrategy)}
-            >
-              {routeStrategies.map((strategy) => (
-                <option key={strategy.value} value={strategy.value}>
-                  {strategy.label}
-                </option>
-              ))}
-            </select>
-            <small>{routeStrategies.find((strategy) => strategy.value === routeStrategy)?.description}</small>
-          </label>
-
-          <div className="coordinate-summary">
-            <CoordinateReadout label="当前圈中心" point={currentCircleCenter} />
-            <CoordinateReadout label="战队位置" point={teamArea} />
-          </div>
-
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={useLlmExplanation}
-              onChange={(event) => setUseLlmExplanation(event.target.checked)}
+            <DataPrepPanel
+              hotspotReadiness={hotspotReadiness}
+              modelReadiness={modelReadiness}
+              hotspotRunState={hotspotRunState}
+              hotspotResult={hotspotResult}
+              trainingRunState={trainingRunState}
+              trainingResult={trainingResult}
+              canGenerateHotspots={Boolean(zoneConfig)}
+              canTrain={Boolean(selectedMap)}
+              onGenerateHotspots={generateHotspots}
+              onTrain={trainCurrentMap}
             />
-            尝试使用 LLM 解释
-          </label>
 
-          <button type="button" disabled={!canPredict || predictState.status === "loading"} onClick={submitPrediction}>
-            {predictState.status === "loading" ? "生成中…" : "生成预测"}
-          </button>
+            <label>
+              路线策略
+              <select
+                value={routeStrategy}
+                onChange={(event) => setRouteStrategy(event.target.value as RouteStrategy)}
+              >
+                {routeStrategies.map((strategy) => (
+                  <option key={strategy.value} value={strategy.value}>
+                    {strategy.label}
+                  </option>
+                ))}
+              </select>
+              <small>{routeStrategies.find((strategy) => strategy.value === routeStrategy)?.description}</small>
+            </label>
 
-          {!canPredict ? <p className="hint">需先加载底图，并设置当前圈中心与战队位置。</p> : null}
-          {canPredict && (hotspotReadiness !== "ready" || modelReadiness !== "completed") ? (
-            <p className="hint">
-              热点或模型尚未完全 ready，预测仍会运行，并在结果中标记无热点或规则兜底降级。
-            </p>
-          ) : null}
-          {predictError ? <div className="error-panel">{predictError}</div> : null}
+            <div className="coordinate-summary">
+              <CoordinateReadout label="当前圈中心" point={currentCircleCenter} onClear={clearCurrentCircleCenter} />
+              <CoordinateReadout label="战队位置" point={teamArea} onClear={clearTeamArea} />
+            </div>
 
-          <PredictionPanel prediction={prediction} />
-        </aside>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={useLlmExplanation}
+                onChange={(event) => setUseLlmExplanation(event.target.checked)}
+              />
+              尝试使用 LLM 解释
+            </label>
+
+            <button type="button" disabled={!canPredict || predictState.status === "loading"} onClick={submitPrediction}>
+              {predictState.status === "loading" ? "生成中…" : "生成预测"}
+            </button>
+
+            {!canPredict ? <p className="hint">需先加载底图，并设置当前圈中心与战队位置。</p> : null}
+            {canPredict && (hotspotReadiness !== "ready" || modelReadiness !== "completed") ? (
+              <p className="hint">
+                热点或模型尚未完全 ready，预测仍会运行，并在结果中标记无热点或规则兜底降级。
+              </p>
+            ) : null}
+            {predictError ? <div className="error-panel">{predictError}</div> : null}
+
+            <PredictionPanel prediction={prediction} />
+          </aside>
+        </div>
       </section>
     </main>
   );
@@ -674,103 +782,6 @@ function WarningChips({ warnings }: { warnings: string[] }) {
   );
 }
 
-function MapOverlay({
-  map,
-  currentPhaseRadius,
-  currentCircleCenter,
-  teamArea,
-  prediction,
-}: {
-  map: MapConfig;
-  currentPhaseRadius: number;
-  currentCircleCenter: Point | null;
-  teamArea: Point | null;
-  prediction: PredictionResult | null;
-}) {
-  const routePoints = prediction?.route.waypoints.map((point) => worldToPercent(point, map.coordinate)) ?? [];
-
-  return (
-    <div className="map-overlay" aria-hidden="true">
-      {prediction?.hotspot_summary.top_tiles.map((tile) => {
-        const size = 100 / prediction.hotspot_summary.grid_size;
-        return (
-          <div
-            key={`${tile.tile_x}-${tile.tile_y}`}
-            className="hotspot-tile"
-            style={{
-              left: `${tile.tile_x * size}%`,
-              top: `${tile.tile_y * size}%`,
-              width: `${size}%`,
-              height: `${size}%`,
-              opacity: 0.18 + tile.hotspot_score * 0.42,
-            }}
-          />
-        );
-      })}
-
-      {currentCircleCenter ? (
-        <CircleOverlay
-          className="current-circle"
-          label="当前圈"
-          center={currentCircleCenter}
-          radius={currentPhaseRadius}
-          map={map}
-        />
-      ) : null}
-      {prediction ? (
-        <>
-          <CircleOverlay className="next-circle" label="下一圈" center={prediction.next_circle.center} radius={prediction.next_circle.radius} map={map} />
-          <CircleOverlay className="final-circle" label="最终圈" center={prediction.final_circle.center} radius={prediction.final_circle.radius} map={map} />
-          <svg className="route-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <polyline points={routePoints.map((point) => `${point.x},${point.y}`).join(" ")} />
-          </svg>
-        </>
-      ) : null}
-      {currentCircleCenter ? <Marker className="current-marker" label="圈心" point={currentCircleCenter} map={map} /> : null}
-      {teamArea ? <Marker className="team-marker" label="队伍" point={teamArea} map={map} /> : null}
-    </div>
-  );
-}
-
-function CircleOverlay({
-  className,
-  label,
-  center,
-  radius,
-  map,
-}: {
-  className: string;
-  label: string;
-  center: Point;
-  radius: number;
-  map: MapConfig;
-}) {
-  const percent = worldToPercent(center, map.coordinate);
-  const radiusPercent = (radius / (map.coordinate.max_x - map.coordinate.min_x)) * 100;
-  return (
-    <div
-      className={`circle-overlay ${className}`}
-      style={{
-        left: `${percent.x - radiusPercent}%`,
-        top: `${percent.y - radiusPercent}%`,
-        width: `${radiusPercent * 2}%`,
-        height: `${radiusPercent * 2}%`,
-      }}
-    >
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function Marker({ className, label, point, map }: { className: string; label: string; point: Point; map: MapConfig }) {
-  const percent = worldToPercent(point, map.coordinate);
-  return (
-    <div className={`marker ${className}`} style={{ left: `${percent.x}%`, top: `${percent.y}%` }}>
-      {label}
-    </div>
-  );
-}
-
 function PredictionPanel({ prediction }: { prediction: PredictionResult | null }) {
   if (!prediction) {
     return (
@@ -817,11 +828,18 @@ function MetricCard({ title, value, detail }: { title: string; value: string; de
   );
 }
 
-function CoordinateReadout({ label, point }: { label: string; point: Point | null }) {
+function CoordinateReadout({ label, point, onClear }: { label: string; point: Point | null; onClear: () => void }) {
   return (
     <div className="coordinate-readout">
-      <span>{label}</span>
-      <strong>{point ? `${formatNumber(point.x)}, ${formatNumber(point.y)}` : "未设置"}</strong>
+      <div>
+        <span>{label}</span>
+        <strong>{point ? `${formatNumber(point.x)}, ${formatNumber(point.y)}` : "未设置"}</strong>
+      </div>
+      {point ? (
+        <button type="button" className="clear-coordinate" onClick={onClear}>
+          清除
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -880,25 +898,6 @@ function readErrorMessage(body: unknown, fallback: string): string {
     }
   }
   return fallback;
-}
-
-function normalizedToWorld(point: Point, coordinate: CoordinateConfig): Point {
-  const normalizedY = coordinate.y_axis === "up" ? 1 - point.y : point.y;
-  return {
-    x: coordinate.min_x + point.x * (coordinate.max_x - coordinate.min_x),
-    y: coordinate.min_y + normalizedY * (coordinate.max_y - coordinate.min_y),
-  };
-}
-
-function worldToPercent(point: Point, coordinate: CoordinateConfig): Point {
-  const normalizedX = (point.x - coordinate.min_x) / (coordinate.max_x - coordinate.min_x);
-  const rawY = (point.y - coordinate.min_y) / (coordinate.max_y - coordinate.min_y);
-  const normalizedY = coordinate.y_axis === "up" ? 1 - rawY : rawY;
-  return { x: clamp(normalizedX) * 100, y: clamp(normalizedY) * 100 };
-}
-
-function clamp(value: number): number {
-  return Math.min(Math.max(value, 0), 1);
 }
 
 function readinessLabel(value: string): string {

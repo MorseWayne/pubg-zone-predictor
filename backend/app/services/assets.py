@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -12,7 +12,8 @@ from app.services.config_service import ConfigService
 
 PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 MIN_REAL_PNG_BYTES = 256
-DEFAULT_ASSET_KEY = "no_text_low"
+DEFAULT_ASSET_KEY = "high"
+GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class AssetManager:
     config_service: ConfigService
     cache_dir: Path
     base_url: str
+    timeout_seconds: int = 120
 
     def get_map_asset_metadata(self, map_id: str, asset_key: str = DEFAULT_ASSET_KEY) -> MapAsset:
         map_config = self.config_service.get_map(map_id)
@@ -128,9 +130,23 @@ class AssetManager:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         url = f"{self.base_url.rstrip('/')}/{quote(relative_path, safe='/')}"
         try:
-            with httpx.Client(timeout=30, follow_redirects=True) as client:
+            timeout = httpx.Timeout(self.timeout_seconds, connect=30)
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 response = client.get(url)
                 response.raise_for_status()
+                content = response.content
+                media_url = self._github_lfs_media_url(url)
+                if content.startswith(GIT_LFS_POINTER_PREFIX) and media_url:
+                    response = client.get(media_url)
+                    response.raise_for_status()
+                    content = response.content
+        except ImportError as exc:
+            raise AppError(
+                code="ASSET_DOWNLOAD_FAILED",
+                message=str(exc),
+                status_code=503,
+                details={"url": url},
+            ) from exc
         except httpx.HTTPError as exc:
             raise AppError(
                 code="ASSET_DOWNLOAD_FAILED",
@@ -138,7 +154,7 @@ class AssetManager:
                 status_code=503,
                 details={"url": url},
             ) from exc
-        local_path.write_bytes(response.content)
+        local_path.write_bytes(content)
 
     def _asset_relative_path(self, map_config: dict[str, Any], asset_key: str) -> str:
         assets = map_config.get("assets", {})
@@ -156,11 +172,21 @@ class AssetManager:
         return self.cache_dir / relative_path
 
     @staticmethod
+    def _github_lfs_media_url(url: str) -> str | None:
+        parsed = urlparse(url)
+        if parsed.netloc != "raw.githubusercontent.com":
+            return None
+        path_parts = parsed.path.lstrip("/").split("/", 3)
+        if len(path_parts) != 4:
+            return None
+        owner, repo, ref, relative_path = path_parts
+        return f"https://media.githubusercontent.com/media/{owner}/{repo}/{ref}/{relative_path}"
+
+    @staticmethod
     def _fallback_keys(asset_key: str) -> list[str]:
-        if asset_key in {"no_text_high", "high"}:
-            candidates = [asset_key, DEFAULT_ASSET_KEY, "low"]
-        else:
-            candidates = [asset_key, DEFAULT_ASSET_KEY, "low"]
+        if asset_key in {"high", "no_text_high"}:
+            return [asset_key]
+        candidates = [asset_key, "no_text_low", "low"]
         deduped: list[str] = []
         for key in candidates:
             if key not in deduped:

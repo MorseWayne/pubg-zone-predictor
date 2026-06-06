@@ -10,7 +10,7 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\n" + (b"0" * 300)
 
 
 def test_map_asset_metadata_api_reports_cache_state(tmp_path: Path) -> None:
-    cached = tmp_path / "Assets/Maps/Erangel_Main_No_Text_Low_Res.png"
+    cached = tmp_path / "Assets/Maps/Erangel_Main_High_Res.png"
     cached.parent.mkdir(parents=True)
     cached.write_bytes(PNG_BYTES)
 
@@ -27,7 +27,8 @@ def test_map_asset_metadata_api_reports_cache_state(tmp_path: Path) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["cached"] is True
-    assert body["relative_path"] == "Assets/Maps/Erangel_Main_No_Text_Low_Res.png"
+    assert body["relative_path"] == "Assets/Maps/Erangel_Main_High_Res.png"
+    assert body["asset_key"] == "high"
 
 
 def test_map_asset_image_requires_valid_cache(tmp_path: Path) -> None:
