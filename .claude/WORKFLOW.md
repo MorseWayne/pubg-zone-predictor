@@ -4,71 +4,6 @@ Claude Code 开发工作的轻量级可恢复台账。
 
 ## Active
 
-<!-- workflow-ledger:task
-id: WF-2026-06-05-001
-level: 3
-status: In Progress
-current_phase: P11 — 完成测试与 MVP 验收
-updated: 2026-06-06
--->
-
-### WF-2026-06-05-001 — PUBG 圈型预测工具 MVP 实施计划
-Status: In Progress
-Level: 3
-Started: 2026-06-05
-Last updated: 2026-06-06
-Current phase: P11 — 完成测试与 MVP 验收
-
-Intent:
-- 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测与宏观路线 MVP。
-
-Plan:
-- [done] P0 — 初始化 Git 与 GitHub 仓库：创建本地 git 仓库、确认默认分支、配置远程 GitHub 仓库，并提交当前规划文档。
-- [done] P1 — 搭建可运行项目骨架与配置边界：创建 FastAPI 后端、React 前端、共享配置目录、开发启动脚本和基础健康检查。
-- [done] P2 — 建立 SQLite 数据层：实现完整 DDL、迁移入口、repository 基础、唯一键/upsert/外键和测试数据库夹具。
-- [done] P3 — 实现配置与地图资产服务：提供地图配置、Zone phase 配置、坐标转换、官方地图资源按需缓存、PNG/LFS pointer 校验和 fallback。
-- [done] P4 — 实现 PUBG 数据采集任务：封装 API key 配置、tournament/match/telemetry 拉取、ingest_jobs 状态、重试、跳过和局部失败记录。
-- [done] P5 — 实现 telemetry parser：解析圈阶段、队伍/roster、玩家位置降采样、life events，并保证重复解析幂等。
-- [done] P6 — 实现热点统计：基于 player_position_samples 聚合 hotspot_tiles，按 match/team 归一化，处理样本不足和 64x64 默认网格。
-- [done] P7 — 实现训练与评估：构造 circle_phases 训练样本，训练统计基线与传统 ML 修正，写入 model_runs/model_metrics，支持样本不足降级。
-- [done] P8 — 实现预测、路线与解释服务：输出下一圈、最终圈、宏观路线、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释降级。
-- [done] P9 — 实现 React 地图工作台：地图选择、当前 Zone、当前圈中心、战队位置、策略切换、overlay、错误展示和预测结果面板。
-- [done] P10 — 补齐端到端 API 与前端联调：串通采集/训练/预测/资源加载的本地纵切流程，确保前端只访问 FastAPI。
-- [doing] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
-
-Current todo:
-- [ ] P11 — 完成测试与 MVP 验收。
-
-Changes:
-- 根据已评审设计文档创建 Level 3 可恢复实施计划，按纵切交付顺序拆为 P1-P11。
-- 用户要求在 P1 前增加 Git/GitHub 初始化步骤，新增 P0 并设为当前执行项。
-- P1 已完成：建立 FastAPI/React 骨架、共享配置样例、启动脚本和基础验证命令；前端安装脚本显式清理用户级 npm allow-scripts 环境以适配 npm 11。
-- P2 已完成：建立 SQLite 初始 schema、迁移 CLI、连接工厂、基础 repository、测试夹具和数据层验证。
-- P3 已完成：实现地图/Zone/LLM 状态配置 API、坐标转换工具、统一错误结构和地图资产缓存/下载/PNG 校验服务。
-- P4 已完成：实现 PUBG API client、ingest job 服务/API、tournament/match/telemetry 元数据采集、局部失败计数和 retry。
-- P5 已完成：实现 telemetry parser、parse job/API、圈阶段/roster/位置降采样/life event 写库和 fixture 幂等测试。
-- P6 已完成：实现热点统计服务/API，按 match/team/tile 去重归一化，写入 hotspot_tiles 并返回样本不足 warning。
-- P7 已完成：实现圈阶段训练样本、统计基线训练、模型产物写入、中心误差指标、训练 API、样本不足降级和验证。
-- P8 已完成：新增 `/api/predict`、prediction service、模型 artifact offset 预测、规则基线兜底、四种宏观路线策略、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释失败降级。
-- P9 已完成：将 React 占位页替换为地图工作台，接入 config/assets/predict API，要求底图 ready 后才启用点击与预测，支持圈/路线/热点 overlay、点击设置位置、策略切换、warnings/错误和解释展示。
-- P10 已完成：前端工作台新增数据准备区，可通过 FastAPI 生成当前 Zone 热点和训练当前地图模型，展示 readiness、样本/指标/warnings，并补充 README 本地纵切联调流程。
-
-History so far:
-- Intent: 基于设计文档交付本地单机 PUBG 圈型预测 MVP。
-- Completed milestones: P0-P10 已完成，覆盖 Git/GitHub、项目骨架、SQLite、配置/资产、采集、解析、热点、训练评估、预测路线解释 API、React 地图工作台、前端数据准备纵切。
-- Key changes: 在 P1 前新增 Git/GitHub 初始化；外部 PUBG/GitHub/LLM 调用默认 mock 或 opt-in；预测在模型缺失时返回规则兜底而不是中断；P9 地图底图失败时禁用地图点击和预测；P10 前端可触发热点生成与模型训练但不提供完整采集 UI。 
-- Validation: P10 通过前端构建、Ruff 和后端测试验证。
-- Deferred / gaps: 高分辨率地图、真实道路/桥梁寻路、多候选概率热区和自动训练仍在 Backlog / Future。
-
-Prerequisites:
-- `PUBG_API_KEY` 只在真实采集验证时需要；P1-P5 可先用 mock/fixture 开发。
-- GitHub/PUBG API/LLM 外部网络调用默认不进 CI，需要 mock 或 opt-in 集成测试。
-- Zone 半径示例值允许用于 MVP 初始配置，正式准确性需要后续用规则或 telemetry 校准。
-- LLM 配置是可选能力；未配置或失败必须走规则解释降级。
-
-Resume next:
-- 执行 P11：按 MVP 验收标准补齐最终测试、失败边界检查和手动验证记录，确认可关闭实施计划。
-
 ## Backlog / Future
 
 - [ ] 高分辨率地图资产自动选择 — MVP 优先 No Text Low Res，High Res 仅作为后续增强。
@@ -76,5 +11,40 @@ Resume next:
 - [ ] 多候选圈预测与概率热区 — MVP 只输出单一推荐结果。
 - [ ] 自动训练、模型回滚和多用户协作 — MVP 明确本地单机、手动训练。
 - [ ] 队伍风格配置与完整战斗胜率预测 — 不阻塞圈型预测和宏观路线首版验收。
+- [ ] 完整采集控制台和浏览器 E2E 自动化 — P10/P11 未纳入 MVP 默认范围，后续按需增强。
 
 ## Completed
+
+### WF-2026-06-05-001 — PUBG 圈型预测工具 MVP 实施计划
+Completed: 2026-06-06
+Level: 3
+
+Close summary:
+- Outcome: 已交付本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测 MVP，覆盖配置/资产、采集、解析、热点、训练评估、预测路线解释、React 地图工作台、前端数据准备纵切和 MVP 验收报告。
+- Validation: `npm run db:migrate`、`.venv/bin/ruff check .`、`npm run test:backend`（63 passed，1 个 Starlette/httpx deprecation warning）和 `npm run build:frontend` 均通过。
+- Gaps: 真实 PUBG/GitHub/LLM 外部调用为 opt-in；高分辨率地图、真实寻路、多候选圈、自动训练/回滚、完整采集控制台和 E2E 自动化已延后。
+
+Archived execution:
+- Intent: 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 PUBG 圈型预测与宏观路线 MVP。
+- Plan:
+  - [done] P0 — 初始化 Git 与 GitHub 仓库。
+  - [done] P1 — 搭建可运行项目骨架与配置边界。
+  - [done] P2 — 建立 SQLite 数据层。
+  - [done] P3 — 实现配置与地图资产服务。
+  - [done] P4 — 实现 PUBG 数据采集任务。
+  - [done] P5 — 实现 telemetry parser。
+  - [done] P6 — 实现热点统计。
+  - [done] P7 — 实现训练与评估。
+  - [done] P8 — 实现预测、路线与解释服务。
+  - [done] P9 — 实现 React 地图工作台。
+  - [done] P10 — 补齐端到端 API 与前端联调。
+  - [done] P11 — 完成测试与 MVP 验收。
+- Key changes:
+  - 在 P1 前新增 Git/GitHub 初始化；远端 feature 分支已合并回 main 并清理。
+  - 外部 PUBG/GitHub/LLM 调用默认 mock 或 opt-in；预测在模型缺失时返回规则兜底而不是中断。
+  - P9 地图底图失败时禁用地图点击和预测；P10 前端可触发热点生成与模型训练但不提供完整采集 UI。
+  - P11 新增 `docs/acceptance.md`，对 MVP 验收标准和失败边界场景逐项记录结果。
+- Validation:
+  - 各阶段持续通过 Ruff、后端测试、数据库迁移和前端构建；最终验收通过 `npm run db:migrate`、`.venv/bin/ruff check .`、`npm run test:backend`、`npm run build:frontend`。
+- Deferred / gaps:
+  - 高分辨率地图、真实道路/桥梁/水域寻路、多候选概率热区、自动训练/模型回滚、完整采集控制台、浏览器 E2E 自动化和真实外部服务集成验证。
