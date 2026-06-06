@@ -316,7 +316,9 @@ export function InteractiveMapCanvas({
         onWheel={handleWheel}
         width={canvasSize.width}
         height={canvasSize.height}
-        aria-label={`${map.display_name} 交互地图`}
+        tabIndex={canInteract ? 0 : -1}
+        role="img"
+        aria-label={`${map.display_name} 交互地图。使用鼠标或触控单击设置${clickMode === "current_circle_center" ? "当前圈中心" : "战队位置"}，拖拽平移地图，滚轮缩放；缩放按钮可通过键盘操作。`}
       />
       <div className="map-hud" aria-label="地图缩放控制">
         <button type="button" disabled={!canInteract || transform?.zoom === MIN_ZOOM} onClick={() => zoomBy(1 / BUTTON_ZOOM_FACTOR)}>

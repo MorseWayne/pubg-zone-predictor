@@ -15,6 +15,32 @@ Claude Code 开发工作的轻量级可恢复台账。
 
 ## Completed
 
+### WF-2026-06-06-004 — Open Design 前端 Redesign
+Completed: 2026-06-06
+Level: 3
+
+Close summary:
+- Outcome: 已用 Open Design 创建 `pubg-zone-predictor-redesign/index.html` 原型，并将前端落地为紧凑 command bar、地图主区域、右侧预测控制列。
+- Validation: `npm run build:frontend` 两次通过；React review 的可确认问题已处理。
+- Gaps: 未启动浏览器做真实视觉/交互验收；Canvas 任意坐标标点仍主要依赖鼠标/触控输入。
+
+Archived execution:
+- Intent: 使用 Open Design 重新设计 PUBG 圈型预测前端，并落地到现有 React 工作台。
+- Plan:
+  - [done] P1 — 建立 Open Design 视觉基准。
+  - [done] P2 — 将 redesign 落地到 React 布局与样式。
+  - [done] P3 — 运行前端构建并做针对性复查。
+- Key changes:
+  - 不再使用已删除的 ui-ux-pro-max；仅基于现有前端与 Open Design 产出 redesign。
+  - Open Design 项目 `pubg-zone-predictor-redesign` 已创建，入口为 `index.html`。
+  - React 前端改为紧凑 command bar、地图主区域、右侧预测控制列；补充热点/训练/资源重试旧异步回包上下文保护与 Canvas 辅助说明。
+- Validation:
+  - `npm run build:frontend` 通过。
+  - React review 已执行；切地图/切 Zone 清理状态经核对为已有逻辑，旧异步回包保护和 Canvas 辅助说明已补齐。
+- Deferred / gaps:
+  - 浏览器真实视觉/交互验收未执行。
+  - 键盘可操作缩放按钮已保留；任意地图坐标标点仍主要依赖鼠标/触控。
+
 ### WF-2026-06-06-003 — 顶部战术导航与 Tab 操作面板
 Completed: 2026-06-06
 Level: 2

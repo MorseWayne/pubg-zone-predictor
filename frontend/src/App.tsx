@@ -132,7 +132,6 @@ type TrainingRunResult = {
 
 type RouteStrategy = "edge" | "center" | "slow" | "avoid_hotspots";
 type ClickMode = "current_circle_center" | "team_area";
-type WorkspaceTab = "map" | "operations";
 
 const routeStrategies: Array<{ value: RouteStrategy; label: string; description: string }> = [
   { value: "edge", label: "贴边进圈", description: "目标点偏向预测安全区边缘。" },
@@ -151,7 +150,6 @@ export default function App() {
   const [maps, setMaps] = useState<MapConfig[]>([]);
   const [mapsState, setMapsState] = useState<LoadState>({ status: "loading" });
   const [selectedMapId, setSelectedMapId] = useState("miramar");
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("map");
   const [zoneConfig, setZoneConfig] = useState<ZoneConfig | null>(null);
   const [zoneState, setZoneState] = useState<LoadState>({ status: "idle" });
   const [assetState, setAssetState] = useState<LoadState>({ status: "idle" });
@@ -171,6 +169,11 @@ export default function App() {
   const [trainingResult, setTrainingResult] = useState<TrainingRunResult | null>(null);
   const predictAbortControllerRef = useRef<AbortController | null>(null);
   const predictRequestIdRef = useRef(0);
+  const workspaceContextRef = useRef({ mapId: selectedMapId, phase: currentPhase });
+
+  useEffect(() => {
+    workspaceContextRef.current = { mapId: selectedMapId, phase: currentPhase };
+  }, [currentPhase, selectedMapId]);
 
   const selectedMap = useMemo(
     () => maps.find((map) => map.map_id === selectedMapId) ?? null,
@@ -312,14 +315,21 @@ export default function App() {
   }, [resetPredictionState, selectedMapId]);
 
   function retryAssetLoad() {
+    const requestMapId = selectedMapId;
     setAssetState({ status: "loading" });
     setAssetImageUrl(null);
-    ensureMapAsset(selectedMapId)
+    ensureMapAsset(requestMapId)
       .then((imageUrl) => {
+        if (workspaceContextRef.current.mapId !== requestMapId) {
+          return;
+        }
         setAssetImageUrl(`${imageUrl}&cache_bust=${Date.now()}`);
         setAssetState({ status: "ready" });
       })
       .catch((error: unknown) => {
+        if (workspaceContextRef.current.mapId !== requestMapId) {
+          return;
+        }
         setAssetState({
           status: "error",
           message: error instanceof Error ? error.message : "地图资源准备失败",
@@ -331,17 +341,31 @@ export default function App() {
     if (!zoneConfig) {
       return;
     }
+    const requestMapId = selectedMapId;
+    const requestPhase = currentPhase;
     setHotspotRunState({ status: "loading" });
 
     fetchJson<HotspotGenerateResult>(
-      `/api/hotspots/generate?map_id=${encodeURIComponent(selectedMapId)}&phase=${currentPhase}`,
+      `/api/hotspots/generate?map_id=${encodeURIComponent(requestMapId)}&phase=${requestPhase}`,
       { method: "POST" },
     )
       .then((body) => {
+        if (
+          workspaceContextRef.current.mapId !== requestMapId ||
+          workspaceContextRef.current.phase !== requestPhase
+        ) {
+          return;
+        }
         setHotspotResult(body);
         setHotspotRunState({ status: "ready" });
       })
       .catch((error: unknown) => {
+        if (
+          workspaceContextRef.current.mapId !== requestMapId ||
+          workspaceContextRef.current.phase !== requestPhase
+        ) {
+          return;
+        }
         setHotspotRunState({
           status: "error",
           message: error instanceof Error ? error.message : "热点生成失败",
@@ -350,13 +374,17 @@ export default function App() {
   }
 
   function trainCurrentMap() {
+    const requestMapId = selectedMapId;
     setTrainingRunState({ status: "loading" });
 
     fetchJson<TrainingRunResult>(
-      `/api/training/runs?map_id=${encodeURIComponent(selectedMapId)}`,
+      `/api/training/runs?map_id=${encodeURIComponent(requestMapId)}`,
       { method: "POST" },
     )
       .then((body) => {
+        if (workspaceContextRef.current.mapId !== requestMapId) {
+          return;
+        }
         setTrainingResult(body);
         if (body.status === "failed") {
           setTrainingRunState({ status: "error", message: "训练样本不足或训练失败" });
@@ -365,6 +393,9 @@ export default function App() {
         }
       })
       .catch((error: unknown) => {
+        if (workspaceContextRef.current.mapId !== requestMapId) {
+          return;
+        }
         setTrainingRunState({
           status: "error",
           message: error instanceof Error ? error.message : "模型训练失败",
@@ -402,7 +433,6 @@ export default function App() {
 
   function handleMapSelection(mapId: string) {
     setSelectedMapId(mapId);
-    setActiveTab("map");
   }
 
   function handlePhaseSelection(phase: number) {
@@ -460,211 +490,186 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="hero-panel compact">
-        <div>
-          <p className="eyebrow">Local analysis workspace</p>
-          <h1>PUBG 圈型预测工作台</h1>
-          <p className="lede">选择地图和当前局势，在底图上标注圈中心与战队位置，生成圈型预测、宏观路线和解释。</p>
+      <header className="command-bar">
+        <div className="brand-lockup" aria-label="PUBG 圈型预测工作台">
+          <div className="brand-mark" aria-hidden="true">Z</div>
+          <div>
+            <strong>PUBG 圈型预测</strong>
+            <span>战术地图 · 本地分析工作台</span>
+          </div>
         </div>
+
+        <div className="command-controls">
+          <label className="nav-field">
+            <span>地图</span>
+            <select value={selectedMapId} onChange={(event) => handleMapSelection(event.target.value)}>
+              {maps.map((map) => (
+                <option key={map.map_id} value={map.map_id}>
+                  {map.display_name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="nav-field compact">
+            <span>Zone</span>
+            <select value={currentPhase} onChange={(event) => handlePhaseSelection(Number(event.target.value))} disabled={!zoneConfig}>
+              {(zoneConfig?.supported_prediction_phases ?? [1]).map((phase) => (
+                <option key={phase} value={phase}>
+                  {phase}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="mode-switch" role="group" aria-label="地图点击模式">
+            {clickModes.map((mode) => (
+              <button
+                key={mode.value}
+                type="button"
+                className={clickMode === mode.value ? "active" : ""}
+                disabled={!mapReady}
+                onClick={() => setClickMode(mode.value)}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="nav-coordinate">
+            <span>圈心</span>
+            <strong>{currentCircleCenter ? "已设置" : "未设置"}</strong>
+            {currentCircleCenter ? (
+              <button type="button" onClick={clearCurrentCircleCenter}>
+                清除
+              </button>
+            ) : null}
+          </div>
+
+          <div className="nav-coordinate">
+            <span>队伍</span>
+            <strong>{teamArea ? "已设置" : "未设置"}</strong>
+            {teamArea ? (
+              <button type="button" onClick={clearTeamArea}>
+                清除
+              </button>
+            ) : null}
+          </div>
+        </div>
+
         <HealthBadge health={health} />
-      </section>
+      </header>
 
       <section className="workspace-shell">
-        <nav className="tactical-nav" aria-label="战术导航">
-          <div className="tab-switch" role="tablist" aria-label="工作区切换">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "map"}
-              className={activeTab === "map" ? "active" : ""}
-              onClick={() => setActiveTab("map")}
-            >
-              地图工作台
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "operations"}
-              className={activeTab === "operations" ? "active" : ""}
-              onClick={() => setActiveTab("operations")}
-            >
-              操作面板
-            </button>
-          </div>
-
-          <div className="tactical-controls">
-            <label className="nav-field">
-              <span>地图</span>
-              <select value={selectedMapId} onChange={(event) => handleMapSelection(event.target.value)}>
-                {maps.map((map) => (
-                  <option key={map.map_id} value={map.map_id}>
-                    {map.display_name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="nav-field compact">
-              <span>Zone</span>
-              <select value={currentPhase} onChange={(event) => handlePhaseSelection(Number(event.target.value))} disabled={!zoneConfig}>
-                {(zoneConfig?.supported_prediction_phases ?? [1]).map((phase) => (
-                  <option key={phase} value={phase}>
-                    {phase}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="mode-switch" role="group" aria-label="地图点击模式">
-              {clickModes.map((mode) => (
-                <button
-                  key={mode.value}
-                  type="button"
-                  className={clickMode === mode.value ? "active" : ""}
-                  disabled={!mapReady}
-                  onClick={() => {
-                    setClickMode(mode.value);
-                    setActiveTab("map");
-                  }}
-                >
-                  {mode.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="nav-coordinate">
-              <span>圈心</span>
-              <strong>{currentCircleCenter ? "已设置" : "未设置"}</strong>
-              {currentCircleCenter ? (
-                <button type="button" onClick={clearCurrentCircleCenter}>
-                  清除
-                </button>
-              ) : null}
-            </div>
-
-            <div className="nav-coordinate">
-              <span>队伍</span>
-              <strong>{teamArea ? "已设置" : "未设置"}</strong>
-              {teamArea ? (
-                <button type="button" onClick={clearTeamArea}>
-                  清除
-                </button>
-              ) : null}
+        <div className="map-card">
+          <div className="map-toolbar">
+            <div>
+              <strong>{selectedMap?.display_name ?? "地图加载中"}</strong>
+              <span>{mapReady ? "底图已就绪 · 拖拽平移 · 滚轮缩放 · 单击标点" : "底图未就绪，地图交互已禁用"}</span>
             </div>
           </div>
-        </nav>
 
-        <div className={`workspace-tab map-tab ${activeTab === "map" ? "active" : "hidden"}`} role="tabpanel" aria-label="地图工作台">
-          <div className="map-card">
-            <div className="map-toolbar">
-              <div>
-                <strong>{selectedMap?.display_name ?? "地图加载中"}</strong>
-                <span>{mapReady ? "底图已就绪" : "底图未就绪，地图交互已禁用"}</span>
+          <div className={`map-frame ${mapReady ? "ready" : "disabled"}`}>
+            {selectedMap ? (
+              <InteractiveMapCanvas
+                map={selectedMap}
+                imageUrl={assetImageUrl}
+                enabled={mapReady}
+                currentPhaseRadius={currentPhaseConfig?.radius ?? 0}
+                currentCircleCenter={currentCircleCenter}
+                teamArea={teamArea}
+                prediction={prediction}
+                clickMode={clickMode}
+                onSetCurrentCircleCenter={handleSetCurrentCircleCenter}
+                onSetTeamArea={handleSetTeamArea}
+                onImageError={handleMapImageError}
+              />
+            ) : null}
+            {!mapReady ? (
+              <div className="map-blocker">
+                <strong>{assetState.status === "error" ? "地图资源不可用" : "准备地图资源中…"}</strong>
+                <span>
+                  {assetState.status === "error"
+                    ? assetState.message
+                    : "底图加载完成后才能点击地图和生成预测。"}
+                </span>
+                {assetState.status === "error" ? (
+                  <button type="button" onClick={retryAssetLoad}>
+                    重试加载地图
+                  </button>
+                ) : null}
               </div>
-            </div>
-
-            <div className={`map-frame ${mapReady ? "ready" : "disabled"}`}>
-              {selectedMap ? (
-                <InteractiveMapCanvas
-                  map={selectedMap}
-                  imageUrl={assetImageUrl}
-                  enabled={mapReady}
-                  currentPhaseRadius={currentPhaseConfig?.radius ?? 0}
-                  currentCircleCenter={currentCircleCenter}
-                  teamArea={teamArea}
-                  prediction={prediction}
-                  clickMode={clickMode}
-                  onSetCurrentCircleCenter={handleSetCurrentCircleCenter}
-                  onSetTeamArea={handleSetTeamArea}
-                  onImageError={handleMapImageError}
-                />
-              ) : null}
-              {!mapReady ? (
-                <div className="map-blocker">
-                  <strong>{assetState.status === "error" ? "地图资源不可用" : "准备地图资源中…"}</strong>
-                  <span>
-                    {assetState.status === "error"
-                      ? assetState.message
-                      : "底图加载完成后才能点击地图和生成预测。"}
-                  </span>
-                  {assetState.status === "error" ? (
-                    <button type="button" onClick={retryAssetLoad}>
-                      重试加载地图
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
+            ) : null}
           </div>
         </div>
 
-        <div className={`workspace-tab operations-tab ${activeTab === "operations" ? "active" : "hidden"}`} role="tabpanel" aria-label="操作面板">
-          <aside className="control-panel prediction-panel">
-            <div className="section-heading">
-              <h2>操作面板</h2>
-              <p>数据准备、路线策略、预测和解释集中在这里；地图切换和标点操作在顶部战术导航栏完成。</p>
-            </div>
+        <aside className="control-panel prediction-panel">
+          <div className="section-heading">
+            <h2>预测控制</h2>
+            <p>数据准备、路线策略、预测和解释集中在这里；地图始终保留为主操作区域。</p>
+          </div>
+          <div className="status-grid">
             <StatusLine label="地图配置" state={mapsState} />
             <StatusLine label="Zone 配置" state={zoneState} />
             <StatusLine label="地图资源" state={assetState} />
+          </div>
 
-            <DataPrepPanel
-              hotspotReadiness={hotspotReadiness}
-              modelReadiness={modelReadiness}
-              hotspotRunState={hotspotRunState}
-              hotspotResult={hotspotResult}
-              trainingRunState={trainingRunState}
-              trainingResult={trainingResult}
-              canGenerateHotspots={Boolean(zoneConfig)}
-              canTrain={Boolean(selectedMap)}
-              onGenerateHotspots={generateHotspots}
-              onTrain={trainCurrentMap}
+          <DataPrepPanel
+            hotspotReadiness={hotspotReadiness}
+            modelReadiness={modelReadiness}
+            hotspotRunState={hotspotRunState}
+            hotspotResult={hotspotResult}
+            trainingRunState={trainingRunState}
+            trainingResult={trainingResult}
+            canGenerateHotspots={Boolean(zoneConfig)}
+            canTrain={Boolean(selectedMap)}
+            onGenerateHotspots={generateHotspots}
+            onTrain={trainCurrentMap}
+          />
+
+          <label>
+            路线策略
+            <select
+              value={routeStrategy}
+              onChange={(event) => setRouteStrategy(event.target.value as RouteStrategy)}
+            >
+              {routeStrategies.map((strategy) => (
+                <option key={strategy.value} value={strategy.value}>
+                  {strategy.label}
+                </option>
+              ))}
+            </select>
+            <small>{routeStrategies.find((strategy) => strategy.value === routeStrategy)?.description}</small>
+          </label>
+
+          <div className="coordinate-summary">
+            <CoordinateReadout label="当前圈中心" point={currentCircleCenter} onClear={clearCurrentCircleCenter} />
+            <CoordinateReadout label="战队位置" point={teamArea} onClear={clearTeamArea} />
+          </div>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={useLlmExplanation}
+              onChange={(event) => setUseLlmExplanation(event.target.checked)}
             />
+            尝试使用 LLM 解释
+          </label>
 
-            <label>
-              路线策略
-              <select
-                value={routeStrategy}
-                onChange={(event) => setRouteStrategy(event.target.value as RouteStrategy)}
-              >
-                {routeStrategies.map((strategy) => (
-                  <option key={strategy.value} value={strategy.value}>
-                    {strategy.label}
-                  </option>
-                ))}
-              </select>
-              <small>{routeStrategies.find((strategy) => strategy.value === routeStrategy)?.description}</small>
-            </label>
+          <button type="button" disabled={!canPredict || predictState.status === "loading"} onClick={submitPrediction}>
+            {predictState.status === "loading" ? "生成中…" : "生成预测"}
+          </button>
 
-            <div className="coordinate-summary">
-              <CoordinateReadout label="当前圈中心" point={currentCircleCenter} onClear={clearCurrentCircleCenter} />
-              <CoordinateReadout label="战队位置" point={teamArea} onClear={clearTeamArea} />
-            </div>
+          {!canPredict ? <p className="hint">需先加载底图，并设置当前圈中心与战队位置。</p> : null}
+          {canPredict && (hotspotReadiness !== "ready" || modelReadiness !== "completed") ? (
+            <p className="hint">
+              热点或模型尚未完全 ready，预测仍会运行，并在结果中标记无热点或规则兜底降级。
+            </p>
+          ) : null}
+          {predictError ? <div className="error-panel">{predictError}</div> : null}
 
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={useLlmExplanation}
-                onChange={(event) => setUseLlmExplanation(event.target.checked)}
-              />
-              尝试使用 LLM 解释
-            </label>
-
-            <button type="button" disabled={!canPredict || predictState.status === "loading"} onClick={submitPrediction}>
-              {predictState.status === "loading" ? "生成中…" : "生成预测"}
-            </button>
-
-            {!canPredict ? <p className="hint">需先加载底图，并设置当前圈中心与战队位置。</p> : null}
-            {canPredict && (hotspotReadiness !== "ready" || modelReadiness !== "completed") ? (
-              <p className="hint">
-                热点或模型尚未完全 ready，预测仍会运行，并在结果中标记无热点或规则兜底降级。
-              </p>
-            ) : null}
-            {predictError ? <div className="error-panel">{predictError}</div> : null}
-
-            <PredictionPanel prediction={prediction} />
-          </aside>
-        </div>
+          <PredictionPanel prediction={prediction} />
+        </aside>
       </section>
     </main>
   );
