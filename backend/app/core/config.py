@@ -10,6 +10,7 @@ DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_DATABASE_PATH = DEFAULT_DATA_DIR / "pubg_zone_predictor.sqlite3"
 DEFAULT_ASSETS_CACHE_DIR = DEFAULT_DATA_DIR / "assets" / "pubg-api-assets"
 DEFAULT_TELEMETRY_CACHE_DIR = DEFAULT_DATA_DIR / "telemetry"
+DEFAULT_MODEL_DIR = DEFAULT_DATA_DIR / "models"
 
 
 class Settings(BaseSettings):
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
         default=DEFAULT_TELEMETRY_CACHE_DIR,
         alias="PUBG_TELEMETRY_CACHE_DIR",
     )
+    model_dir: Path = Field(default=DEFAULT_MODEL_DIR, alias="APP_MODEL_DIR")
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="APP_CORS_ORIGINS",

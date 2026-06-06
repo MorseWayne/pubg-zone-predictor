@@ -56,6 +56,10 @@ npm run dev:backend
 - `POST /api/ingest/jobs/{job_id}/retry`：按任务类型重试可重试采集任务。
 - `POST /api/hotspots/generate?map_id=erangel&phase=1`：基于玩家位置样本生成热点网格。
 - `GET /api/hotspots?map_id=erangel&phase=1`：读取最近一次生成的热点网格。
+- `POST /api/training/runs?map_id=erangel`：基于圈阶段样本训练统计基线并写入评估指标。
+- `GET /api/training/runs`：查看最近训练运行。
+- `GET /api/training/runs/{run_id}`：查看单次训练运行及指标。
+- `GET /api/training/runs/{run_id}/metrics`：查看单次训练运行的中心误差指标。
 
 ### 5. 启动前端
 
@@ -88,6 +92,7 @@ cp .env.example .env
 - `PUBG_API_KEY` 只由后端读取，不进入前端；真实采集 tournament 列表和 tournament 详情时必须配置。
 - `PUBG_API_BASE_URL` 默认是 `https://api.pubg.com`。
 - `PUBG_TELEMETRY_CACHE_DIR` 默认是 `data/telemetry`，用于保存下载后的 telemetry JSON。
+- `APP_MODEL_DIR` 默认是 `data/models`，用于保存本地训练产物 JSON。
 - `PUBG_ASSETS_CACHE_DIR` 默认是 `data/assets/pubg-api-assets`，用于缓存官方地图资源。
 - `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` raw 资源。
 - `LLM_API_KEY` 只用于可选解释层，失败时必须降级为规则解释。
