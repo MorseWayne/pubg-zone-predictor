@@ -8,7 +8,7 @@ Claude Code 开发工作的轻量级可恢复台账。
 id: WF-2026-06-05-001
 level: 3
 status: In Progress
-current_phase: P8 — 实现预测、路线与解释服务
+current_phase: P9 — 实现 React 地图工作台
 updated: 2026-06-06
 -->
 
@@ -17,7 +17,7 @@ Status: In Progress
 Level: 3
 Started: 2026-06-05
 Last updated: 2026-06-06
-Current phase: P8 — 实现预测、路线与解释服务
+Current phase: P9 — 实现 React 地图工作台
 
 Intent:
 - 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测与宏观路线 MVP。
@@ -31,13 +31,13 @@ Plan:
 - [done] P5 — 实现 telemetry parser：解析圈阶段、队伍/roster、玩家位置降采样、life events，并保证重复解析幂等。
 - [done] P6 — 实现热点统计：基于 player_position_samples 聚合 hotspot_tiles，按 match/team 归一化，处理样本不足和 64x64 默认网格。
 - [done] P7 — 实现训练与评估：构造 circle_phases 训练样本，训练统计基线与传统 ML 修正，写入 model_runs/model_metrics，支持样本不足降级。
-- [doing] P8 — 实现预测、路线与解释服务：输出下一圈、最终圈、宏观路线、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释降级。
-- [todo] P9 — 实现 React 地图工作台：地图选择、当前 Zone、当前圈中心、战队位置、策略切换、overlay、错误展示和预测结果面板。
+- [done] P8 — 实现预测、路线与解释服务：输出下一圈、最终圈、宏观路线、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释降级。
+- [doing] P9 — 实现 React 地图工作台：地图选择、当前 Zone、当前圈中心、战队位置、策略切换、overlay、错误展示和预测结果面板。
 - [todo] P10 — 补齐端到端 API 与前端联调：串通采集/训练/预测/资源加载的本地纵切流程，确保前端只访问 FastAPI。
 - [todo] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
 
 Current todo:
-- [ ] P8 — 实现预测、路线与解释服务。
+- [ ] P9 — 实现 React 地图工作台。
 
 Changes:
 - 根据已评审设计文档创建 Level 3 可恢复实施计划，按纵切交付顺序拆为 P1-P11。
@@ -49,12 +49,13 @@ Changes:
 - P5 已完成：实现 telemetry parser、parse job/API、圈阶段/roster/位置降采样/life event 写库和 fixture 幂等测试。
 - P6 已完成：实现热点统计服务/API，按 match/team/tile 去重归一化，写入 hotspot_tiles 并返回样本不足 warning。
 - P7 已完成：实现圈阶段训练样本、统计基线训练、模型产物写入、中心误差指标、训练 API、样本不足降级和验证。
+- P8 已完成：新增 `/api/predict`、prediction service、模型 artifact offset 预测、规则基线兜底、四种宏观路线策略、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释失败降级。
 
 History so far:
 - Intent: 基于设计文档交付本地单机 PUBG 圈型预测 MVP。
-- Completed milestones: P0-P7 已完成，覆盖 Git/GitHub、项目骨架、SQLite、配置/资产、采集、解析、热点、训练评估。
-- Key changes: 在 P1 前新增 Git/GitHub 初始化；外部 PUBG/GitHub/LLM 调用默认 mock 或 opt-in。
-- Validation: P7 通过 Ruff、后端测试、数据库迁移和前端构建验证。
+- Completed milestones: P0-P8 已完成，覆盖 Git/GitHub、项目骨架、SQLite、配置/资产、采集、解析、热点、训练评估、预测路线解释 API。
+- Key changes: 在 P1 前新增 Git/GitHub 初始化；外部 PUBG/GitHub/LLM 调用默认 mock 或 opt-in；预测在模型缺失时返回规则兜底而不是中断。 
+- Validation: P8 通过 Ruff、后端测试和前端构建验证。
 - Deferred / gaps: 高分辨率地图、真实道路/桥梁寻路、多候选概率热区和自动训练仍在 Backlog / Future。
 
 Prerequisites:
@@ -64,7 +65,7 @@ Prerequisites:
 - LLM 配置是可选能力；未配置或失败必须走规则解释降级。
 
 Resume next:
-- 执行 P8：实现基于最新训练模型/规则 fallback 的下一圈和最终圈预测，生成宏观路线、热点摘要、规则解释，并保证 LLM 未配置或失败时降级。
+- 执行 P9：实现 React 地图工作台，接入 `/api/config`、`/api/assets`、`/api/predict`，支持地图输入、策略切换、overlay、预测结果和错误展示。
 
 ## Backlog / Future
 
