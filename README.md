@@ -60,6 +60,7 @@ npm run dev:backend
 - `GET /api/training/runs`：查看最近训练运行。
 - `GET /api/training/runs/{run_id}`：查看单次训练运行及指标。
 - `GET /api/training/runs/{run_id}/metrics`：查看单次训练运行的中心误差指标。
+- `POST /api/predict`：根据地图、当前 Zone、圈心、战队位置和路线策略生成预测圈、路线、热点摘要和解释。
 
 ### 5. 启动前端
 
@@ -70,6 +71,21 @@ npm run dev:frontend
 ```
 
 前端地址：<http://127.0.0.1:5173>
+
+## 本地纵切联调流程
+
+P10 后，前端工作台只通过 FastAPI 完成核心本地纵切：
+
+1. 初始化数据库：`npm run db:migrate`。
+2. 启动后端：`npm run dev:backend`。
+3. 启动前端：`npm run dev:frontend`。
+4. 打开前端后选择地图；工作台会调用 `POST /api/assets/maps/{map_id}/ensure` 准备底图。
+5. 如果数据库中已有解析后的 `player_position_samples`，点击“生成当前 Zone 热点”。
+6. 如果数据库中已有 `circle_phases` 训练样本，点击“训练当前地图模型”。
+7. 在底图上设置当前圈中心和战队位置，选择路线策略，然后点击“生成预测”。
+8. 若热点或模型样本不足，前端会展示 warnings；预测仍可通过规则基线和无热点路线降级返回。
+
+采集 tournament、下载 telemetry、解析 match 仍通过 `/api/ingest/*` API 或后续 P11 验收流程执行；P10 不在前端提供完整采集控制台。
 
 ## 验证命令
 

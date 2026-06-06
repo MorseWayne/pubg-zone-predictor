@@ -8,7 +8,7 @@ Claude Code 开发工作的轻量级可恢复台账。
 id: WF-2026-06-05-001
 level: 3
 status: In Progress
-current_phase: P10 — 补齐端到端 API 与前端联调
+current_phase: P11 — 完成测试与 MVP 验收
 updated: 2026-06-06
 -->
 
@@ -17,7 +17,7 @@ Status: In Progress
 Level: 3
 Started: 2026-06-05
 Last updated: 2026-06-06
-Current phase: P10 — 补齐端到端 API 与前端联调
+Current phase: P11 — 完成测试与 MVP 验收
 
 Intent:
 - 基于 `docs/superpowers/specs/2026-06-05-pubg-zone-prediction-design.md` 实施本地单机 FastAPI + React + SQLite 的 PUBG 圈型预测与宏观路线 MVP。
@@ -33,11 +33,11 @@ Plan:
 - [done] P7 — 实现训练与评估：构造 circle_phases 训练样本，训练统计基线与传统 ML 修正，写入 model_runs/model_metrics，支持样本不足降级。
 - [done] P8 — 实现预测、路线与解释服务：输出下一圈、最终圈、宏观路线、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释降级。
 - [done] P9 — 实现 React 地图工作台：地图选择、当前 Zone、当前圈中心、战队位置、策略切换、overlay、错误展示和预测结果面板。
-- [doing] P10 — 补齐端到端 API 与前端联调：串通采集/训练/预测/资源加载的本地纵切流程，确保前端只访问 FastAPI。
-- [todo] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
+- [done] P10 — 补齐端到端 API 与前端联调：串通采集/训练/预测/资源加载的本地纵切流程，确保前端只访问 FastAPI。
+- [doing] P11 — 完成测试与 MVP 验收：单元/API/mock 外部服务/fixture/manual 验证，覆盖规格中的失败与边界场景。
 
 Current todo:
-- [ ] P10 — 补齐端到端 API 与前端联调。
+- [ ] P11 — 完成测试与 MVP 验收。
 
 Changes:
 - 根据已评审设计文档创建 Level 3 可恢复实施计划，按纵切交付顺序拆为 P1-P11。
@@ -51,12 +51,13 @@ Changes:
 - P7 已完成：实现圈阶段训练样本、统计基线训练、模型产物写入、中心误差指标、训练 API、样本不足降级和验证。
 - P8 已完成：新增 `/api/predict`、prediction service、模型 artifact offset 预测、规则基线兜底、四种宏观路线策略、热点摘要、规则解释和可选 OpenAI-compatible LLM 解释失败降级。
 - P9 已完成：将 React 占位页替换为地图工作台，接入 config/assets/predict API，要求底图 ready 后才启用点击与预测，支持圈/路线/热点 overlay、点击设置位置、策略切换、warnings/错误和解释展示。
+- P10 已完成：前端工作台新增数据准备区，可通过 FastAPI 生成当前 Zone 热点和训练当前地图模型，展示 readiness、样本/指标/warnings，并补充 README 本地纵切联调流程。
 
 History so far:
 - Intent: 基于设计文档交付本地单机 PUBG 圈型预测 MVP。
-- Completed milestones: P0-P9 已完成，覆盖 Git/GitHub、项目骨架、SQLite、配置/资产、采集、解析、热点、训练评估、预测路线解释 API、React 地图工作台。
-- Key changes: 在 P1 前新增 Git/GitHub 初始化；外部 PUBG/GitHub/LLM 调用默认 mock 或 opt-in；预测在模型缺失时返回规则兜底而不是中断；P9 地图底图失败时禁用地图点击和预测。 
-- Validation: P9 通过 Ruff、后端测试和前端构建验证。
+- Completed milestones: P0-P10 已完成，覆盖 Git/GitHub、项目骨架、SQLite、配置/资产、采集、解析、热点、训练评估、预测路线解释 API、React 地图工作台、前端数据准备纵切。
+- Key changes: 在 P1 前新增 Git/GitHub 初始化；外部 PUBG/GitHub/LLM 调用默认 mock 或 opt-in；预测在模型缺失时返回规则兜底而不是中断；P9 地图底图失败时禁用地图点击和预测；P10 前端可触发热点生成与模型训练但不提供完整采集 UI。 
+- Validation: P10 通过前端构建、Ruff 和后端测试验证。
 - Deferred / gaps: 高分辨率地图、真实道路/桥梁寻路、多候选概率热区和自动训练仍在 Backlog / Future。
 
 Prerequisites:
@@ -66,7 +67,7 @@ Prerequisites:
 - LLM 配置是可选能力；未配置或失败必须走规则解释降级。
 
 Resume next:
-- 执行 P10：串通资源加载、预测 API 和前端工作台的本地纵切流程，补齐必要的联调修复与手动验证步骤。
+- 执行 P11：按 MVP 验收标准补齐最终测试、失败边界检查和手动验证记录，确认可关闭实施计划。
 
 ## Backlog / Future
 

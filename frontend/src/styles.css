@@ -338,6 +338,112 @@ p {
   padding: 22px;
 }
 
+.data-prep-panel {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid rgba(230, 237, 243, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.section-heading h3 {
+  margin-bottom: 6px;
+}
+
+.section-heading p {
+  margin-bottom: 12px;
+  color: #9fb0c3;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.readiness-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.readiness-badge {
+  padding: 10px;
+  border: 1px solid rgba(230, 237, 243, 0.1);
+  border-radius: 12px;
+  background: rgba(7, 17, 31, 0.62);
+}
+
+.readiness-badge span,
+.readiness-badge strong {
+  display: block;
+}
+
+.readiness-badge span {
+  color: #9fb0c3;
+  font-size: 12px;
+}
+
+.readiness-badge strong {
+  margin-top: 3px;
+  color: #e6edf3;
+  font-size: 13px;
+}
+
+.readiness-badge.ready strong,
+.readiness-badge.completed strong {
+  color: #7ee787;
+}
+
+.readiness-badge.generated_with_warnings strong,
+.readiness-badge.missing strong,
+.readiness-badge.not_trained strong {
+  color: #f2cc60;
+}
+
+.readiness-badge.error strong,
+.readiness-badge.failed strong {
+  color: #ffb8b3;
+}
+
+.prep-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.prep-actions button[type="button"] {
+  margin-top: 0;
+}
+
+.error-panel.compact {
+  margin-top: 10px;
+  padding: 10px;
+  font-size: 13px;
+}
+
+.prep-summary {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 11px;
+  border: 1px solid rgba(126, 231, 135, 0.2);
+  border-radius: 12px;
+  background: rgba(126, 231, 135, 0.06);
+  color: #c9d1d9;
+  font-size: 13px;
+}
+
+.prep-summary.failed {
+  border-color: rgba(255, 123, 114, 0.3);
+  background: rgba(255, 123, 114, 0.06);
+}
+
+.prep-summary strong {
+  color: #e6edf3;
+}
+
+.warning-list.compact {
+  margin: 4px 0 0;
+}
+
 .control-panel h2 {
   margin-bottom: 14px;
 }

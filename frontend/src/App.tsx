@@ -86,6 +86,49 @@ type PredictionResult = {
   warnings: string[];
 };
 
+type HotspotGenerateResult = {
+  map_id: string;
+  phase: number;
+  grid_size: number;
+  generated_at: string | null;
+  summary: {
+    effective_match_count: number;
+    effective_team_count: number;
+    tile_count: number;
+    max_sample_count: number;
+  };
+  tiles: Array<{
+    tile_x: number;
+    tile_y: number;
+    density_score: number;
+    kill_death_score: number;
+    hotspot_score: number;
+    sample_count: number;
+  }>;
+  warnings: string[];
+};
+
+type TrainingRunResult = {
+  id: string;
+  created_at: string;
+  maps_included: string[];
+  phases_included: number[];
+  sample_count: number;
+  algorithm: string;
+  model_path: string | null;
+  status: string;
+  metrics: Array<{
+    map_id: string;
+    current_phase: number;
+    target_type: string;
+    sample_count: number;
+    mean_center_error: number;
+    median_center_error: number;
+    p90_center_error: number | null;
+  }>;
+  warnings: string[];
+};
+
 type RouteStrategy = "edge" | "center" | "slow" | "avoid_hotspots";
 type ClickMode = "current_circle_center" | "team_area";
 
@@ -119,6 +162,10 @@ export default function App() {
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [predictState, setPredictState] = useState<LoadState>({ status: "idle" });
   const [predictError, setPredictError] = useState<string | null>(null);
+  const [hotspotRunState, setHotspotRunState] = useState<LoadState>({ status: "idle" });
+  const [hotspotResult, setHotspotResult] = useState<HotspotGenerateResult | null>(null);
+  const [trainingRunState, setTrainingRunState] = useState<LoadState>({ status: "idle" });
+  const [trainingResult, setTrainingResult] = useState<TrainingRunResult | null>(null);
 
   const selectedMap = useMemo(
     () => maps.find((map) => map.map_id === selectedMapId) ?? null,
@@ -127,6 +174,20 @@ export default function App() {
   const currentPhaseConfig = zoneConfig?.phases.find((phase) => phase.phase === currentPhase);
   const mapReady = assetState.status === "ready" && Boolean(assetImageUrl) && Boolean(selectedMap);
   const canPredict = Boolean(mapReady && currentCircleCenter && teamArea && zoneConfig);
+  const hotspotReadiness = hotspotResult
+    ? hotspotResult.warnings.length > 0
+      ? "generated_with_warnings"
+      : "ready"
+    : hotspotRunState.status === "error"
+      ? "error"
+      : "missing";
+  const modelReadiness = trainingResult
+    ? trainingResult.status === "completed"
+      ? "completed"
+      : trainingResult.status
+    : trainingRunState.status === "error"
+      ? "error"
+      : "not_trained";
 
   useEffect(() => {
     let cancelled = false;
@@ -190,6 +251,10 @@ export default function App() {
     setAssetImageUrl(null);
     setPrediction(null);
     setPredictError(null);
+    setHotspotRunState({ status: "idle" });
+    setHotspotResult(null);
+    setTrainingRunState({ status: "idle" });
+    setTrainingResult(null);
 
     fetchJson<ZoneConfig>(`/api/config/zone-phases?map_id=${encodeURIComponent(selectedMapId)}`)
       .then((body) => {
@@ -242,6 +307,51 @@ export default function App() {
         setAssetState({
           status: "error",
           message: error instanceof Error ? error.message : "地图资源准备失败",
+        });
+      });
+  }
+
+  function generateHotspots() {
+    if (!zoneConfig) {
+      return;
+    }
+    setHotspotRunState({ status: "loading" });
+
+    fetchJson<HotspotGenerateResult>(
+      `/api/hotspots/generate?map_id=${encodeURIComponent(selectedMapId)}&phase=${currentPhase}`,
+      { method: "POST" },
+    )
+      .then((body) => {
+        setHotspotResult(body);
+        setHotspotRunState({ status: "ready" });
+      })
+      .catch((error: unknown) => {
+        setHotspotRunState({
+          status: "error",
+          message: error instanceof Error ? error.message : "热点生成失败",
+        });
+      });
+  }
+
+  function trainCurrentMap() {
+    setTrainingRunState({ status: "loading" });
+
+    fetchJson<TrainingRunResult>(
+      `/api/training/runs?map_id=${encodeURIComponent(selectedMapId)}`,
+      { method: "POST" },
+    )
+      .then((body) => {
+        setTrainingResult(body);
+        if (body.status === "failed") {
+          setTrainingRunState({ status: "error", message: "训练样本不足或训练失败" });
+        } else {
+          setTrainingRunState({ status: "ready" });
+        }
+      })
+      .catch((error: unknown) => {
+        setTrainingRunState({
+          status: "error",
+          message: error instanceof Error ? error.message : "模型训练失败",
         });
       });
   }
@@ -361,6 +471,19 @@ export default function App() {
           <StatusLine label="Zone 配置" state={zoneState} />
           <StatusLine label="地图资源" state={assetState} />
 
+          <DataPrepPanel
+            hotspotReadiness={hotspotReadiness}
+            modelReadiness={modelReadiness}
+            hotspotRunState={hotspotRunState}
+            hotspotResult={hotspotResult}
+            trainingRunState={trainingRunState}
+            trainingResult={trainingResult}
+            canGenerateHotspots={Boolean(zoneConfig)}
+            canTrain={Boolean(selectedMap)}
+            onGenerateHotspots={generateHotspots}
+            onTrain={trainCurrentMap}
+          />
+
           <label>
             地图
             <select value={selectedMapId} onChange={(event) => setSelectedMapId(event.target.value)}>
@@ -376,7 +499,11 @@ export default function App() {
             当前 Zone
             <select
               value={currentPhase}
-              onChange={(event) => setCurrentPhase(Number(event.target.value))}
+              onChange={(event) => {
+                setCurrentPhase(Number(event.target.value));
+                setHotspotResult(null);
+                setHotspotRunState({ status: "idle" });
+              }}
               disabled={!zoneConfig}
             >
               {(zoneConfig?.supported_prediction_phases ?? [1]).map((phase) => (
@@ -421,12 +548,129 @@ export default function App() {
           </button>
 
           {!canPredict ? <p className="hint">需先加载底图，并设置当前圈中心与战队位置。</p> : null}
+          {canPredict && (hotspotReadiness !== "ready" || modelReadiness !== "completed") ? (
+            <p className="hint">
+              热点或模型尚未完全 ready，预测仍会运行，并在结果中标记无热点或规则兜底降级。
+            </p>
+          ) : null}
           {predictError ? <div className="error-panel">{predictError}</div> : null}
 
           <PredictionPanel prediction={prediction} />
         </aside>
       </section>
     </main>
+  );
+}
+
+function DataPrepPanel({
+  hotspotReadiness,
+  modelReadiness,
+  hotspotRunState,
+  hotspotResult,
+  trainingRunState,
+  trainingResult,
+  canGenerateHotspots,
+  canTrain,
+  onGenerateHotspots,
+  onTrain,
+}: {
+  hotspotReadiness: string;
+  modelReadiness: string;
+  hotspotRunState: LoadState;
+  hotspotResult: HotspotGenerateResult | null;
+  trainingRunState: LoadState;
+  trainingResult: TrainingRunResult | null;
+  canGenerateHotspots: boolean;
+  canTrain: boolean;
+  onGenerateHotspots: () => void;
+  onTrain: () => void;
+}) {
+  return (
+    <section className="data-prep-panel">
+      <div className="section-heading">
+        <h3>数据准备</h3>
+        <p>通过 FastAPI 生成热点和训练模型；缺数据时预测会自动降级。</p>
+      </div>
+      <div className="readiness-grid">
+        <ReadinessBadge label="热点" value={hotspotReadiness} />
+        <ReadinessBadge label="模型" value={modelReadiness} />
+      </div>
+      <div className="prep-actions">
+        <button
+          type="button"
+          disabled={!canGenerateHotspots || hotspotRunState.status === "loading"}
+          onClick={onGenerateHotspots}
+        >
+          {hotspotRunState.status === "loading" ? "生成热点中…" : "生成当前 Zone 热点"}
+        </button>
+        <button
+          type="button"
+          disabled={!canTrain || trainingRunState.status === "loading"}
+          onClick={onTrain}
+        >
+          {trainingRunState.status === "loading" ? "训练中…" : "训练当前地图模型"}
+        </button>
+      </div>
+      {hotspotRunState.status === "error" ? (
+        <div className="error-panel compact">{hotspotRunState.message}</div>
+      ) : null}
+      {trainingRunState.status === "error" && !trainingResult ? (
+        <div className="error-panel compact">{trainingRunState.message}</div>
+      ) : null}
+      {hotspotResult ? <HotspotPrepSummary result={hotspotResult} /> : null}
+      {trainingResult ? <TrainingPrepSummary result={trainingResult} /> : null}
+    </section>
+  );
+}
+
+function ReadinessBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <div className={`readiness-badge ${value}`}>
+      <span>{label}</span>
+      <strong>{readinessLabel(value)}</strong>
+    </div>
+  );
+}
+
+function HotspotPrepSummary({ result }: { result: HotspotGenerateResult }) {
+  return (
+    <div className="prep-summary">
+      <strong>热点生成结果</strong>
+      <span>tiles：{result.summary.tile_count}</span>
+      <span>matches：{result.summary.effective_match_count}</span>
+      <span>teams：{result.summary.effective_team_count}</span>
+      <WarningChips warnings={result.warnings} />
+    </div>
+  );
+}
+
+function TrainingPrepSummary({ result }: { result: TrainingRunResult }) {
+  const firstMetric = result.metrics[0];
+  return (
+    <div className={`prep-summary ${result.status === "failed" ? "failed" : ""}`}>
+      <strong>训练结果：{result.status}</strong>
+      <span>samples：{result.sample_count}</span>
+      <span>artifact：{result.model_path ? "已生成" : "无"}</span>
+      {firstMetric ? (
+        <span>
+          {firstMetric.target_type} mean error：{formatNumber(firstMetric.mean_center_error)}
+        </span>
+      ) : null}
+      <WarningChips warnings={result.warnings} />
+    </div>
+  );
+}
+
+function WarningChips({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) {
+    return null;
+  }
+  return (
+    <div className="warning-list compact">
+      {warnings.map((warning) => (
+        <span key={warning}>{warning}</span>
+      ))}
+    </div>
   );
 }
 
@@ -655,6 +899,19 @@ function worldToPercent(point: Point, coordinate: CoordinateConfig): Point {
 
 function clamp(value: number): number {
   return Math.min(Math.max(value, 0), 1);
+}
+
+function readinessLabel(value: string): string {
+  const labels: Record<string, string> = {
+    ready: "ready",
+    generated_with_warnings: "ready + warnings",
+    missing: "missing",
+    completed: "completed",
+    failed: "failed",
+    error: "error",
+    not_trained: "not trained",
+  };
+  return labels[value] ?? value;
 }
 
 function formatNumber(value: number): string {
