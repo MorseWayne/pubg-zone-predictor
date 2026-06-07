@@ -9,6 +9,10 @@ from app.core.errors import AppError
 from app.db.repository import SQLiteRepository
 
 UNKNOWN_TEAM_ID = "unknown"
+PARSE_PROFILE_FULL = "full"
+PARSE_PROFILE_HOTSPOT_LIGHT = "hotspot_light"
+PARSE_PROFILE_ZONE_ONLY = "zone_only"
+PARSE_PROFILES = {PARSE_PROFILE_FULL, PARSE_PROFILE_HOTSPOT_LIGHT, PARSE_PROFILE_ZONE_ONLY}
 POSITION_EVENT_TYPES = {"LogPlayerPosition"}
 LIFE_EVENT_TYPES = {
     "LogPlayerKill",
@@ -34,10 +38,13 @@ class TelemetryParseResult:
 class TelemetryParser:
     connection: sqlite3.Connection
     sample_interval_seconds: int = 5
+    parse_profile: str = PARSE_PROFILE_FULL
 
     def __post_init__(self) -> None:
         if self.sample_interval_seconds <= 0:
             raise ValueError("sample_interval_seconds must be greater than zero")
+        if self.parse_profile not in PARSE_PROFILES:
+            raise ValueError(f"parse_profile must be one of {sorted(PARSE_PROFILES)}")
         self.repo = SQLiteRepository(self.connection)
 
     def parse_match(self, match_id: str, events: list[dict[str, Any]]) -> TelemetryParseResult:
@@ -66,6 +73,10 @@ class TelemetryParser:
                 "circle_phases",
                 row,
             ).rowcount
+
+        if self.parse_profile == PARSE_PROFILE_ZONE_ONLY:
+            self.connection.commit()
+            return TelemetryParseResult(event_count=len(events), warnings=warnings, **counts)
 
         for event in events_to_parse:
             event_type = _event_type(event)
@@ -133,6 +144,9 @@ class TelemetryParser:
         location = _location(character) or _location(event)
         if player_id is None or elapsed_time is None or location is None:
             warnings.append("skipped incomplete player position sample")
+            return
+        if self.parse_profile == PARSE_PROFILE_HOTSPOT_LIGHT and _phase(event) is None:
+            warnings.append("skipped player position sample without phase")
             return
 
         team_id = _team_id(character) or UNKNOWN_TEAM_ID

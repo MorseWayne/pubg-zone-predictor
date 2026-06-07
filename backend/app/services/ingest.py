@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -12,9 +13,20 @@ from uuid import uuid4
 from app.core.errors import AppError
 from app.db.repository import SQLiteRepository
 from app.services.pubg_api import PubgApiClient
-from app.services.telemetry_parser import TelemetryParser
+from app.services.telemetry_parser import (
+    PARSE_PROFILE_FULL,
+    PARSE_PROFILE_HOTSPOT_LIGHT,
+    PARSE_PROFILES,
+    TelemetryParser,
+)
 
 TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+DEFAULT_SAMPLE_PLATFORM = "steam"
+DEFAULT_SAMPLE_GAME_MODE = "squad"
+DEFAULT_SAMPLE_PARSE_PROFILE = PARSE_PROFILE_HOTSPOT_LIGHT
+DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS = 30
+EXCLUDED_SAMPLE_MATCH_TYPES = {"custom", "competitive"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -105,16 +117,15 @@ class IngestService:
                         match_payload,
                     )
                     self.repo.upsert("matches", match_values, conflict_columns=("match_id",))
-                    if telemetry_url:
-                        self.repo.upsert(
-                            "telemetry_assets",
-                            {"match_id": match_id, "telemetry_url": telemetry_url},
-                            conflict_columns=("match_id",),
-                        )
-                        stats["success_count"] += 1
-                    else:
+                    if not telemetry_url:
                         stats["skipped_count"] += 1
                         warnings.append(f"match '{match_id}' has no telemetry URL")
+                        continue
+
+                    cache_path = self._cache_match_telemetry(match_id, telemetry_url)
+                    parse_result = self._parse_cached_match_telemetry(match_id, cache_path)
+                    _log_parse_warnings(match_id, parse_result.warnings)
+                    stats["success_count"] += 1
                 except AppError as exc:
                     stats["failed_count"] += 1
                     warnings.append(f"match '{match_id}' failed: {exc.message}")
@@ -123,6 +134,143 @@ class IngestService:
         except AppError as exc:
             self._fail_job(job_id, exc.code, exc.message)
         return self.get_job(job_id)
+
+    def ingest_sample_matches(
+        self,
+        *,
+        platform: str = DEFAULT_SAMPLE_PLATFORM,
+        game_mode: str = DEFAULT_SAMPLE_GAME_MODE,
+        max_matches: int | None = None,
+        parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+        position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+        retry_count: int = 0,
+    ) -> IngestJobResult:
+        job = self.start_sample_matches(
+            platform=platform,
+            game_mode=game_mode,
+            max_matches=max_matches,
+            parse_profile=parse_profile,
+            position_interval_seconds=position_interval_seconds,
+            retry_count=retry_count,
+        )
+        self.run_sample_matches_job(
+            job.id,
+            platform=platform,
+            game_mode=game_mode,
+            max_matches=max_matches,
+            parse_profile=parse_profile,
+            position_interval_seconds=position_interval_seconds,
+        )
+        return self.get_job(job.id)
+
+    def start_sample_matches(
+        self,
+        *,
+        platform: str = DEFAULT_SAMPLE_PLATFORM,
+        game_mode: str = DEFAULT_SAMPLE_GAME_MODE,
+        max_matches: int | None = None,
+        parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+        position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+        retry_count: int = 0,
+    ) -> IngestJobResult:
+        _validate_parse_options(parse_profile, position_interval_seconds)
+        source_ref = _sample_source_ref(
+            platform,
+            game_mode,
+            max_matches=max_matches,
+            parse_profile=parse_profile,
+            position_interval_seconds=position_interval_seconds,
+        )
+        job_id = self._create_job("sample_matches", source_ref, retry_count=retry_count)
+        return IngestJobResult(
+            id=job_id,
+            job_type="sample_matches",
+            status="running",
+            source_ref=source_ref,
+            total_count=0,
+            success_count=0,
+            skipped_count=0,
+            failed_count=0,
+            retry_count=retry_count,
+            started_at=_utc_now(),
+            finished_at=None,
+            error_code=None,
+            error_message=None,
+            warnings=[],
+        )
+
+    def run_sample_matches_job(
+        self,
+        job_id: str,
+        *,
+        platform: str = DEFAULT_SAMPLE_PLATFORM,
+        game_mode: str = DEFAULT_SAMPLE_GAME_MODE,
+        max_matches: int | None = None,
+        parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+        position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+    ) -> None:
+        _validate_parse_options(parse_profile, position_interval_seconds)
+        warnings: list[str] = []
+        try:
+            payload = self.pubg_client.get_match_samples(platform)
+            match_refs = self._sample_match_refs(payload)
+            if max_matches is not None:
+                match_refs = match_refs[:max_matches]
+            stats = _empty_stats(total_count=len(match_refs))
+            self._update_job_progress(job_id, stats, warnings=warnings)
+
+            for match_id in match_refs:
+                if self._is_job_cancelled(job_id):
+                    return
+                try:
+                    match_payload = self.pubg_client.get_match(match_id, platform)
+                    match_values, telemetry_url = self._match_values(
+                        match_id,
+                        None,
+                        match_payload,
+                    )
+                    attributes = self._match_attributes(match_payload)
+                    match_game_mode = attributes.get("gameMode")
+                    match_type = attributes.get("matchType")
+                    if match_game_mode != game_mode:
+                        stats["skipped_count"] += 1
+                        warnings.append(
+                            f"match '{match_id}' skipped: gameMode is '{match_game_mode}'"
+                        )
+                        continue
+                    if isinstance(match_type, str) and match_type in EXCLUDED_SAMPLE_MATCH_TYPES:
+                        stats["skipped_count"] += 1
+                        warnings.append(f"match '{match_id}' skipped: matchType is '{match_type}'")
+                        continue
+
+                    self.repo.upsert("matches", match_values, conflict_columns=("match_id",))
+                    if not telemetry_url:
+                        stats["skipped_count"] += 1
+                        warnings.append(f"match '{match_id}' has no telemetry URL")
+                        continue
+
+                    cache_path = self._cache_match_telemetry(match_id, telemetry_url)
+                    parse_result = self._parse_cached_match_telemetry(
+                        match_id,
+                        cache_path,
+                        parse_profile=parse_profile,
+                        position_interval_seconds=position_interval_seconds,
+                    )
+                    _log_parse_warnings(match_id, parse_result.warnings)
+                    stats["success_count"] += 1
+                except AppError as exc:
+                    stats["failed_count"] += 1
+                    warnings.append(f"match '{match_id}' failed: {exc.message}")
+                finally:
+                    self._update_job_progress(job_id, stats, warnings=warnings)
+                    if self._is_job_cancelled(job_id):
+                        return
+
+            if self._is_job_cancelled(job_id):
+                return
+            self._complete_job(job_id, stats, warnings=warnings)
+        except AppError as exc:
+            self._fail_job(job_id, exc.code, exc.message)
 
     def download_match_telemetry(self, match_id: str, *, retry_count: int = 0) -> IngestJobResult:
         job_id = self._create_job("telemetry_download", match_id, retry_count=retry_count)
@@ -139,23 +287,7 @@ class IngestService:
                     details={"match_id": match_id},
                 )
 
-            content = self.pubg_client.download_telemetry(asset["telemetry_url"])
-            content_hash = hashlib.sha256(content).hexdigest()
-            cache_path = self.telemetry_cache_dir / f"{match_id}.json"
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_bytes(content)
-            self.repo.upsert(
-                "telemetry_assets",
-                {
-                    "match_id": match_id,
-                    "telemetry_url": asset["telemetry_url"],
-                    "cache_path": str(cache_path),
-                    "content_hash": content_hash,
-                    "downloaded_at": _utc_now(),
-                    "parse_status": "pending",
-                },
-                conflict_columns=("match_id",),
-            )
+            self._cache_match_telemetry(match_id, asset["telemetry_url"])
             self._complete_job(
                 job_id,
                 {"total_count": 1, "success_count": 1, "skipped_count": 0, "failed_count": 0},
@@ -188,27 +320,9 @@ class IngestService:
                     details={"match_id": match_id, "cache_path": str(cache_path)},
                 )
 
-            events = _read_telemetry_events(cache_path)
-            parse_result = TelemetryParser(self.connection).parse_match(match_id, events)
-            parsed_count = (
-                parse_result.circle_phase_count
-                + parse_result.position_sample_count
-                + parse_result.life_event_count
-            )
-            self.repo.execute(
-                """
-                UPDATE telemetry_assets
-                SET parse_status = 'completed',
-                    error_message = ?
-                WHERE match_id = ?
-                """,
-                (
-                    json.dumps(parse_result.warnings, ensure_ascii=False)
-                    if parse_result.warnings
-                    else None,
-                    match_id,
-                ),
-            )
+            parse_result = self._parse_cached_match_telemetry(match_id, cache_path)
+            _log_parse_warnings(match_id, parse_result.warnings)
+            parsed_count = self._parsed_row_count(match_id)
             self._complete_job(
                 job_id,
                 {
@@ -217,7 +331,6 @@ class IngestService:
                     "skipped_count": len(parse_result.warnings),
                     "failed_count": 0,
                 },
-                warnings=parse_result.warnings,
             )
         except AppError as exc:
             self.repo.execute(
@@ -231,6 +344,68 @@ class IngestService:
             )
             self._fail_job(job_id, exc.code, exc.message)
         return self.get_job(job_id)
+
+    def _cache_match_telemetry(self, match_id: str, telemetry_url: str) -> Path:
+        content = self.pubg_client.download_telemetry(telemetry_url)
+        content_hash = hashlib.sha256(content).hexdigest()
+        cache_path = self.telemetry_cache_dir / f"{match_id}.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_bytes(content)
+        self.repo.upsert(
+            "telemetry_assets",
+            {
+                "match_id": match_id,
+                "telemetry_url": telemetry_url,
+                "cache_path": str(cache_path),
+                "content_hash": content_hash,
+                "downloaded_at": _utc_now(),
+                "parse_status": "pending",
+            },
+            conflict_columns=("match_id",),
+        )
+        return cache_path
+
+    def _parse_cached_match_telemetry(
+        self,
+        match_id: str,
+        cache_path: Path,
+        *,
+        parse_profile: str = PARSE_PROFILE_FULL,
+        position_interval_seconds: int = 5,
+    ) -> Any:
+        events = _read_telemetry_events(cache_path)
+        parse_result = TelemetryParser(
+            self.connection,
+            sample_interval_seconds=position_interval_seconds,
+            parse_profile=parse_profile,
+        ).parse_match(match_id, events)
+        self.repo.execute(
+            """
+            UPDATE telemetry_assets
+            SET parse_status = 'completed',
+                error_message = ?
+            WHERE match_id = ?
+            """,
+            (
+                json.dumps(parse_result.warnings, ensure_ascii=False)
+                if parse_result.warnings
+                else None,
+                match_id,
+            ),
+        )
+        return parse_result
+
+    def _parsed_row_count(self, match_id: str) -> int:
+        row = self.repo.fetch_one(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM circle_phases WHERE match_id = ?) +
+                (SELECT COUNT(*) FROM player_position_samples WHERE match_id = ?) +
+                (SELECT COUNT(*) FROM player_life_events WHERE match_id = ?) AS count
+            """,
+            (match_id, match_id, match_id),
+        )
+        return int(row["count"] if row else 0)
 
     def get_job(self, job_id: str) -> IngestJobResult:
         row = self.repo.fetch_one("SELECT * FROM ingest_jobs WHERE id = ?", (job_id,))
@@ -250,6 +425,18 @@ class IngestService:
             return self.ingest_tournaments(retry_count=next_retry_count)
         if job.job_type == "tournament_matches" and job.source_ref:
             return self.ingest_tournament(job.source_ref, retry_count=next_retry_count)
+        if job.job_type == "sample_matches" and job.source_ref:
+            platform, game_mode, max_matches, parse_profile, position_interval_seconds = (
+                _sample_source_ref_parts(job.source_ref)
+            )
+            return self.ingest_sample_matches(
+                platform=platform,
+                game_mode=game_mode,
+                max_matches=max_matches,
+                parse_profile=parse_profile,
+                position_interval_seconds=position_interval_seconds,
+                retry_count=next_retry_count,
+            )
         if job.job_type == "telemetry_download" and job.source_ref:
             return self.download_match_telemetry(job.source_ref, retry_count=next_retry_count)
         if job.job_type == "telemetry_parse" and job.source_ref:
@@ -260,19 +447,52 @@ class IngestService:
             details={"job_id": job_id, "job_type": job.job_type},
         )
 
+    def cancel_job(self, job_id: str) -> IngestJobResult:
+        job = self.get_job(job_id)
+        if job.status in TERMINAL_JOB_STATUSES:
+            return job
+        self.repo.execute(
+            """
+            UPDATE ingest_jobs
+            SET status = 'cancelled',
+                finished_at = ?,
+                error_code = NULL,
+                error_message = NULL
+            WHERE id = ? AND status = 'running'
+            """,
+            (_utc_now(), job_id),
+        )
+        self.connection.commit()
+        return self.get_job(job_id)
+
     def _create_job(self, job_type: str, source_ref: str | None, *, retry_count: int = 0) -> str:
         job_id = f"job_{uuid4().hex}"
-        self.repo.insert_or_ignore(
-            "ingest_jobs",
-            {
-                "id": job_id,
-                "job_type": job_type,
-                "status": "running",
-                "source_ref": source_ref,
-                "retry_count": retry_count,
-                "started_at": _utc_now(),
-            },
-        )
+        started_at = _utc_now()
+        try:
+            self.repo.execute(
+                """
+                INSERT INTO ingest_jobs (
+                    id,
+                    job_type,
+                    status,
+                    source_ref,
+                    retry_count,
+                    started_at
+                )
+                VALUES (?, ?, 'running', ?, ?, ?)
+                """,
+                (job_id, job_type, source_ref, retry_count, started_at),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise AppError(
+                code="INGEST_JOB_CREATE_FAILED",
+                message=(
+                    f"failed to create ingest job of type '{job_type}'. "
+                    "Run database migrations and try again."
+                ),
+                status_code=500,
+                details={"job_type": job_type, "source_ref": source_ref},
+            ) from exc
         self.connection.commit()
         return job_id
 
@@ -295,7 +515,7 @@ class IngestService:
                 finished_at = ?,
                 error_code = NULL,
                 error_message = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'running'
             """,
             (
                 stats["total_count"],
@@ -303,6 +523,36 @@ class IngestService:
                 stats["skipped_count"],
                 stats["failed_count"],
                 _utc_now(),
+                error_message,
+                job_id,
+            ),
+        )
+        self.connection.commit()
+
+    def _update_job_progress(
+        self,
+        job_id: str,
+        stats: dict[str, int],
+        *,
+        warnings: list[str] | None = None,
+    ) -> None:
+        error_message = json.dumps(warnings, ensure_ascii=False) if warnings else None
+        self.repo.execute(
+            """
+            UPDATE ingest_jobs
+            SET status = 'running',
+                total_count = ?,
+                success_count = ?,
+                skipped_count = ?,
+                failed_count = ?,
+                error_message = ?
+            WHERE id = ? AND status = 'running'
+            """,
+            (
+                stats["total_count"],
+                stats["success_count"],
+                stats["skipped_count"],
+                stats["failed_count"],
                 error_message,
                 job_id,
             ),
@@ -318,11 +568,15 @@ class IngestService:
                 finished_at = ?,
                 error_code = ?,
                 error_message = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'running'
             """,
             (_utc_now(), error_code, error_message, job_id),
         )
         self.connection.commit()
+
+    def _is_job_cancelled(self, job_id: str) -> bool:
+        row = self.repo.fetch_one("SELECT status FROM ingest_jobs WHERE id = ?", (job_id,))
+        return bool(row and row["status"] == "cancelled")
 
     @staticmethod
     def _data_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -342,13 +596,29 @@ class IngestService:
         return [item["id"] for item in data if isinstance(item, dict) and item.get("id")]
 
     @staticmethod
+    def _sample_match_refs(payload: dict[str, Any]) -> list[str]:
+        data = payload.get("data", {})
+        sample_items = data if isinstance(data, list) else [data]
+        match_ids: list[str] = []
+        for sample in sample_items:
+            if not isinstance(sample, dict):
+                continue
+            relationships = sample.get("relationships", {})
+            matches = relationships.get("matches", {}) if isinstance(relationships, dict) else {}
+            refs = matches.get("data", []) if isinstance(matches, dict) else []
+            match_ids.extend(
+                item["id"] for item in refs if isinstance(item, dict) and item.get("id")
+            )
+        return match_ids
+
+    @staticmethod
     def _match_values(
         match_id: str,
-        tournament_id: str,
+        tournament_id: str | None,
         payload: dict[str, Any],
     ) -> tuple[dict[str, Any], str | None]:
         match = payload.get("data", {}) if isinstance(payload.get("data"), dict) else {}
-        attributes = IngestService._attributes(match)
+        attributes = IngestService._match_attributes(payload)
         telemetry_url = IngestService._telemetry_url(payload)
         return (
             {
@@ -368,6 +638,11 @@ class IngestService:
         )
 
     @staticmethod
+    def _match_attributes(payload: dict[str, Any]) -> dict[str, Any]:
+        match = payload.get("data", {}) if isinstance(payload.get("data"), dict) else {}
+        return IngestService._attributes(match)
+
+    @staticmethod
     def _telemetry_url(payload: dict[str, Any]) -> str | None:
         included = payload.get("included", [])
         if not isinstance(included, list):
@@ -383,7 +658,7 @@ class IngestService:
     @staticmethod
     def _job_result(row: sqlite3.Row) -> IngestJobResult:
         warnings: list[str] = []
-        if row["status"] == "completed" and row["error_message"]:
+        if row["status"] != "failed" and row["error_message"]:
             try:
                 decoded = json.loads(row["error_message"])
                 warnings = decoded if isinstance(decoded, list) else [str(decoded)]
@@ -402,7 +677,7 @@ class IngestService:
             started_at=row["started_at"],
             finished_at=row["finished_at"],
             error_code=row["error_code"],
-            error_message=row["error_message"] if row["status"] != "completed" else None,
+            error_message=row["error_message"] if row["status"] == "failed" else None,
             warnings=warnings,
         )
 
@@ -427,6 +702,86 @@ def _read_telemetry_events(cache_path: Path) -> list[dict[str, Any]]:
     return payload
 
 
+def _sample_source_ref(
+    platform: str,
+    game_mode: str,
+    *,
+    max_matches: int | None = None,
+    parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+    position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+) -> str:
+    parts = [f"samples:{platform}:{game_mode}"]
+    if max_matches is not None:
+        parts.append(f"max={max_matches}")
+    parts.append(f"profile={parse_profile}")
+    parts.append(f"interval={position_interval_seconds}")
+    return ":".join(parts)
+
+
+def _sample_source_ref_parts(source_ref: str) -> tuple[str, str, int | None, str, int]:
+    parts = source_ref.split(":")
+    if len(parts) < 3 or parts[0] != "samples" or not parts[1] or not parts[2]:
+        raise AppError(
+            code="INGEST_JOB_SOURCE_REF_INVALID",
+            message=f"sample ingest job source_ref '{source_ref}' is invalid",
+            details={"source_ref": source_ref},
+        )
+    max_matches: int | None = None
+    parse_profile = DEFAULT_SAMPLE_PARSE_PROFILE
+    position_interval_seconds = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS
+    for option in parts[3:]:
+        key, _, value = option.partition("=")
+        if not key or not value:
+            raise AppError(
+                code="INGEST_JOB_SOURCE_REF_INVALID",
+                message=f"sample ingest job source_ref '{source_ref}' is invalid",
+                details={"source_ref": source_ref},
+            )
+        if key == "max":
+            try:
+                max_matches = int(value)
+            except ValueError as exc:
+                raise AppError(
+                    code="INGEST_JOB_SOURCE_REF_INVALID",
+                    message=f"sample ingest job source_ref '{source_ref}' is invalid",
+                    details={"source_ref": source_ref},
+                ) from exc
+        elif key == "profile":
+            parse_profile = value
+        elif key == "interval":
+            try:
+                position_interval_seconds = int(value)
+            except ValueError as exc:
+                raise AppError(
+                    code="INGEST_JOB_SOURCE_REF_INVALID",
+                    message=f"sample ingest job source_ref '{source_ref}' is invalid",
+                    details={"source_ref": source_ref},
+                ) from exc
+        else:
+            raise AppError(
+                code="INGEST_JOB_SOURCE_REF_INVALID",
+                message=f"sample ingest job source_ref '{source_ref}' is invalid",
+                details={"source_ref": source_ref},
+            )
+    _validate_parse_options(parse_profile, position_interval_seconds)
+    return parts[1], parts[2], max_matches, parse_profile, position_interval_seconds
+
+
+def _validate_parse_options(parse_profile: str, position_interval_seconds: int) -> None:
+    if parse_profile not in PARSE_PROFILES:
+        raise AppError(
+            code="INGEST_PARSE_PROFILE_INVALID",
+            message=f"parse_profile must be one of {sorted(PARSE_PROFILES)}",
+            details={"parse_profile": parse_profile},
+        )
+    if position_interval_seconds <= 0:
+        raise AppError(
+            code="INGEST_POSITION_INTERVAL_INVALID",
+            message="position_interval_seconds must be greater than zero",
+            details={"position_interval_seconds": position_interval_seconds},
+        )
+
+
 def _empty_stats(*, total_count: int) -> dict[str, int]:
     return {
         "total_count": total_count,
@@ -434,6 +789,11 @@ def _empty_stats(*, total_count: int) -> dict[str, int]:
         "skipped_count": 0,
         "failed_count": 0,
     }
+
+
+def _log_parse_warnings(match_id: str, warnings: list[str]) -> None:
+    for warning in warnings:
+        logger.warning("match '%s' parse warning: %s", match_id, warning)
 
 
 def _utc_now() -> str:

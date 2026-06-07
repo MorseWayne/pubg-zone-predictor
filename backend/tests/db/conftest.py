@@ -14,7 +14,7 @@ def database_path(tmp_path: Path) -> Path:
 @pytest.fixture
 def migrated_connection(database_path: Path) -> sqlite3.Connection:
     applied = initialize_database(database_path)
-    assert [migration.version for migration in applied] == ["001"]
+    assert [migration.version for migration in applied] == ["001", "002"]
 
     connection = connect_database(database_path)
     try:

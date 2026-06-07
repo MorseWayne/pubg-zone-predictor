@@ -130,8 +130,33 @@ type TrainingRunResult = {
   warnings: string[];
 };
 
+type IngestJobResult = {
+  id: string;
+  job_type: string;
+  status: string;
+  source_ref: string | null;
+  total_count: number;
+  success_count: number;
+  skipped_count: number;
+  failed_count: number;
+  retry_count: number;
+  started_at: string | null;
+  finished_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  warnings: string[];
+};
+
 type RouteStrategy = "edge" | "center" | "slow" | "avoid_hotspots";
 type ClickMode = "current_circle_center" | "team_area";
+type WorkspaceSurface = "predict" | "ingest" | "prep";
+type ParseProfile = "zone_only" | "hotspot_light" | "full";
+
+const workspaceSurfaces: Array<{ value: WorkspaceSurface; label: string; description: string; icon: string }> = [
+  { value: "predict", label: "战术预测", description: "地图标点 / 路线", icon: "T" },
+  { value: "ingest", label: "官方采集", description: "samples / telemetry", icon: "I" },
+  { value: "prep", label: "数据准备", description: "热点 / 训练", icon: "D" },
+];
 
 const routeStrategies: Array<{ value: RouteStrategy; label: string; description: string }> = [
   { value: "edge", label: "贴边进圈", description: "目标点偏向预测安全区边缘。" },
@@ -145,6 +170,20 @@ const clickModes: Array<{ value: ClickMode; label: string }> = [
   { value: "team_area", label: "设置战队位置" },
 ];
 
+const parseProfiles: Array<{ value: ParseProfile; label: string; description: string; intervalSeconds: number }> = [
+  { value: "hotspot_light", label: "轻量热点", description: "保留圈数据和低频位置点，默认推荐。", intervalSeconds: 30 },
+  { value: "zone_only", label: "圈预测优先", description: "只写圈阶段数据，数据库负担最低。", intervalSeconds: 30 },
+  { value: "full", label: "完整分析", description: "保留完整 5 秒位置采样，适合小批量调试。", intervalSeconds: 5 },
+];
+
+function isTerminalIngestStatus(status: string) {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function ingestProcessedCount(job: IngestJobResult) {
+  return job.success_count + job.skipped_count + job.failed_count;
+}
+
 export default function App() {
   const [health, setHealth] = useState<HealthState>({ status: "loading" });
   const [maps, setMaps] = useState<MapConfig[]>([]);
@@ -154,6 +193,7 @@ export default function App() {
   const [zoneState, setZoneState] = useState<LoadState>({ status: "idle" });
   const [assetState, setAssetState] = useState<LoadState>({ status: "idle" });
   const [assetImageUrl, setAssetImageUrl] = useState<string | null>(null);
+  const [activeSurface, setActiveSurface] = useState<WorkspaceSurface>("predict");
   const [currentPhase, setCurrentPhase] = useState(1);
   const [clickMode, setClickMode] = useState<ClickMode>("current_circle_center");
   const [currentCircleCenter, setCurrentCircleCenter] = useState<Point | null>(null);
@@ -167,7 +207,15 @@ export default function App() {
   const [hotspotResult, setHotspotResult] = useState<HotspotGenerateResult | null>(null);
   const [trainingRunState, setTrainingRunState] = useState<LoadState>({ status: "idle" });
   const [trainingResult, setTrainingResult] = useState<TrainingRunResult | null>(null);
+  const [retryJobIdInput, setRetryJobIdInput] = useState("");
+  const [sampleMaxMatchesInput, setSampleMaxMatchesInput] = useState("20");
+  const [sampleParseProfile, setSampleParseProfile] = useState<ParseProfile>("hotspot_light");
+  const [ingestState, setIngestState] = useState<LoadState>({ status: "idle" });
+  const [latestIngestJob, setLatestIngestJob] = useState<IngestJobResult | null>(null);
+  const [ingestError, setIngestError] = useState<string | null>(null);
   const predictAbortControllerRef = useRef<AbortController | null>(null);
+  const ingestAbortControllerRef = useRef<AbortController | null>(null);
+  const ingestRequestIdRef = useRef(0);
   const predictRequestIdRef = useRef(0);
   const workspaceContextRef = useRef({ mapId: selectedMapId, phase: currentPhase });
 
@@ -196,6 +244,7 @@ export default function App() {
     : trainingRunState.status === "error"
       ? "error"
       : "not_trained";
+  const activeSurfaceInfo = workspaceSurfaces.find((surface) => surface.value === activeSurface) ?? workspaceSurfaces[0];
   const resetPredictionState = useCallback((abortInFlight = true) => {
     if (abortInFlight) {
       predictAbortControllerRef.current?.abort();
@@ -204,6 +253,13 @@ export default function App() {
     setPrediction(null);
     setPredictError(null);
     setPredictState({ status: "idle" });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      ingestAbortControllerRef.current?.abort();
+      ingestRequestIdRef.current += 1;
+    };
   }, []);
 
   useEffect(() => {
@@ -403,6 +459,124 @@ export default function App() {
       });
   }
 
+  function runIngestAction(action: (signal: AbortSignal) => Promise<IngestJobResult>) {
+    ingestAbortControllerRef.current?.abort();
+    const requestId = ingestRequestIdRef.current + 1;
+    ingestRequestIdRef.current = requestId;
+    const abortController = new AbortController();
+    ingestAbortControllerRef.current = abortController;
+    setIngestState({ status: "loading" });
+    setIngestError(null);
+
+    action(abortController.signal)
+      .then((job) => {
+        if (ingestRequestIdRef.current !== requestId || abortController.signal.aborted) {
+          return;
+        }
+        setLatestIngestJob(job);
+        if (isTerminalIngestStatus(job.status)) {
+          setIngestState(job.status === "failed" ? { status: "error", message: job.error_message ?? "采集任务失败" } : { status: "ready" });
+          ingestAbortControllerRef.current = null;
+          return;
+        }
+        pollIngestJob(job.id, requestId, abortController);
+      })
+      .catch((error: unknown) => {
+        if (ingestRequestIdRef.current !== requestId || abortController.signal.aborted) {
+          return;
+        }
+        setIngestState({ status: "error", message: error instanceof Error ? error.message : "采集请求失败" });
+        setIngestError(error instanceof Error ? error.message : "采集请求失败");
+        ingestAbortControllerRef.current = null;
+      });
+  }
+
+  function pollIngestJob(jobId: string, requestId: number, abortController: AbortController) {
+    window.setTimeout(() => {
+      if (ingestRequestIdRef.current !== requestId || abortController.signal.aborted) {
+        return;
+      }
+      fetchJson<IngestJobResult>(`/api/ingest/jobs/${encodeURIComponent(jobId)}`, {
+        signal: abortController.signal,
+      })
+        .then((job) => {
+          if (ingestRequestIdRef.current !== requestId || abortController.signal.aborted) {
+            return;
+          }
+          setLatestIngestJob(job);
+          if (isTerminalIngestStatus(job.status)) {
+            setIngestState(job.status === "failed" ? { status: "error", message: job.error_message ?? "采集任务失败" } : { status: "ready" });
+            ingestAbortControllerRef.current = null;
+            return;
+          }
+          setIngestState({ status: "loading" });
+          pollIngestJob(jobId, requestId, abortController);
+        })
+        .catch((error: unknown) => {
+          if (ingestRequestIdRef.current !== requestId || abortController.signal.aborted) {
+            return;
+          }
+          setIngestState({ status: "error", message: error instanceof Error ? error.message : "采集进度查询失败" });
+          setIngestError(error instanceof Error ? error.message : "采集进度查询失败");
+          ingestAbortControllerRef.current = null;
+        });
+    }, 1000);
+  }
+
+  function ingestSquadSamples() {
+    const maxMatches = Number.parseInt(sampleMaxMatchesInput, 10);
+    if (!Number.isInteger(maxMatches) || maxMatches < 1 || maxMatches > 100) {
+      setIngestError("采集数量上限需要在 1 到 100 之间");
+      setIngestState({ status: "error", message: "采集数量上限需要在 1 到 100 之间" });
+      return;
+    }
+    const profile = parseProfiles.find((item) => item.value === sampleParseProfile) ?? parseProfiles[0];
+    const query = new URLSearchParams({
+      max_matches: String(maxMatches),
+      parse_profile: profile.value,
+      position_interval_seconds: String(profile.intervalSeconds),
+    });
+    runIngestAction((signal) =>
+      fetchJson<IngestJobResult>(
+        `/api/ingest/samples/squad?${query.toString()}`,
+        { method: "POST", signal },
+      ),
+    );
+  }
+
+  function retryIngestJob() {
+    const jobId = retryJobIdInput.trim() || latestIngestJob?.id;
+    if (!jobId) {
+      setIngestError("请先填写 job id，或先运行一个采集任务");
+      return;
+    }
+    runIngestAction((signal) => fetchJson<IngestJobResult>(`/api/ingest/jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST", signal }));
+  }
+
+  function cancelIngestJob() {
+    const jobId = latestIngestJob?.id;
+    if (!jobId || latestIngestJob.status !== "running") {
+      setIngestError("当前没有正在运行的采集任务");
+      return;
+    }
+    ingestAbortControllerRef.current?.abort();
+    ingestRequestIdRef.current += 1;
+    setIngestState({ status: "loading" });
+    setIngestError(null);
+    fetchJson<IngestJobResult>(`/api/ingest/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: "POST",
+    })
+      .then((job) => {
+        setLatestIngestJob(job);
+        setIngestState({ status: "ready" });
+        ingestAbortControllerRef.current = null;
+      })
+      .catch((error: unknown) => {
+        setIngestState({ status: "error", message: error instanceof Error ? error.message : "终止任务失败" });
+        setIngestError(error instanceof Error ? error.message : "终止任务失败");
+      });
+  }
+
   const handleSetCurrentCircleCenter = useCallback((point: Point) => {
     setCurrentCircleCenter(point);
     setClickMode("team_area");
@@ -489,189 +663,422 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
-      <header className="command-bar">
-        <div className="brand-lockup" aria-label="PUBG 圈型预测工作台">
-          <div className="brand-mark" aria-hidden="true">Z</div>
-          <div>
-            <strong>PUBG 圈型预测</strong>
-            <span>战术地图 · 本地分析工作台</span>
-          </div>
-        </div>
+    <main className="app-shell rail-shell">
+      <aside className="app-rail" aria-label="主导航">
+        <div className="rail-brand" aria-hidden="true">Z</div>
+        <nav className="rail-nav" aria-label="主工作区">
+          {workspaceSurfaces.map((surface) => (
+            <button
+              key={surface.value}
+              type="button"
+              className={`rail-tab ${activeSurface === surface.value ? "active" : ""}`}
+              aria-current={activeSurface === surface.value ? "page" : undefined}
+              onClick={() => setActiveSurface(surface.value)}
+            >
+              <span className="rail-tab-icon" aria-hidden="true">{surface.icon}</span>
+              <span>{surface.label.replace("战术", "")}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="rail-foot">LOCAL</div>
+      </aside>
 
-        <div className="command-controls">
-          <label className="nav-field">
-            <span>地图</span>
-            <select value={selectedMapId} onChange={(event) => handleMapSelection(event.target.value)}>
-              {maps.map((map) => (
-                <option key={map.map_id} value={map.map_id}>
-                  {map.display_name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="nav-field compact">
-            <span>Zone</span>
-            <select value={currentPhase} onChange={(event) => handlePhaseSelection(Number(event.target.value))} disabled={!zoneConfig}>
-              {(zoneConfig?.supported_prediction_phases ?? [1]).map((phase) => (
-                <option key={phase} value={phase}>
-                  {phase}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="mode-switch" role="group" aria-label="地图点击模式">
-            {clickModes.map((mode) => (
-              <button
-                key={mode.value}
-                type="button"
-                className={clickMode === mode.value ? "active" : ""}
-                disabled={!mapReady}
-                onClick={() => setClickMode(mode.value)}
-              >
-                {mode.label}
-              </button>
-            ))}
+      <section className="main-surface">
+        <header className="topbar">
+          <div className="surface-title">
+            <strong>{activeSurfaceInfo.label}</strong>
+            <span>{activeSurfaceInfo.description}</span>
           </div>
 
-          <div className="nav-coordinate">
-            <span>圈心</span>
-            <strong>{currentCircleCenter ? "已设置" : "未设置"}</strong>
-            {currentCircleCenter ? (
-              <button type="button" onClick={clearCurrentCircleCenter}>
-                清除
-              </button>
-            ) : null}
-          </div>
+          {activeSurface === "predict" ? (
+            <div className="context-controls">
+              <label className="nav-field">
+                <span>地图</span>
+                <select value={selectedMapId} onChange={(event) => handleMapSelection(event.target.value)}>
+                  {maps.map((map) => (
+                    <option key={map.map_id} value={map.map_id}>
+                      {map.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <div className="nav-coordinate">
-            <span>队伍</span>
-            <strong>{teamArea ? "已设置" : "未设置"}</strong>
-            {teamArea ? (
-              <button type="button" onClick={clearTeamArea}>
-                清除
-              </button>
-            ) : null}
-          </div>
-        </div>
+              <label className="nav-field compact">
+                <span>Zone</span>
+                <select value={currentPhase} onChange={(event) => handlePhaseSelection(Number(event.target.value))} disabled={!zoneConfig}>
+                  {(zoneConfig?.supported_prediction_phases ?? [1]).map((phase) => (
+                    <option key={phase} value={phase}>
+                      {phase}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-        <HealthBadge health={health} />
-      </header>
+              <div className="mode-switch" role="group" aria-label="地图点击模式">
+                {clickModes.map((mode) => (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    className={clickMode === mode.value ? "active" : ""}
+                    disabled={!mapReady}
+                    onClick={() => setClickMode(mode.value)}
+                  >
+                    {mode.label.replace("设置当前", "")}
+                  </button>
+                ))}
+              </div>
 
-      <section className="workspace-shell">
-        <div className="map-card">
-          <div className="map-toolbar">
-            <div>
-              <strong>{selectedMap?.display_name ?? "地图加载中"}</strong>
-              <span>{mapReady ? "底图已就绪 · 拖拽平移 · 滚轮缩放 · 单击标点" : "底图未就绪，地图交互已禁用"}</span>
-            </div>
-          </div>
-
-          <div className={`map-frame ${mapReady ? "ready" : "disabled"}`}>
-            {selectedMap ? (
-              <InteractiveMapCanvas
-                map={selectedMap}
-                imageUrl={assetImageUrl}
-                enabled={mapReady}
-                currentPhaseRadius={currentPhaseConfig?.radius ?? 0}
-                currentCircleCenter={currentCircleCenter}
-                teamArea={teamArea}
-                prediction={prediction}
-                clickMode={clickMode}
-                onSetCurrentCircleCenter={handleSetCurrentCircleCenter}
-                onSetTeamArea={handleSetTeamArea}
-                onImageError={handleMapImageError}
-              />
-            ) : null}
-            {!mapReady ? (
-              <div className="map-blocker">
-                <strong>{assetState.status === "error" ? "地图资源不可用" : "准备地图资源中…"}</strong>
-                <span>
-                  {assetState.status === "error"
-                    ? assetState.message
-                    : "底图加载完成后才能点击地图和生成预测。"}
-                </span>
-                {assetState.status === "error" ? (
-                  <button type="button" onClick={retryAssetLoad}>
-                    重试加载地图
+              <div className="nav-coordinate">
+                <span>圈心</span>
+                <strong>{currentCircleCenter ? "已设置" : "未设置"}</strong>
+                {currentCircleCenter ? (
+                  <button type="button" onClick={clearCurrentCircleCenter}>
+                    清除
                   </button>
                 ) : null}
               </div>
+
+              <div className="nav-coordinate">
+                <span>队伍</span>
+                <strong>{teamArea ? "已设置" : "未设置"}</strong>
+                {teamArea ? (
+                  <button type="button" onClick={clearTeamArea}>
+                    清除
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {activeSurface === "ingest" ? (
+            <div className="context-controls">
+              <StatusLine label="采集任务" state={ingestState} />
+              <div className="nav-coordinate">
+                <span>最近任务</span>
+                <strong>{latestIngestJob ? latestIngestJob.job_type : "无"}</strong>
+              </div>
+              <div className="nav-coordinate">
+                <span>结果</span>
+                <strong>{latestIngestJob ? latestIngestJob.status : "待运行"}</strong>
+              </div>
+            </div>
+          ) : null}
+
+          {activeSurface === "prep" ? (
+            <div className="context-controls">
+              <ReadinessBadge label="热点" value={hotspotReadiness} />
+              <ReadinessBadge label="模型" value={modelReadiness} />
+              <div className="nav-coordinate">
+                <span>地图</span>
+                <strong>{selectedMap?.display_name ?? "未加载"}</strong>
+              </div>
+            </div>
+          ) : null}
+
+          <HealthBadge health={health} />
+        </header>
+
+      {activeSurface === "predict" ? (
+        <section className="workspace-shell">
+          <div className="map-card">
+            <div className="map-toolbar">
+              <div>
+                <strong>{selectedMap?.display_name ?? "地图加载中"}</strong>
+                <span>{mapReady ? "底图已就绪 · 拖拽平移 · 滚轮缩放 · 单击标点" : "底图未就绪，地图交互已禁用"}</span>
+              </div>
+            </div>
+
+            <div className={`map-frame ${mapReady ? "ready" : "disabled"}`}>
+              {selectedMap ? (
+                <InteractiveMapCanvas
+                  map={selectedMap}
+                  imageUrl={assetImageUrl}
+                  enabled={mapReady}
+                  currentPhaseRadius={currentPhaseConfig?.radius ?? 0}
+                  currentCircleCenter={currentCircleCenter}
+                  teamArea={teamArea}
+                  prediction={prediction}
+                  clickMode={clickMode}
+                  onSetCurrentCircleCenter={handleSetCurrentCircleCenter}
+                  onSetTeamArea={handleSetTeamArea}
+                  onImageError={handleMapImageError}
+                />
+              ) : null}
+              {!mapReady ? (
+                <div className="map-blocker">
+                  <strong>{assetState.status === "error" ? "地图资源不可用" : "准备地图资源中…"}</strong>
+                  <span>
+                    {assetState.status === "error"
+                      ? assetState.message
+                      : "底图加载完成后才能点击地图和生成预测。"}
+                  </span>
+                  {assetState.status === "error" ? (
+                    <button type="button" onClick={retryAssetLoad}>
+                      重试加载地图
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <aside className="control-panel prediction-panel">
+            <div className="section-heading">
+              <h2>战术预测</h2>
+              <p>这里只处理地图标点、路线策略、预测和解释；官方采集与训练已移到独立工作区。</p>
+            </div>
+            <div className="status-grid">
+              <StatusLine label="地图配置" state={mapsState} />
+              <StatusLine label="Zone 配置" state={zoneState} />
+              <StatusLine label="地图资源" state={assetState} />
+            </div>
+
+            <label>
+              路线策略
+              <select
+                value={routeStrategy}
+                onChange={(event) => setRouteStrategy(event.target.value as RouteStrategy)}
+              >
+                {routeStrategies.map((strategy) => (
+                  <option key={strategy.value} value={strategy.value}>
+                    {strategy.label}
+                  </option>
+                ))}
+              </select>
+              <small>{routeStrategies.find((strategy) => strategy.value === routeStrategy)?.description}</small>
+            </label>
+
+            <div className="coordinate-summary">
+              <CoordinateReadout label="当前圈中心" point={currentCircleCenter} onClear={clearCurrentCircleCenter} />
+              <CoordinateReadout label="战队位置" point={teamArea} onClear={clearTeamArea} />
+            </div>
+
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={useLlmExplanation}
+                onChange={(event) => setUseLlmExplanation(event.target.checked)}
+              />
+              尝试使用 LLM 解释
+            </label>
+
+            <button type="button" disabled={!canPredict || predictState.status === "loading"} onClick={submitPrediction}>
+              {predictState.status === "loading" ? "生成中…" : "生成预测"}
+            </button>
+
+            {!canPredict ? <p className="hint">需先加载底图，并设置当前圈中心与战队位置。</p> : null}
+            {canPredict && (hotspotReadiness !== "ready" || modelReadiness !== "completed") ? (
+              <p className="hint">
+                热点或模型尚未完全 ready，预测仍会运行，并在结果中标记无热点或规则兜底降级。
+              </p>
             ) : null}
+            {predictError ? <div className="error-panel">{predictError}</div> : null}
+
+            <PredictionPanel prediction={prediction} />
+          </aside>
+        </section>
+      ) : null}
+
+      {activeSurface === "ingest" ? (
+        <section className="ops-surface">
+          <div className="ops-panel">
+            <IngestConsolePanel
+              retryJobId={retryJobIdInput}
+              ingestState={ingestState}
+              latestJob={latestIngestJob}
+              ingestError={ingestError}
+              sampleMaxMatches={sampleMaxMatchesInput}
+              sampleParseProfile={sampleParseProfile}
+              onRetryJobIdChange={setRetryJobIdInput}
+              onSampleMaxMatchesChange={setSampleMaxMatchesInput}
+              onSampleParseProfileChange={setSampleParseProfile}
+              onIngestSquadSamples={ingestSquadSamples}
+              onRetryJob={retryIngestJob}
+              onCancelJob={cancelIngestJob}
+            />
           </div>
+        </section>
+      ) : null}
+
+      {activeSurface === "prep" ? (
+        <section className="ops-surface">
+          <div className="ops-panel">
+            <DataPrepPanel
+              hotspotReadiness={hotspotReadiness}
+              modelReadiness={modelReadiness}
+              hotspotRunState={hotspotRunState}
+              hotspotResult={hotspotResult}
+              trainingRunState={trainingRunState}
+              trainingResult={trainingResult}
+              canGenerateHotspots={Boolean(zoneConfig)}
+              canTrain={Boolean(selectedMap)}
+              onGenerateHotspots={generateHotspots}
+              onTrain={trainCurrentMap}
+            />
+          </div>
+        </section>
+      ) : null}
+      </section>
+    </main>
+  );
+}
+
+function IngestConsolePanel({
+  retryJobId,
+  ingestState,
+  latestJob,
+  ingestError,
+  sampleMaxMatches,
+  sampleParseProfile,
+  onRetryJobIdChange,
+  onSampleMaxMatchesChange,
+  onSampleParseProfileChange,
+  onIngestSquadSamples,
+  onRetryJob,
+  onCancelJob,
+}: {
+  retryJobId: string;
+  ingestState: LoadState;
+  latestJob: IngestJobResult | null;
+  ingestError: string | null;
+  sampleMaxMatches: string;
+  sampleParseProfile: ParseProfile;
+  onRetryJobIdChange: (value: string) => void;
+  onSampleMaxMatchesChange: (value: string) => void;
+  onSampleParseProfileChange: (value: ParseProfile) => void;
+  onIngestSquadSamples: () => void;
+  onRetryJob: () => void;
+  onCancelJob: () => void;
+}) {
+  const busy = ingestState.status === "loading";
+  const canCancel = latestJob?.status === "running";
+  const ingestErrorMessage = ingestError ?? (ingestState.status === "error" ? ingestState.message : null);
+  const selectedProfile = parseProfiles.find((profile) => profile.value === sampleParseProfile) ?? parseProfiles[0];
+
+  return (
+    <section className="ingest-console-panel">
+      <div className="section-heading ingest-heading">
+        <div>
+          <h3>普通 squad 数据采集</h3>
+          <p>从 PUBG samples 抓普通四排 match，并自动完成 telemetry 下载与解析入库。</p>
         </div>
+        <span>Key 后端持有</span>
+      </div>
 
-        <aside className="control-panel prediction-panel">
-          <div className="section-heading">
-            <h2>预测控制</h2>
-            <p>数据准备、路线策略、预测和解释集中在这里；地图始终保留为主操作区域。</p>
+      <div className="ingest-flow">
+        <article className="ingest-step">
+          <div className="ingest-step-title">
+            <span>1</span>
+            <strong>采集并解析普通 squad 样本</strong>
           </div>
-          <div className="status-grid">
-            <StatusLine label="地图配置" state={mapsState} />
-            <StatusLine label="Zone 配置" state={zoneState} />
-            <StatusLine label="地图资源" state={assetState} />
-          </div>
-
-          <DataPrepPanel
-            hotspotReadiness={hotspotReadiness}
-            modelReadiness={modelReadiness}
-            hotspotRunState={hotspotRunState}
-            hotspotResult={hotspotResult}
-            trainingRunState={trainingRunState}
-            trainingResult={trainingResult}
-            canGenerateHotspots={Boolean(zoneConfig)}
-            canTrain={Boolean(selectedMap)}
-            onGenerateHotspots={generateHotspots}
-            onTrain={trainCurrentMap}
-          />
-
-          <label>
-            路线策略
+          <small>自动过滤非 squad、自定义和赛事对局，写入 match、缓存 telemetry，并解析为圈阶段、位置样本和事件。</small>
+          <label className="ingest-input-label" htmlFor="sample-parse-profile">
+            数据过滤模式
             <select
-              value={routeStrategy}
-              onChange={(event) => setRouteStrategy(event.target.value as RouteStrategy)}
+              id="sample-parse-profile"
+              value={sampleParseProfile}
+              disabled={busy}
+              onChange={(event) => onSampleParseProfileChange(event.target.value as ParseProfile)}
             >
-              {routeStrategies.map((strategy) => (
-                <option key={strategy.value} value={strategy.value}>
-                  {strategy.label}
+              {parseProfiles.map((profile) => (
+                <option key={profile.value} value={profile.value}>
+                  {profile.label}
                 </option>
               ))}
             </select>
-            <small>{routeStrategies.find((strategy) => strategy.value === routeStrategy)?.description}</small>
+            <small>{selectedProfile.description}</small>
           </label>
-
-          <div className="coordinate-summary">
-            <CoordinateReadout label="当前圈中心" point={currentCircleCenter} onClear={clearCurrentCircleCenter} />
-            <CoordinateReadout label="战队位置" point={teamArea} onClear={clearTeamArea} />
-          </div>
-
-          <label className="checkbox-row">
+          <label className="ingest-input-label" htmlFor="sample-max-matches">
+            数量上限
             <input
-              type="checkbox"
-              checked={useLlmExplanation}
-              onChange={(event) => setUseLlmExplanation(event.target.checked)}
+              id="sample-max-matches"
+              type="number"
+              min="1"
+              max="100"
+              value={sampleMaxMatches}
+              disabled={busy}
+              onChange={(event) => onSampleMaxMatchesChange(event.target.value)}
             />
-            尝试使用 LLM 解释
+            <small>最多处理 100 场；默认 20 场，方便先小批量验证。</small>
           </label>
-
-          <button type="button" disabled={!canPredict || predictState.status === "loading"} onClick={submitPrediction}>
-            {predictState.status === "loading" ? "生成中…" : "生成预测"}
+          <button type="button" disabled={busy} onClick={onIngestSquadSamples}>
+            {busy ? "采集中…" : "一键采集普通 squad 数据"}
           </button>
+        </article>
+      </div>
 
-          {!canPredict ? <p className="hint">需先加载底图，并设置当前圈中心与战队位置。</p> : null}
-          {canPredict && (hotspotReadiness !== "ready" || modelReadiness !== "completed") ? (
-            <p className="hint">
-              热点或模型尚未完全 ready，预测仍会运行，并在结果中标记无热点或规则兜底降级。
-            </p>
-          ) : null}
-          {predictError ? <div className="error-panel">{predictError}</div> : null}
+      <div className="ingest-retry-row">
+        <label className="ingest-input-label" htmlFor="ingest-retry-job-id">
+          Job ID
+        </label>
+        <input
+          id="ingest-retry-job-id"
+          type="text"
+          value={retryJobId}
+          placeholder={latestJob ? `默认重试 ${latestJob.id}` : "可选：job id"}
+          disabled={busy}
+          onChange={(event) => onRetryJobIdChange(event.target.value)}
+        />
+        <button type="button" className="secondary-action" disabled={busy || (!retryJobId.trim() && !latestJob)} onClick={onRetryJob}>
+          重试任务
+        </button>
+        <button type="button" className="danger-action" disabled={!canCancel} onClick={onCancelJob}>
+          终止任务
+        </button>
+      </div>
 
-          <PredictionPanel prediction={prediction} />
-        </aside>
-      </section>
-    </main>
+      {ingestErrorMessage ? (
+        <div className="error-panel compact">{ingestErrorMessage}</div>
+      ) : null}
+      {latestJob ? <IngestJobSummary job={latestJob} /> : <p className="hint">最近任务会显示在这里；失败任务可通过 job id 重试。</p>}
+    </section>
+  );
+}
+
+function IngestJobSummary({ job }: { job: IngestJobResult }) {
+  return (
+    <div className={`ingest-job-summary ${job.status}`}>
+      <div className="ingest-job-header">
+        <strong>{job.job_type}</strong>
+        <span>{job.status}</span>
+      </div>
+      <IngestProgressBar job={job} />
+      <div className="result-grid compact-grid">
+        <MetricCard title="成功" value={String(job.success_count)} detail={`total ${job.total_count}`} />
+        <MetricCard title="跳过" value={String(job.skipped_count)} detail={`failed ${job.failed_count}`} />
+      </div>
+      <p className="model-id">
+        {job.id} {job.source_ref ? `· ${job.source_ref}` : ""}
+      </p>
+      {job.error_message ? <div className="error-panel compact">{job.error_message}</div> : null}
+      <WarningChips warnings={job.warnings} />
+    </div>
+  );
+}
+
+function IngestProgressBar({ job }: { job: IngestJobResult }) {
+  const processedCount = ingestProcessedCount(job);
+  const progressPercent = job.total_count > 0
+    ? Math.min(100, Math.round((processedCount / job.total_count) * 100))
+    : job.status === "running"
+      ? 8
+      : 0;
+  const progressText = job.total_count > 0
+    ? `${processedCount} / ${job.total_count}`
+    : job.status === "running"
+      ? "确认样本中"
+      : "未开始";
+
+  return (
+    <div className="ingest-progress-block">
+      <div className="ingest-progress-meta">
+        <span>采集进度</span>
+        <strong>{progressText}</strong>
+      </div>
+      <div className="ingest-progress-track" aria-label="采集进度">
+        <span style={{ width: `${progressPercent}%` }} />
+      </div>
+    </div>
   );
 }
 

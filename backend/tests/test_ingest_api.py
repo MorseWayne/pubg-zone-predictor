@@ -1,4 +1,5 @@
-from app.api.ingest import get_ingest_service
+from app.api.ingest import get_ingest_service, get_sample_ingest_runner
+from app.core.errors import AppError
 from app.main import app
 from app.services.ingest import IngestJobResult
 from fastapi.testclient import TestClient
@@ -31,6 +32,37 @@ class FakeIngestService:
         assert tournament_id == "tournament-1"
         return _job(job_id="job_tournament")
 
+    def start_sample_matches(
+        self,
+        *,
+        platform: str,
+        game_mode: str,
+        max_matches: int,
+        parse_profile: str,
+        position_interval_seconds: int,
+    ) -> IngestJobResult:
+        assert platform == "steam"
+        assert game_mode == "squad"
+        assert max_matches == 12
+        assert parse_profile == "zone_only"
+        assert position_interval_seconds == 30
+        return IngestJobResult(
+            id="job_sample_matches",
+            job_type="sample_matches",
+            status="running",
+            source_ref="samples:steam:squad:max=12:profile=zone_only:interval=30",
+            total_count=0,
+            success_count=0,
+            skipped_count=0,
+            failed_count=0,
+            retry_count=0,
+            started_at="2026-06-05T00:00:00+00:00",
+            finished_at=None,
+            error_code=None,
+            error_message=None,
+            warnings=[],
+        )
+
     def download_match_telemetry(self, match_id: str) -> IngestJobResult:
         assert match_id == "match-1"
         return _job(job_id="job_telemetry")
@@ -40,12 +72,38 @@ class FakeIngestService:
         return _job(job_id="job_parse")
 
     def get_job(self, job_id: str) -> IngestJobResult:
+        if job_id == "job_missing":
+            raise AppError(
+                code="INGEST_JOB_NOT_FOUND",
+                message="ingest job 'job_missing' was not found",
+                status_code=404,
+                details={"job_id": job_id},
+            )
         assert job_id == "job_tournament"
         return _job(job_id=job_id)
 
     def retry_job(self, job_id: str) -> IngestJobResult:
         assert job_id == "job_tournament"
         return _job(job_id="job_retry", retry_count=1)
+
+    def cancel_job(self, job_id: str) -> IngestJobResult:
+        assert job_id == "job_sample_matches"
+        return IngestJobResult(
+            id=job_id,
+            job_type="sample_matches",
+            status="cancelled",
+            source_ref="samples:steam:squad:max=12:profile=zone_only:interval=30",
+            total_count=12,
+            success_count=2,
+            skipped_count=1,
+            failed_count=0,
+            retry_count=0,
+            started_at="2026-06-05T00:00:00+00:00",
+            finished_at="2026-06-05T00:02:00+00:00",
+            error_code=None,
+            error_message=None,
+            warnings=[],
+        )
 
 
 def test_ingest_tournament_api_returns_job_status() -> None:
@@ -64,6 +122,42 @@ def test_ingest_tournament_api_returns_job_status() -> None:
     assert "api_key" not in body
 
 
+def test_ingest_squad_samples_api_returns_job_status() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    app.dependency_overrides[get_sample_ingest_runner] = lambda: (
+        lambda _job_id, _platform, _game_mode, _max_matches, _parse_profile, _interval: None
+    )
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/ingest/samples/squad?max_matches=12"
+            "&parse_profile=zone_only&position_interval_seconds=30"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "job_sample_matches"
+    assert body["job_type"] == "sample_matches"
+    assert body["status"] == "running"
+    assert body["source_ref"] == "samples:steam:squad:max=12:profile=zone_only:interval=30"
+
+
+def test_cancel_job_api_returns_cancelled_job() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.post("/api/ingest/jobs/job_sample_matches/cancel")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "job_sample_matches"
+    assert body["status"] == "cancelled"
+
+
 def test_retry_job_api_returns_new_job() -> None:
     app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
     client = TestClient(app)
@@ -76,6 +170,18 @@ def test_retry_job_api_returns_new_job() -> None:
     body = response.json()
     assert body["id"] == "job_retry"
     assert body["retry_count"] == 1
+
+
+def test_get_missing_job_api_returns_not_found_error() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.get("/api/ingest/jobs/job_missing")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "INGEST_JOB_NOT_FOUND"
 
 
 def test_parse_match_telemetry_api_returns_job_status() -> None:

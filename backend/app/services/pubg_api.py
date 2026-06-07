@@ -27,6 +27,15 @@ class PubgApiClient:
     def get_tournament_match(self, match_id: str) -> dict[str, Any]:
         return self._get_json(f"/shards/tournament/matches/{match_id}", authenticated=False)
 
+    def get_match_samples(self, platform: str) -> dict[str, Any]:
+        return self._get_json(f"/shards/{_path_segment(platform)}/samples", authenticated=True)
+
+    def get_match(self, match_id: str, platform: str) -> dict[str, Any]:
+        return self._get_json(
+            f"/shards/{_path_segment(platform)}/matches/{_path_segment(match_id)}",
+            authenticated=False,
+        )
+
     def download_telemetry(self, telemetry_url: str) -> bytes:
         with self._client() as client:
             try:
@@ -88,3 +97,15 @@ class PubgApiClient:
             follow_redirects=True,
             transport=self.transport,
         )
+
+
+def _path_segment(value: str) -> str:
+    normalized = value.strip()
+    if not normalized or "/" in normalized:
+        raise AppError(
+            code="PUBG_API_PATH_INVALID",
+            message="PUBG API path segment must be non-empty and cannot contain '/'",
+            status_code=400,
+            details={"value": value},
+        )
+    return normalized

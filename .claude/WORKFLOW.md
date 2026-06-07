@@ -15,6 +15,33 @@ Claude Code 开发工作的轻量级可恢复台账。
 
 ## Completed
 
+### WF-2026-06-07-001 — 多工作区前端重设计
+Completed: 2026-06-07
+Level: 2
+
+Close summary:
+- Outcome: 已用 Open Design 在 `pubg-zone-predictor-redesign/multi-surface-redesign.html` 重新规划多工作区界面，并在 React 中将功能拆为 `战术预测`、`官方采集`、`数据准备` 三个顶部切换的独立工作区。
+- Validation: `npm run build:frontend` 通过；采集请求仍复用后端 `/api/ingest/*`，不暴露 `PUBG_API_KEY`。
+- Gaps: 未启动浏览器做真实视觉/交互验收；未真实调用 PUBG 官方 API 做端到端采集 smoke。
+
+Archived execution:
+- Intent: 用户反馈不建议所有功能都在一个界面后，使用 Open Design 重新设计并实现分工作区前端。
+- Plan:
+  - [done] P1 — 用 Open Design 创建 `multi-surface-redesign.html`，规划工作区切换。
+  - [done] P2 — React 顶部新增 `战术预测`、`官方采集`、`数据准备` 工作区切换。
+  - [done] P3 — 将采集控制台和热点/训练从预测面板移出，分别放入独立 ops 面板。
+  - [done] P4 — 运行前端构建验证。
+- Key changes:
+  - `战术预测` 工作区只保留地图、路线策略、坐标、LLM 解释和预测结果。
+  - `官方采集` 工作区独立承载 tournament list、tournament match、telemetry download/parse 和 job retry。
+  - `数据准备` 工作区独立承载热点生成和模型训练。
+  - 采集请求保留 AbortController/request id；输入字段保留 label/id。
+- Validation:
+  - `npm run build:frontend` 通过。
+- Deferred / gaps:
+  - 浏览器人工确认顶部切换、ops 面板滚动和三工作区信息密度。
+  - 使用真实 tournament/match id 做官方 API 端到端采集 smoke。
+
 ### WF-2026-06-06-004 — Open Design 前端 Redesign
 Completed: 2026-06-06
 Level: 3

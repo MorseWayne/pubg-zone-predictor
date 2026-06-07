@@ -13,5 +13,5 @@ def health_check() -> dict[str, str]:
         "service": settings.app_name,
         "version": settings.app_version,
         "environment": settings.environment,
-        "config_dir": str(settings.config_dir),
+        "config_dir": str(settings.config_dir.resolve()),
     }

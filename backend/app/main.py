@@ -10,10 +10,12 @@ from app.api.predict import router as predict_router
 from app.api.training import router as training_router
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.db.migrations import initialize_database
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    initialize_database(settings.database_path)
     app = FastAPI(title=settings.app_name, version=settings.app_version)
     app.add_middleware(
         CORSMiddleware,

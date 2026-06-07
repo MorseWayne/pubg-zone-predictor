@@ -48,8 +48,7 @@ npm run dev:backend
 - `GET /api/assets/maps/{map_id}`：查看地图资源缓存状态。
 - `POST /api/assets/maps/{map_id}/ensure`：按需下载并校验地图资源。
 - `GET /api/assets/maps/{map_id}/image`：返回本地缓存地图 PNG。
-- `POST /api/ingest/tournaments`：采集 tournament 列表元数据。
-- `POST /api/ingest/tournaments/{tournament_id}`：采集 tournament 下的 match 与 telemetry URL 元数据。
+- `POST /api/ingest/samples/squad?platform=steam`：从普通 match samples 采集默认 squad 对局，自动下载 telemetry 并解析入库。
 - `POST /api/ingest/matches/{match_id}/telemetry`：下载指定 match 的 telemetry 到本地缓存。
 - `POST /api/ingest/matches/{match_id}/telemetry/parse`：解析本地 telemetry 缓存并写入圈阶段、roster、位置样本和 life events。
 - `GET /api/ingest/jobs/{job_id}`：查看采集任务状态。
@@ -85,7 +84,7 @@ P10 后，前端工作台只通过 FastAPI 完成核心本地纵切：
 7. 在底图上设置当前圈中心和战队位置，选择路线策略，然后点击“生成预测”。
 8. 若热点或模型样本不足，前端会展示 warnings；预测仍可通过规则基线和无热点路线降级返回。
 
-采集 tournament、下载 telemetry、解析 match 仍通过 `/api/ingest/*` API 或后续 P11 验收流程执行；P10 不在前端提供完整采集控制台。
+普通 squad 样本采集通过前端“官方采集”工作区一键执行；采集会自动完成 match 元数据落库、telemetry 缓存和解析。
 
 ## 验证命令
 
@@ -105,7 +104,7 @@ cp .env.example .env
 
 重要约束：
 
-- `PUBG_API_KEY` 只由后端读取，不进入前端；真实采集 tournament 列表和 tournament 详情时必须配置。
+- `PUBG_API_KEY` 只由后端读取，不进入前端；真实采集普通 samples 时必须配置。
 - `PUBG_API_BASE_URL` 默认是 `https://api.pubg.com`。
 - `PUBG_TELEMETRY_CACHE_DIR` 默认是 `data/telemetry`，用于保存下载后的 telemetry JSON。
 - `APP_MODEL_DIR` 默认是 `data/models`，用于保存本地训练产物 JSON。

@@ -9,7 +9,7 @@ from app.db.migrations import initialize_database
 def test_initialize_database_applies_initial_schema(database_path: Path) -> None:
     applied = initialize_database(database_path)
 
-    assert [migration.version for migration in applied] == ["001"]
+    assert [migration.version for migration in applied] == ["001", "002"]
 
     with connect_database(database_path) as connection:
         tables = {
@@ -27,12 +27,20 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
     assert "hotspot_tiles" in tables
     assert "model_metrics" in tables
 
+    with connect_database(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO ingest_jobs (id, job_type, status)
+            VALUES ('job_sample', 'sample_matches', 'completed')
+            """
+        )
+
 
 def test_initialize_database_is_idempotent(database_path: Path) -> None:
     first_run = initialize_database(database_path)
     second_run = initialize_database(database_path)
 
-    assert [migration.version for migration in first_run] == ["001"]
+    assert [migration.version for migration in first_run] == ["001", "002"]
     assert second_run == []
 
 

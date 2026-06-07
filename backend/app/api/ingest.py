@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.core.config import Settings, get_settings
 from app.db.connection import connect_database
-from app.services.ingest import IngestJobResult, IngestService
+from app.services.ingest import (
+    DEFAULT_SAMPLE_PARSE_PROFILE,
+    DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+    IngestJobResult,
+    IngestService,
+)
 from app.services.pubg_api import PubgApiClient
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
@@ -56,6 +61,47 @@ def get_ingest_service(
 IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
 
 
+SampleIngestRunner = Callable[[str, str, str, int | None, str, int], None]
+
+
+def get_sample_ingest_runner(settings: SettingsDep) -> SampleIngestRunner:
+    def run(
+        job_id: str,
+        platform: str,
+        game_mode: str,
+        max_matches: int | None,
+        parse_profile: str,
+        position_interval_seconds: int,
+    ) -> None:
+        connection = connect_database(settings.database_path)
+        try:
+            pubg_client = PubgApiClient(
+                api_key=settings.pubg_api_key,
+                base_url=settings.pubg_api_base_url,
+                timeout_seconds=settings.pubg_api_timeout_seconds,
+            )
+            service = IngestService(
+                connection=connection,
+                pubg_client=pubg_client,
+                telemetry_cache_dir=settings.telemetry_cache_dir,
+            )
+            service.run_sample_matches_job(
+                job_id,
+                platform=platform,
+                game_mode=game_mode,
+                max_matches=max_matches,
+                parse_profile=parse_profile,
+                position_interval_seconds=position_interval_seconds,
+            )
+        finally:
+            connection.close()
+
+    return run
+
+
+SampleIngestRunnerDep = Annotated[SampleIngestRunner, Depends(get_sample_ingest_runner)]
+
+
 @router.post("/tournaments")
 def ingest_tournaments(ingest_service: IngestServiceDep) -> dict[str, object]:
     return _job_response(ingest_service.ingest_tournaments())
@@ -67,6 +113,42 @@ def ingest_tournament(
     ingest_service: IngestServiceDep,
 ) -> dict[str, object]:
     return _job_response(ingest_service.ingest_tournament(tournament_id))
+
+
+@router.post("/samples/squad")
+def ingest_squad_samples(
+    background_tasks: BackgroundTasks,
+    ingest_service: IngestServiceDep,
+    sample_ingest_runner: SampleIngestRunnerDep,
+    platform: str = Query(default="steam", pattern=r"^[a-z0-9-]+$"),
+    max_matches: int = Query(default=20, ge=1, le=100),
+    parse_profile: str = Query(
+        default=DEFAULT_SAMPLE_PARSE_PROFILE,
+        pattern=r"^(full|hotspot_light|zone_only)$",
+    ),
+    position_interval_seconds: int = Query(
+        default=DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+        ge=5,
+        le=120,
+    ),
+) -> dict[str, object]:
+    job = ingest_service.start_sample_matches(
+        platform=platform,
+        game_mode="squad",
+        max_matches=max_matches,
+        parse_profile=parse_profile,
+        position_interval_seconds=position_interval_seconds,
+    )
+    background_tasks.add_task(
+        sample_ingest_runner,
+        job.id,
+        platform,
+        "squad",
+        max_matches,
+        parse_profile,
+        position_interval_seconds,
+    )
+    return _job_response(job)
 
 
 @router.post("/matches/{match_id}/telemetry")
@@ -93,6 +175,11 @@ def get_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
 @router.post("/jobs/{job_id}/retry")
 def retry_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
     return _job_response(ingest_service.retry_job(job_id))
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
+    return _job_response(ingest_service.cancel_job(job_id))
 
 
 def _job_response(job: IngestJobResult) -> dict[str, object]:

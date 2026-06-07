@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 
-@dataclass(frozen=True)
+@dataclass
 class AppError(Exception):
     code: str
     message: str
