@@ -15,6 +15,107 @@ Claude Code 开发工作的轻量级可恢复台账。
 
 ## Completed
 
+### WF-2026-06-08-003 — 落地 Open Design 全新前端视觉
+Completed: 2026-06-08
+Level: 2
+
+Close summary:
+- Outcome: 已将 `radical-ops-redesign.html` 的 warm paper + frosted ops 方向落地到 React/shadcn 前端：预测页改为左 rail、顶部 command strip、中部地图沙盘 + 决策卡、底部采集/准备控制台。
+- Validation: `npm --prefix /home/wayne/source/open/pubg-zone-predictor/frontend run build` 通过。
+- Gaps: 未启动浏览器做真实视觉/交互验收；本轮未提交；本会话中曾误触多次 Open Design active context 查询，后续应避免重复调用。
+
+Archived execution:
+- Intent: 将 Open Design `radical-ops-redesign.html` 的全新视觉方向落地到 React/shadcn 前端，保留现有功能行为。
+- Plan:
+  - [done] P1 — 重构预测页为左 rail、顶部 command strip、中部地图沙盘 + 决策卡、底部采集/准备控制台。
+  - [done] P2 — 运行前端构建验证并记录结果。
+- Key changes:
+  - `App` 主预测 surface 改为单屏作战台结构；采集和准备聚焦页继续保留在 rail tab。
+  - `styles.css` 新增 Radical Ops 覆盖样式：浅色背景、frosted panels、orange/blue accents、地图沙盘 overlay 和底部控制台布局。
+- Validation:
+  - 前端生产构建通过。
+- Deferred / gaps:
+  - 浏览器人工确认视觉比例、地图遮罩可读性、底部表格密度和响应式表现。
+
+### WF-2026-06-08-002 — Open Design 全新前端视觉方案
+Completed: 2026-06-08
+Level: 2
+
+Close summary:
+- Outcome: 已在 Open Design 项目 `PUBG Zone Predictor Redesign` 中创建并写入新设计稿 `radical-ops-redesign.html`，采用浅色 glassmorphism + digital sand table 风格，打破原暗色军绿工作台风格。
+- Validation: 已通过 Open Design `get_artifact` 读取确认 artifact 存在且未截断。
+- Gaps: 仅完成设计稿，尚未落地到 React/shadcn 代码；未做浏览器交互验收。
+
+Archived execution:
+- Intent: 使用 Open Design 重新设计前端 UI，允许打破现有样式风格，先产出可视化设计稿。
+- Plan:
+  - [done] P1 — 在 Open Design 中创建新版本 HTML 设计稿。
+  - [done] P2 — 总结设计方向、交互结构和后续落地建议。
+- Key changes:
+  - 新设计强调单屏作战台：左侧窄 rail、顶部 command strip、中部大地图沙盘 + 右侧决策卡组、底部数据采集/准备控制台。
+  - 视觉从暗色战术 HUD 转为 warm paper + frosted panel + orange/blue action accents。
+- Validation:
+  - Open Design artifact `radical-ops-redesign.html` 创建后成功读取，`truncated: false`。
+- Deferred / gaps:
+  - 后续若认可方向，再将设计落地到 `frontend/src/App.tsx` 与 `frontend/src/styles.css`。
+
+### WF-2026-06-08-001 — shadcn 前端 UI 重构
+Completed: 2026-06-08
+Level: 2
+
+Close summary:
+- Outcome: 已初始化 shadcn/base-nova 与 Tailwind v4，新增所需 UI 组件源码，并将主工作区、预测面板、采集管理、match 表格、数据准备、状态/结果展示改为 shadcn 组件组合。
+- Validation: `npm --prefix /home/wayne/source/open/pubg-zone-predictor/frontend run build` 通过两次；GitNexus impact 对主要 UI 组件为 LOW；`detect_changes(scope=all)` 已执行且因工作树包含既有后端删除 API/文档改动显示 CRITICAL。
+- Gaps: 未启动浏览器做真实视觉/交互验收；用户中断后未运行 reviewer 子代理；未提交。
+
+Archived execution:
+- Intent: 使用 shadcn/ui 重构当前 React 前端界面，保留现有预测、采集管理和数据准备行为。
+- Plan:
+  - [done] P1 — 初始化 shadcn/Tailwind 配置并添加必要 UI 组件。
+  - [done] P2 — 用 shadcn 组件重构 App 主界面、采集管理、数据准备与结果展示。
+  - [done] P3 — 运行前端构建与必要检查，记录验证结果。
+- Key changes:
+  - 新增 `frontend/components.json`、`src/lib/utils.ts`、shadcn UI 组件源码，并补齐 `@/*` alias、Tailwind Vite 插件和相关 npm 依赖。
+  - `App` 主导航改用 shadcn `Tabs`；地图/Zone/路线/采集 profile 改用 shadcn `Select`；按钮、卡片、状态、提示、进度、表格、空/加载态改用 shadcn 组件组合。
+  - CSS 收敛旧按钮选择器，避免覆盖 shadcn `Button` variants，并兼容 base-ui `data-active` tab 状态。
+- Validation:
+  - `npm --prefix /home/wayne/source/open/pubg-zone-predictor/frontend run build` 通过（两次）。
+  - GitNexus impact：`App` LOW；`IngestConsolePanel` LOW；`PredictionPanel` LOW；`DataPrepPanel` LOW。
+  - `gitnexus_detect_changes(scope=all)` 已执行，显示 CRITICAL；主要因当前工作树还包含既有后端采集/删除 API、AGENTS/CLAUDE 等改动，不仅是本轮 shadcn UI。
+- Deferred / gaps:
+  - 浏览器真实视觉/交互验收。
+  - 如需提交，应先确认是否把既有后端采集删除改动与本轮 shadcn 前端改动拆分提交。
+
+### WF-2026-06-07-002 — 数据采集与管理界面实现
+Completed: 2026-06-07
+Level: 2
+
+Close summary:
+- Outcome: 已将采集管理 UI 简化为实用操作台，并新增真实后端浏览/删除能力：`GET /api/ingest/matches` 浏览已采集 match，`DELETE /api/ingest/matches/{match_id}` 删除 match 及级联解析数据，并尝试删除本地 telemetry cache 文件。
+- Validation: 前端构建通过；`backend/tests/test_ingest_api.py` 与 `backend/tests/services/test_ingest_service.py` 通过；后端改动文件 Ruff 通过；GitNexus detect_changes 已执行，风险为 CRITICAL（真实删除 API + 既有 AGENTS/CLAUDE 修改也在 scope=all 中）。
+- Gaps: 未启动浏览器做真实视觉验收；未用真实 DB 执行人工删除 smoke；当前删除是硬删除，不提供回收站恢复。
+
+Archived execution:
+- Intent: 将 Open Design 的数据采集与管理控制台实现到现有前端，并按用户反馈改为简化 UI，支持浏览和直接删除。
+- Plan:
+  - [done] P1 — 落地采集管理工作区 UI。
+  - [done] P2 — 新增真实 match 浏览与删除 API，并接入前端。
+  - [done] P3 — 运行前后端验证并更新 ledger。
+- Key changes:
+  - `官方采集` 更名为 `数据采集与管理`，保留 sample squad 采集、重试、取消现有 API 能力。
+  - 前端去除复杂规划/删除预览 UI，改为采集表单、任务操作和真实 match 列表。
+  - 后端新增 `IngestMatchAsset`、`DeleteMatchResult`、`IngestService.list_matches()`、`IngestService.delete_match()`。
+  - API 新增 `GET /api/ingest/matches` 与 `DELETE /api/ingest/matches/{match_id}`；删除依赖 SQLite 外键级联清理关联表，并尝试删除本地 telemetry cache 文件。
+  - 修复 `run_sample_matches_job` 中 Ruff B012 提示，避免 `finally` 内 return/break。
+- Validation:
+  - `npm run build --prefix /home/wayne/source/open/pubg-zone-predictor/frontend` 通过。
+  - `.venv/bin/pytest backend/tests/test_ingest_api.py backend/tests/services/test_ingest_service.py -q`：19 passed，1 个 Starlette/httpx deprecation warning。
+  - `.venv/bin/ruff check backend/app/api/ingest.py backend/app/services/ingest.py backend/tests/test_ingest_api.py` 通过。
+  - GitNexus impact：`App` LOW；`IngestConsolePanel` LOW；`IngestService` LOW；`get_job` LOW。`detect_changes(scope=all)` 已执行。
+- Deferred / gaps:
+  - 浏览器人工视觉/交互验收与真实采集/删除 smoke。
+  - 若需要误删恢复，后续应改为软删除/回收站模型。
+
 ### WF-2026-06-07-001 — 多工作区前端重设计
 Completed: 2026-06-07
 Level: 2
