@@ -47,6 +47,35 @@ class IngestJobResult:
     warnings: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class IngestMatchAsset:
+    match_id: str
+    map_name: str
+    shard_id: str | None
+    game_mode: str | None
+    match_type: str | None
+    created_at: str | None
+    duration: int | None
+    ingest_status: str
+    telemetry_url: str | None
+    telemetry_cache_path: str | None
+    telemetry_parse_status: str | None
+    telemetry_downloaded_at: str | None
+    circle_phase_count: int
+    position_sample_count: int
+    life_event_count: int
+
+
+@dataclass(frozen=True)
+class DeleteMatchResult:
+    match_id: str
+    deleted: bool
+    telemetry_cache_deleted: bool
+    circle_phase_count: int
+    position_sample_count: int
+    life_event_count: int
+
+
 @dataclass
 class IngestService:
     connection: sqlite3.Connection
@@ -55,6 +84,91 @@ class IngestService:
 
     def __post_init__(self) -> None:
         self.repo = SQLiteRepository(self.connection)
+
+    def list_matches(self, *, limit: int = 50) -> list[IngestMatchAsset]:
+        rows = self.repo.fetch_all(
+            """
+            SELECT
+                m.match_id,
+                m.map_name,
+                m.shard_id,
+                m.game_mode,
+                m.match_type,
+                m.created_at,
+                m.duration,
+                m.ingest_status,
+                m.telemetry_url,
+                ta.cache_path AS telemetry_cache_path,
+                ta.parse_status AS telemetry_parse_status,
+                ta.downloaded_at AS telemetry_downloaded_at,
+                (
+                    SELECT COUNT(*)
+                    FROM circle_phases cp
+                    WHERE cp.match_id = m.match_id
+                ) AS circle_phase_count,
+                (
+                    SELECT COUNT(*)
+                    FROM player_position_samples ps
+                    WHERE ps.match_id = m.match_id
+                ) AS position_sample_count,
+                (
+                    SELECT COUNT(*)
+                    FROM player_life_events le
+                    WHERE le.match_id = m.match_id
+                ) AS life_event_count
+            FROM matches m
+            LEFT JOIN telemetry_assets ta ON ta.match_id = m.match_id
+            ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [self._match_asset(row) for row in rows]
+
+    def delete_match(self, match_id: str) -> DeleteMatchResult:
+        match = self.repo.fetch_one(
+            """
+            SELECT
+                ta.cache_path AS telemetry_cache_path,
+                (SELECT COUNT(*) FROM circle_phases WHERE match_id = ?) AS circle_phase_count,
+                (
+                    SELECT COUNT(*)
+                    FROM player_position_samples
+                    WHERE match_id = ?
+                ) AS position_sample_count,
+                (SELECT COUNT(*) FROM player_life_events WHERE match_id = ?) AS life_event_count
+            FROM matches m
+            LEFT JOIN telemetry_assets ta ON ta.match_id = m.match_id
+            WHERE m.match_id = ?
+            """,
+            (match_id, match_id, match_id, match_id),
+        )
+        if match is None:
+            raise AppError(
+                code="INGEST_MATCH_NOT_FOUND",
+                message=f"match '{match_id}' was not found",
+                status_code=404,
+                details={"match_id": match_id},
+            )
+
+        telemetry_cache_deleted = False
+        cache_path_value = match["telemetry_cache_path"]
+        if cache_path_value:
+            cache_path = Path(cache_path_value)
+            if cache_path.exists() and cache_path.is_file():
+                cache_path.unlink()
+                telemetry_cache_deleted = True
+
+        self.repo.execute("DELETE FROM matches WHERE match_id = ?", (match_id,))
+        self.connection.commit()
+        return DeleteMatchResult(
+            match_id=match_id,
+            deleted=True,
+            telemetry_cache_deleted=telemetry_cache_deleted,
+            circle_phase_count=int(match["circle_phase_count"]),
+            position_sample_count=int(match["position_sample_count"]),
+            life_event_count=int(match["life_event_count"]),
+        )
 
     def ingest_tournaments(self, *, retry_count: int = 0) -> IngestJobResult:
         job_id = self._create_job("tournament_list", "pubg-api", retry_count=retry_count)
@@ -218,6 +332,7 @@ class IngestService:
                 match_refs = match_refs[:max_matches]
             stats = _empty_stats(total_count=len(match_refs))
             self._update_job_progress(job_id, stats, warnings=warnings)
+            cancelled = False
 
             for match_id in match_refs:
                 if self._is_job_cancelled(job_id):
@@ -263,10 +378,11 @@ class IngestService:
                     warnings.append(f"match '{match_id}' failed: {exc.message}")
                 finally:
                     self._update_job_progress(job_id, stats, warnings=warnings)
-                    if self._is_job_cancelled(job_id):
-                        return
+                    cancelled = self._is_job_cancelled(job_id)
+                if cancelled:
+                    break
 
-            if self._is_job_cancelled(job_id):
+            if cancelled or self._is_job_cancelled(job_id):
                 return
             self._complete_job(job_id, stats, warnings=warnings)
         except AppError as exc:
@@ -654,6 +770,26 @@ class IngestService:
             if isinstance(attributes, dict) and attributes.get("URL"):
                 return attributes["URL"]
         return None
+
+    @staticmethod
+    def _match_asset(row: sqlite3.Row) -> IngestMatchAsset:
+        return IngestMatchAsset(
+            match_id=row["match_id"],
+            map_name=row["map_name"],
+            shard_id=row["shard_id"],
+            game_mode=row["game_mode"],
+            match_type=row["match_type"],
+            created_at=row["created_at"],
+            duration=row["duration"],
+            ingest_status=row["ingest_status"],
+            telemetry_url=row["telemetry_url"],
+            telemetry_cache_path=row["telemetry_cache_path"],
+            telemetry_parse_status=row["telemetry_parse_status"],
+            telemetry_downloaded_at=row["telemetry_downloaded_at"],
+            circle_phase_count=int(row["circle_phase_count"]),
+            position_sample_count=int(row["position_sample_count"]),
+            life_event_count=int(row["life_event_count"]),
+        )
 
     @staticmethod
     def _job_result(row: sqlite3.Row) -> IngestJobResult:

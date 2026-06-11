@@ -11,7 +11,9 @@ from app.db.connection import connect_database
 from app.services.ingest import (
     DEFAULT_SAMPLE_PARSE_PROFILE,
     DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+    DeleteMatchResult,
     IngestJobResult,
+    IngestMatchAsset,
     IngestService,
 )
 from app.services.pubg_api import PubgApiClient
@@ -167,6 +169,20 @@ def parse_match_telemetry(
     return _job_response(ingest_service.parse_match_telemetry(match_id))
 
 
+@router.get("/matches")
+def list_matches(
+    ingest_service: IngestServiceDep,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, object]:
+    matches = ingest_service.list_matches(limit=limit)
+    return {"matches": [_match_response(match) for match in matches]}
+
+
+@router.delete("/matches/{match_id}")
+def delete_match(match_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
+    return _delete_match_response(ingest_service.delete_match(match_id))
+
+
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
     return _job_response(ingest_service.get_job(job_id))
@@ -180,6 +196,37 @@ def retry_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
     return _job_response(ingest_service.cancel_job(job_id))
+
+
+def _match_response(match: IngestMatchAsset) -> dict[str, object]:
+    return {
+        "match_id": match.match_id,
+        "map_name": match.map_name,
+        "shard_id": match.shard_id,
+        "game_mode": match.game_mode,
+        "match_type": match.match_type,
+        "created_at": match.created_at,
+        "duration": match.duration,
+        "ingest_status": match.ingest_status,
+        "telemetry_url": match.telemetry_url,
+        "telemetry_cache_path": match.telemetry_cache_path,
+        "telemetry_parse_status": match.telemetry_parse_status,
+        "telemetry_downloaded_at": match.telemetry_downloaded_at,
+        "circle_phase_count": match.circle_phase_count,
+        "position_sample_count": match.position_sample_count,
+        "life_event_count": match.life_event_count,
+    }
+
+
+def _delete_match_response(result: DeleteMatchResult) -> dict[str, object]:
+    return {
+        "match_id": result.match_id,
+        "deleted": result.deleted,
+        "telemetry_cache_deleted": result.telemetry_cache_deleted,
+        "circle_phase_count": result.circle_phase_count,
+        "position_sample_count": result.position_sample_count,
+        "life_event_count": result.life_event_count,
+    }
 
 
 def _job_response(job: IngestJobResult) -> dict[str, object]:

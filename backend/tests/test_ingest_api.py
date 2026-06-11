@@ -1,7 +1,7 @@
 from app.api.ingest import get_ingest_service, get_sample_ingest_runner
 from app.core.errors import AppError
 from app.main import app
-from app.services.ingest import IngestJobResult
+from app.services.ingest import DeleteMatchResult, IngestJobResult, IngestMatchAsset
 from fastapi.testclient import TestClient
 
 
@@ -105,6 +105,39 @@ class FakeIngestService:
             warnings=[],
         )
 
+    def list_matches(self, *, limit: int) -> list[IngestMatchAsset]:
+        assert limit == 25
+        return [
+            IngestMatchAsset(
+                match_id="match-1",
+                map_name="Erangel",
+                shard_id="steam",
+                game_mode="squad",
+                match_type="official",
+                created_at="2026-06-05T00:00:00+00:00",
+                duration=1800,
+                ingest_status="completed",
+                telemetry_url="https://example.test/telemetry.json",
+                telemetry_cache_path="/tmp/match-1.json",
+                telemetry_parse_status="completed",
+                telemetry_downloaded_at="2026-06-05T00:01:00+00:00",
+                circle_phase_count=6,
+                position_sample_count=120,
+                life_event_count=8,
+            )
+        ]
+
+    def delete_match(self, match_id: str) -> DeleteMatchResult:
+        assert match_id == "match-1"
+        return DeleteMatchResult(
+            match_id="match-1",
+            deleted=True,
+            telemetry_cache_deleted=True,
+            circle_phase_count=6,
+            position_sample_count=120,
+            life_event_count=8,
+        )
+
 
 def test_ingest_tournament_api_returns_job_status() -> None:
     app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
@@ -194,3 +227,33 @@ def test_parse_match_telemetry_api_returns_job_status() -> None:
 
     assert response.status_code == 200
     assert response.json()["id"] == "job_parse"
+
+
+def test_list_matches_api_returns_assets() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.get("/api/ingest/matches?limit=25")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["matches"][0]["match_id"] == "match-1"
+    assert body["matches"][0]["circle_phase_count"] == 6
+    assert "api_key" not in body["matches"][0]
+
+
+def test_delete_match_api_returns_deleted_counts() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.delete("/api/ingest/matches/match-1")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted"] is True
+    assert body["telemetry_cache_deleted"] is True
+    assert body["position_sample_count"] == 120
