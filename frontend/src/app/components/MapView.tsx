@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { Point } from "./TacticalPrediction";
+import { PredictResponse } from "../api";
 
 interface MapViewProps {
   selectedMap: string;
@@ -10,9 +11,39 @@ interface MapViewProps {
   zoneStage: number;
   predState: 'idle' | 'loading' | 'success' | 'error';
   strategy: string;
+  prediction: PredictResponse | null;
+  worldSize: number;
+  currentRadius: number;
+  mapImageUrl: string;
 }
 
-export function MapView({ selectedMap, mapMode, zoneCenter, teamPos, onClick, zoneStage, predState, strategy }: MapViewProps) {
+const MAP_VIEW_SIZE = 1000;
+
+function worldToMapPoint(point: Point, worldSize: number): Point {
+  return {
+    x: (point.x / worldSize) * MAP_VIEW_SIZE,
+    y: (point.y / worldSize) * MAP_VIEW_SIZE,
+  };
+}
+
+function worldRadiusToMap(radius: number, worldSize: number) {
+  return (radius / worldSize) * MAP_VIEW_SIZE;
+}
+
+export function MapView({
+  selectedMap,
+  mapMode,
+  zoneCenter,
+  teamPos,
+  onClick,
+  zoneStage,
+  predState,
+  strategy,
+  prediction,
+  worldSize,
+  currentRadius,
+  mapImageUrl,
+}: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -111,25 +142,25 @@ export function MapView({ selectedMap, mapMode, zoneCenter, teamPos, onClick, zo
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
     
-    const x = (mouseX - transform.x) / transform.scale;
-    const y = (mouseY - transform.y) / transform.scale;
+    const x = ((mouseX - transform.x) / transform.scale / rect.width) * MAP_VIEW_SIZE;
+    const y = ((mouseY - transform.y) / transform.scale / rect.height) * MAP_VIEW_SIZE;
     
-    onClick({ x, y });
+    onClick({
+      x: Math.max(0, Math.min(MAP_VIEW_SIZE, x)),
+      y: Math.max(0, Math.min(MAP_VIEW_SIZE, y)),
+    });
   };
 
-  const zoneRadius = Math.max(50, 400 - (zoneStage * 40));
-  const nextZoneRadius = zoneRadius * 0.6;
-  const finalZoneRadius = 20;
-
-  // Mock prediction coordinates based on center
-  const nextZoneCenter = zoneCenter ? { x: zoneCenter.x - 40, y: zoneCenter.y - 30 } : null;
-  const finalZoneCenter = zoneCenter ? { x: zoneCenter.x - 60, y: zoneCenter.y - 50 } : null;
-
-  const getMapImage = (mapId: string) => {
-    if (mapId === 'miramar') return 'https://raw.githubusercontent.com/pubg/api-assets/master/Assets/Maps/Miramar_Main_Low_Res.png';
-    if (mapId === 'erangel') return 'https://raw.githubusercontent.com/pubg/api-assets/master/Assets/Maps/Erangel_Main_Low_Res.png';
-    return 'https://images.unsplash.com/photo-1446776899648-aa78eefe8ed0?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzYXRlbGxpdGUlMjBtYXAlMjB0ZXh0dXJlfGVufDF8fHx8MTc4MTE5Mzc5N3ww&ixlib=rb-4.1.0&q=80&w=1080';
-  };
+  const zoneRadius = worldRadiusToMap(currentRadius, worldSize);
+  const nextZoneCenter = prediction ? worldToMapPoint(prediction.next_circle.center, worldSize) : null;
+  const finalZoneCenter = prediction ? worldToMapPoint(prediction.final_circle.center, worldSize) : null;
+  const nextZoneRadius = prediction ? worldRadiusToMap(prediction.next_circle.radius, worldSize) : 0;
+  const finalZoneRadius = prediction ? worldRadiusToMap(prediction.final_circle.radius, worldSize) : 0;
+  const routePoints = prediction?.route.waypoints.map((point) => worldToMapPoint(point, worldSize)) ?? [];
+  const routePath =
+    routePoints.length >= 2
+      ? routePoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ")
+      : null;
 
   return (
     <div 
@@ -148,14 +179,16 @@ export function MapView({ selectedMap, mapMode, zoneCenter, teamPos, onClick, zo
       >
         {/* Background Map Image */}
         <img 
-          src={getMapImage(selectedMap)} 
-          alt="Map Base" 
-          className={`absolute inset-0 w-full h-full object-cover pointer-events-none ${selectedMap === 'miramar' || selectedMap === 'erangel' ? 'opacity-80 mix-blend-normal' : 'opacity-40 mix-blend-luminosity'}`}
+          src={mapImageUrl}
+          alt={`${selectedMap} map base`}
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-80 mix-blend-normal"
         />
 
         <svg 
           width="100%" 
           height="100%" 
+          viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
+          preserveAspectRatio="none"
           className="absolute inset-0 pointer-events-none"
         >
         {/* Grid Overlay */}
@@ -184,18 +217,31 @@ export function MapView({ selectedMap, mapMode, zoneCenter, teamPos, onClick, zo
              {/* Final Zone Area */}
              <circle cx={finalZoneCenter.x} cy={finalZoneCenter.y} r={finalZoneRadius} fill="rgba(168, 85, 247, 0.3)" stroke="#a855f7" strokeWidth="2" />
              
-             {/* Route path based on strategy */}
-             <path 
-               d={`M ${teamPos.x} ${teamPos.y} Q ${teamPos.x + (strategy === 'avoid' ? 100 : 0)} ${teamPos.y - 100} ${finalZoneCenter.x} ${finalZoneCenter.y}`} 
-               fill="none" 
-               stroke="#f97316" 
-               strokeWidth="3" 
-               strokeDasharray="6 6"
-               className="drop-shadow-md"
-             />
+             {routePath && (
+               <path
+                 d={routePath}
+                 fill="none"
+                 stroke="#f97316"
+                 strokeWidth="3"
+                 strokeDasharray={strategy === 'avoid' ? "8 5" : "6 6"}
+                 className="drop-shadow-md"
+               />
+             )}
 
              {/* Hotspot rendering along route */}
-             <circle cx={(teamPos.x + finalZoneCenter.x)/2 + 20} cy={(teamPos.y + finalZoneCenter.y)/2 - 30} r={30} fill="url(#heatmap)" opacity="0.6" />
+             {prediction?.hotspot_summary.top_tiles.slice(0, 4).map((tile) => {
+               const tileSize = MAP_VIEW_SIZE / prediction.hotspot_summary.grid_size;
+               return (
+                 <circle
+                   key={`${tile.tile_x}-${tile.tile_y}`}
+                   cx={(tile.tile_x + 0.5) * tileSize}
+                   cy={(tile.tile_y + 0.5) * tileSize}
+                   r={Math.max(16, tileSize * 0.75)}
+                   fill="url(#heatmap)"
+                   opacity={Math.max(0.25, tile.hotspot_score)}
+                 />
+               );
+             })}
           </g>
         )}
 

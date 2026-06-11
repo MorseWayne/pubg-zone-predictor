@@ -1,4 +1,5 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -52,3 +53,17 @@ def test_foreign_keys_are_enforced(migrated_connection: sqlite3.Connection) -> N
             VALUES ('match-1', 'missing-tournament', 'Erangel_Main')
             """
         )
+
+
+def test_database_connection_can_cross_worker_threads(database_path: Path) -> None:
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        connection = executor.submit(connect_database, database_path).result()
+
+    try:
+        connection.execute("CREATE TABLE thread_probe (id INTEGER PRIMARY KEY)")
+        connection.execute("INSERT INTO thread_probe DEFAULT VALUES")
+        row = connection.execute("SELECT COUNT(*) AS count FROM thread_probe").fetchone()
+    finally:
+        connection.close()
+
+    assert row["count"] == 1

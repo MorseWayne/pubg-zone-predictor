@@ -17,7 +17,7 @@ def connect_database(database_path: Path | str | None = None) -> sqlite3.Connect
     if isinstance(resolved_path, Path):
         resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
-    connection = sqlite3.connect(resolved_path)
+    connection = sqlite3.connect(resolved_path, check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
