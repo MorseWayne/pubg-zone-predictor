@@ -12,6 +12,16 @@
 
 ## 本地开发
 
+如果本机已安装 `make`，可以使用根目录 Makefile 作为开发入口：
+
+```bash
+make setup
+make migrate
+make dev
+```
+
+`make dev` 会同时启动后端和前端；需要单独调试时可分别运行 `make backend` 或 `make frontend`。
+
 ### 1. 安装后端依赖
 
 ```bash
