@@ -119,7 +119,7 @@ cp .env.example .env
 - `PUBG_TELEMETRY_CACHE_DIR` 默认是 `data/telemetry`，用于保存下载后的 telemetry JSON。
 - `APP_MODEL_DIR` 默认是 `data/models`，用于保存本地训练产物 JSON。
 - `PUBG_ASSETS_CACHE_DIR` 默认是 `data/assets/pubg-api-assets`，用于缓存官方地图资源。
-- `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` media 资源，以便下载 Git LFS 中的 high-res PNG 实际内容。
+- `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` raw 资源；遇到 Git LFS 指针时后端会自动切到 media 资源下载实际 PNG。
 - `PUBG_ASSETS_TIMEOUT_SECONDS` 默认 `120`，high-res 地图文件较大，网络较慢时可调高。
 - `LLM_API_KEY` 只用于可选解释层，失败时必须降级为规则解释。
 - CI 默认不调用 PUBG API、GitHub 官方资源或外部 LLM。

@@ -10,6 +10,28 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, apiErrorMessage, IngestJob, IngestMatch } from "../api";
+import { Alert, AlertDescription } from "./ui/alert";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Progress } from "./ui/progress";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./ui/table";
+import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { cn } from "./ui/utils";
 
 type TaskStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
 
@@ -150,148 +172,187 @@ export function DataCollection() {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row h-full w-full bg-neutral-950 p-6 gap-6 overflow-y-auto">
-      <div className="w-full lg:w-96 flex flex-col gap-6 shrink-0">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 shadow-sm">
-          <h2 className="text-lg font-bold flex items-center gap-2 text-white mb-6">
-            <Database className="w-5 h-5 text-blue-400" /> 发起采集任务
-          </h2>
+    <div className="dark flex h-full w-full flex-col gap-6 overflow-y-auto bg-background p-6 text-foreground lg:flex-row">
+      <div className="flex w-full shrink-0 flex-col gap-6 lg:w-96">
+        <Card className="border-border bg-card shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Database className="size-5 text-blue-400" /> 发起采集任务
+            </CardTitle>
+          </CardHeader>
 
-          <div className="space-y-5">
-            <div>
-              <label className="text-sm font-medium text-neutral-300 block mb-2">采集数量限制（场次）</label>
-              <input
+          <CardContent className="flex flex-col gap-5">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="sample-limit">采集数量限制（场次）</Label>
+              <Input
+                id="sample-limit"
                 type="number"
                 min={1}
                 max={100}
                 value={limit}
                 onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
-                className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors"
               />
             </div>
 
-            <div>
-              <label className="text-sm font-medium text-neutral-300 block mb-2">过滤模式</label>
-              <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <Label>过滤模式</Label>
+              <ToggleGroup
+                type="single"
+                value={filterMode}
+                onValueChange={(value) => {
+                  if (value) setFilterMode(value as FilterMode);
+                }}
+                className="flex w-full flex-col items-stretch gap-3"
+                variant="outline"
+              >
                 {filterModes.map((mode) => (
-                  <button
+                  <ToggleGroupItem
                     key={mode.id}
-                    onClick={() => setFilterMode(mode.id)}
-                    className={`p-3 rounded-lg border text-left transition-all ${filterMode === mode.id ? "bg-blue-500/10 border-blue-500" : "bg-neutral-950 border-neutral-800 hover:border-neutral-600"}`}
+                    value={mode.id}
+                    className={cn(
+                      "h-auto justify-start rounded-lg px-3 py-3 text-left",
+                      "data-[state=on]:border-blue-500 data-[state=on]:bg-blue-500/10",
+                    )}
                   >
-                    <div className={`font-medium text-sm ${filterMode === mode.id ? "text-blue-400" : "text-neutral-200"}`}>{mode.label}</div>
-                    <div className="text-xs text-neutral-500 mt-1">{mode.desc}</div>
-                  </button>
+                    <span className="flex min-w-0 flex-col gap-1">
+                      <span
+                        className={cn(
+                          "text-sm font-medium",
+                          filterMode === mode.id ? "text-blue-400" : "text-foreground",
+                        )}
+                      >
+                        {mode.label}
+                      </span>
+                      <span className="text-xs font-normal text-muted-foreground">{mode.desc}</span>
+                    </span>
+                  </ToggleGroupItem>
                 ))}
-              </div>
+              </ToggleGroup>
             </div>
 
-            <button
+            <Button
               disabled={taskStatus === "running"}
               onClick={handleStart}
-              className={`w-full py-3 rounded-lg font-bold flex items-center justify-center gap-2 transition-all ${taskStatus === "running" ? "bg-neutral-800 text-neutral-500 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20 hover:-translate-y-0.5"}`}
+              className="h-11 w-full"
             >
-              <Play className="w-4 h-4 fill-current" /> 开始采集
-            </button>
+              <Play className="fill-current" data-icon="inline-start" /> 开始采集
+            </Button>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 text-red-200 text-sm rounded-lg p-3">
-                {error}
-              </div>
+              <Alert variant="destructive">
+                <AlertCircle />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="flex-1 flex flex-col gap-6 min-w-0">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-5 shadow-sm">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-bold text-white">当前任务</h2>
+      <div className="flex min-w-0 flex-1 flex-col gap-6">
+        <Card className="border-border bg-card shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
+            <CardTitle className="text-lg">当前任务</CardTitle>
             <div className="flex items-center gap-2">
               {taskStatus === "failed" && (
-                <button onClick={handleRetry} className="flex items-center gap-1 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded border border-blue-500/20 text-xs font-medium transition-colors">
-                  <RotateCcw className="w-3 h-3" /> 重试
-                </button>
+                <Button onClick={handleRetry} variant="outline" size="sm">
+                  <RotateCcw data-icon="inline-start" /> 重试
+                </Button>
               )}
               {taskStatus === "running" && (
-                <button onClick={handleStop} className="flex items-center gap-1 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded border border-red-500/20 text-xs font-medium transition-colors">
-                  <Square className="w-3 h-3 fill-current" /> 终止
-                </button>
+                <Button onClick={handleStop} variant="destructive" size="sm">
+                  <Square className="fill-current" data-icon="inline-start" /> 终止
+                </Button>
               )}
             </div>
-          </div>
+          </CardHeader>
 
-          {!currentJob ? (
-            <div className="text-center py-8 text-neutral-500 text-sm border border-dashed border-neutral-800 rounded-lg">
-              暂无活动中的采集任务。
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex justify-between text-sm">
-                <span className="text-neutral-300">任务ID: <span className="font-mono text-neutral-400">{currentJob.id}</span></span>
-                <span className="text-blue-400 font-medium">{statusLabel(currentJob.status)} · {progress}%</span>
+          <CardContent>
+            {!currentJob ? (
+              <div className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted-foreground">
+                暂无活动中的采集任务。
               </div>
-              <div className="h-2 w-full bg-neutral-950 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 transition-all duration-300 ease-out" style={{ width: `${progress}%` }} />
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="flex justify-between gap-3 text-sm">
+                  <span className="min-w-0 text-muted-foreground">
+                    任务ID: <span className="font-mono">{currentJob.id}</span>
+                  </span>
+                  <Badge variant="secondary" className="shrink-0">
+                    {statusLabel(currentJob.status)} · {progress}%
+                  </Badge>
+                </div>
+                <Progress value={progress} />
+                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 className="size-4 text-green-500" /> {currentJob.success_count} / {currentJob.total_count || limit} 场次
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <AlertCircle className="size-4 text-yellow-500" /> {currentJob.skipped_count} 跳过 · {currentJob.failed_count} 失败
+                  </div>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-4 text-xs">
-                <div className="flex items-center gap-1.5 text-neutral-400"><CheckCircle2 className="w-4 h-4 text-green-500" /> {currentJob.success_count} / {currentJob.total_count || limit} 场次</div>
-                <div className="flex items-center gap-1.5 text-neutral-400"><AlertCircle className="w-4 h-4 text-yellow-500" /> {currentJob.skipped_count} 跳过 · {currentJob.failed_count} 失败</div>
-              </div>
-            </div>
-          )}
-        </div>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl shadow-sm flex-1 flex flex-col min-h-[300px]">
-          <div className="p-5 border-b border-neutral-800 flex justify-between items-center">
-            <h2 className="text-lg font-bold text-white">已采集对局列表</h2>
-            <button onClick={refreshMatches} className="p-2 hover:bg-neutral-800 rounded-lg text-neutral-400 transition-colors" title="刷新">
-              {loadingMatches ? <RotateCcw className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-neutral-300">
-              <thead className="text-xs text-neutral-500 uppercase bg-neutral-950/50">
-                <tr>
-                  <th className="px-5 py-3 font-medium">对局ID</th>
-                  <th className="px-5 py-3 font-medium">地图 / 模式</th>
-                  <th className="px-5 py-3 font-medium">遥测数据</th>
-                  <th className="px-5 py-3 font-medium">样本数</th>
-                  <th className="px-5 py-3 font-medium text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
+        <Card className="flex min-h-[300px] flex-1 flex-col border-border bg-card shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-border">
+            <CardTitle className="text-lg">已采集对局列表</CardTitle>
+            <Button onClick={refreshMatches} variant="ghost" size="icon" title="刷新">
+              {loadingMatches ? <RotateCcw className="animate-spin" /> : <Filter />}
+            </Button>
+          </CardHeader>
+          <CardContent className="flex-1 p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="px-5">对局ID</TableHead>
+                  <TableHead className="px-5">地图 / 模式</TableHead>
+                  <TableHead className="px-5">遥测数据</TableHead>
+                  <TableHead className="px-5">样本数</TableHead>
+                  <TableHead className="px-5 text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {matches.map((match) => (
-                  <tr key={match.match_id} className="border-b border-neutral-800/50 hover:bg-neutral-800/30 transition-colors">
-                    <td className="px-5 py-3 font-mono text-neutral-400">{match.match_id}</td>
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-neutral-200">{match.map_name ?? "未知地图"}</div>
-                      <div className="text-xs text-neutral-500">{match.game_mode ?? "未知模式"} · {compactDate(match.created_at)}</div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${match.telemetry_parse_status === "completed" ? "bg-green-500/10 text-green-400" : match.telemetry_parse_status === "failed" ? "bg-red-500/10 text-red-400" : "bg-yellow-500/10 text-yellow-500"}`}>
+                  <TableRow key={match.match_id}>
+                    <TableCell className="px-5 font-mono text-muted-foreground">{match.match_id}</TableCell>
+                    <TableCell className="px-5">
+                      <div className="font-medium">{match.map_name ?? "未知地图"}</div>
+                      <div className="text-xs text-muted-foreground">{match.game_mode ?? "未知模式"} · {compactDate(match.created_at)}</div>
+                    </TableCell>
+                    <TableCell className="px-5">
+                      <Badge
+                        variant={match.telemetry_parse_status === "failed" ? "destructive" : "secondary"}
+                        className={cn(
+                          match.telemetry_parse_status === "completed" && "bg-green-500/10 text-green-400",
+                          match.telemetry_parse_status !== "completed" &&
+                            match.telemetry_parse_status !== "failed" &&
+                            "bg-yellow-500/10 text-yellow-500",
+                        )}
+                      >
                         {statusLabel(match.telemetry_parse_status)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">{(match.circle_phase_count + match.position_sample_count + match.life_event_count).toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right">
-                      <button onClick={() => handleDeleteMatch(match.match_id)} className="p-1.5 text-red-400 hover:bg-red-500/10 rounded" title="删除">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="px-5">{(match.circle_phase_count + match.position_sample_count + match.life_event_count).toLocaleString()}</TableCell>
+                    <TableCell className="px-5 text-right">
+                      <Button onClick={() => handleDeleteMatch(match.match_id)} variant="ghost" size="icon" title="删除">
+                        <Trash2 />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
                 ))}
                 {matches.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-10 text-center text-neutral-500">
+                  <TableRow>
+                    <TableCell colSpan={5} className="px-5 py-10 text-center text-muted-foreground">
                       还没有已入库对局。
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

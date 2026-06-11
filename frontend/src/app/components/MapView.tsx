@@ -18,6 +18,11 @@ interface MapViewProps {
 }
 
 const MAP_VIEW_SIZE = 1000;
+const ZONE_MARKER_RADIUS = 2.5;
+const TEAM_MARKER_RADIUS = 3.5;
+const TEAM_MARKER_PULSE_RADIUS = 7;
+const MARKER_LABEL_FONT_SIZE = 10;
+const MARKER_LABEL_OFFSET = 7;
 
 function worldToMapPoint(point: Point, worldSize: number): Point {
   return {
@@ -50,22 +55,37 @@ export function MapView({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   const [hasDragged, setHasDragged] = useState(false);
-  const [mapSize, setMapSize] = useState({ w: 0, h: 0 });
+  const [mapFrame, setMapFrame] = useState({ left: 0, top: 0, size: 0 });
+
+  const clampTransform = (x: number, y: number, scale: number) => {
+    const min = mapFrame.size * (1 - scale);
+    return {
+      x: Math.max(min, Math.min(x, 0)),
+      y: Math.max(min, Math.min(y, 0)),
+      scale,
+    };
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
     const obs = new ResizeObserver(entries => {
       const w = entries[0].contentRect.width;
       const h = entries[0].contentRect.height;
-      setMapSize({ w, h });
-      
+      const size = Math.min(w, h);
+      setMapFrame({
+        left: (w - size) / 2,
+        top: (h - size) / 2,
+        size,
+      });
+
       setTransform(prev => {
         if (prev.scale === 1) return prev;
-        const minX = w * (1 - prev.scale);
-        const minY = h * (1 - prev.scale);
-        const newX = Math.max(minX, Math.min(prev.x, 0));
-        const newY = Math.max(minY, Math.min(prev.y, 0));
-        return { ...prev, x: newX, y: newY };
+        const min = size * (1 - prev.scale);
+        return {
+          ...prev,
+          x: Math.max(min, Math.min(prev.x, 0)),
+          y: Math.max(min, Math.min(prev.y, 0)),
+        };
       });
     });
     obs.observe(containerRef.current);
@@ -82,21 +102,16 @@ export function MapView({
 
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const mouseX = e.clientX - rect.left - mapFrame.left;
+    const mouseY = e.clientY - rect.top - mapFrame.top;
 
     if (newScale === 1) {
       setTransform({ x: 0, y: 0, scale: 1 });
     } else {
       let newX = mouseX - (mouseX - transform.x) * (newScale / transform.scale);
       let newY = mouseY - (mouseY - transform.y) * (newScale / transform.scale);
-      
-      const minX = mapSize.w * (1 - newScale);
-      const minY = mapSize.h * (1 - newScale);
-      newX = Math.max(minX, Math.min(newX, 0));
-      newY = Math.max(minY, Math.min(newY, 0));
 
-      setTransform({ x: newX, y: newY, scale: newScale });
+      setTransform(clampTransform(newX, newY, newScale));
     }
   };
 
@@ -116,17 +131,8 @@ export function MapView({
       if (transform.scale > 1) {
         let newX = dragStart.startX + (e.clientX - dragStart.mouseX);
         let newY = dragStart.startY + (e.clientY - dragStart.mouseY);
-        
-        const minX = mapSize.w * (1 - transform.scale);
-        const minY = mapSize.h * (1 - transform.scale);
-        newX = Math.max(minX, Math.min(newX, 0));
-        newY = Math.max(minY, Math.min(newY, 0));
 
-        setTransform(prev => ({
-          ...prev,
-          x: newX,
-          y: newY
-        }));
+        setTransform(clampTransform(newX, newY, transform.scale));
       }
     }
   };
@@ -139,15 +145,17 @@ export function MapView({
     if (hasDragged) return;
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-    
-    const x = ((mouseX - transform.x) / transform.scale / rect.width) * MAP_VIEW_SIZE;
-    const y = ((mouseY - transform.y) / transform.scale / rect.height) * MAP_VIEW_SIZE;
-    
+    const mouseX = e.clientX - rect.left - mapFrame.left;
+    const mouseY = e.clientY - rect.top - mapFrame.top;
+
+    const x = ((mouseX - transform.x) / transform.scale / mapFrame.size) * MAP_VIEW_SIZE;
+    const y = ((mouseY - transform.y) / transform.scale / mapFrame.size) * MAP_VIEW_SIZE;
+
+    if (x < 0 || x > MAP_VIEW_SIZE || y < 0 || y > MAP_VIEW_SIZE) return;
+
     onClick({
-      x: Math.max(0, Math.min(MAP_VIEW_SIZE, x)),
-      y: Math.max(0, Math.min(MAP_VIEW_SIZE, y)),
+      x,
+      y,
     });
   };
 
@@ -174,14 +182,20 @@ export function MapView({
       onClick={handleContainerClick}
     >
       <div 
-        className="absolute inset-0 origin-top-left"
-        style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}
+        className="absolute origin-top-left"
+        style={{
+          left: `${mapFrame.left}px`,
+          top: `${mapFrame.top}px`,
+          width: `${mapFrame.size}px`,
+          height: `${mapFrame.size}px`,
+          transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+        }}
       >
         {/* Background Map Image */}
         <img 
           src={mapImageUrl}
           alt={`${selectedMap} map base`}
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-80 mix-blend-normal"
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none opacity-80 mix-blend-normal"
         />
 
         <svg 
@@ -203,8 +217,8 @@ export function MapView({
         {zoneCenter && (
           <g>
              <circle cx={zoneCenter.x} cy={zoneCenter.y} r={zoneRadius} fill="rgba(59, 130, 246, 0.1)" stroke="rgba(59, 130, 246, 0.5)" strokeWidth="2" />
-             <circle cx={zoneCenter.x} cy={zoneCenter.y} r={4} fill="#3b82f6" />
-             <text x={zoneCenter.x + 10} y={zoneCenter.y + 4} fill="#3b82f6" fontSize="12" className="drop-shadow-md">阶段 {zoneStage}</text>
+             <circle cx={zoneCenter.x} cy={zoneCenter.y} r={ZONE_MARKER_RADIUS} fill="#3b82f6" />
+             <text x={zoneCenter.x + MARKER_LABEL_OFFSET} y={zoneCenter.y + 3} fill="#3b82f6" fontSize={MARKER_LABEL_FONT_SIZE} className="drop-shadow-md">阶段 {zoneStage}</text>
           </g>
         )}
 
@@ -256,9 +270,9 @@ export function MapView({
         {/* Team Position */}
         {teamPos && (
           <g>
-            <circle cx={teamPos.x} cy={teamPos.y} r={6} fill="#22c55e" stroke="#14532d" strokeWidth="2" />
-            <circle cx={teamPos.x} cy={teamPos.y} r={12} fill="none" stroke="#22c55e" strokeWidth="1" className="animate-ping" style={{ transformOrigin: `${teamPos.x}px ${teamPos.y}px` }} />
-            <text x={teamPos.x + 10} y={teamPos.y + 4} fill="#22c55e" fontSize="12" fontWeight="bold" className="drop-shadow-md">队伍</text>
+            <circle cx={teamPos.x} cy={teamPos.y} r={TEAM_MARKER_RADIUS} fill="#22c55e" stroke="#14532d" strokeWidth="1.25" />
+            <circle cx={teamPos.x} cy={teamPos.y} r={TEAM_MARKER_PULSE_RADIUS} fill="none" stroke="#22c55e" strokeWidth="0.75" className="animate-ping" style={{ transformOrigin: `${teamPos.x}px ${teamPos.y}px` }} />
+            <text x={teamPos.x + MARKER_LABEL_OFFSET} y={teamPos.y + 3} fill="#22c55e" fontSize={MARKER_LABEL_FONT_SIZE} fontWeight="bold" className="drop-shadow-md">队伍</text>
           </g>
         )}
 

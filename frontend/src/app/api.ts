@@ -7,6 +7,16 @@ export type MapConfig = {
   assets: Record<string, string>;
 };
 
+export type MapAsset = {
+  map_id: string;
+  asset_key: string;
+  relative_path: string;
+  cached: boolean;
+  downloaded: boolean;
+  image_url: string;
+  warnings: string[];
+};
+
 export type ZonePhase = {
   phase: number;
   radius: number;
@@ -211,8 +221,13 @@ export const api = {
   listMaps: async () => apiRequest<{ maps: MapConfig[] }>("/api/config/maps"),
   getZonePhases: async (mapId: string) =>
     apiRequest<ZonePhaseConfig>(`/api/config/zone-phases${toQuery({ map_id: mapId })}`),
-  mapImageUrl: (mapId: string, assetKey = "low") =>
+  mapImageUrl: (mapId: string, assetKey = "high") =>
     `/api/assets/maps/${mapId}/image${toQuery({ asset_key: assetKey })}`,
+  ensureMapAsset: async (mapId: string, assetKey = "high") =>
+    apiRequest<MapAsset>(
+      `/api/assets/maps/${mapId}/ensure${toQuery({ asset_key: assetKey })}`,
+      { method: "POST" },
+    ),
   startSquadSampleIngest: async (params: {
     maxMatches: number;
     parseProfile: "full" | "hotspot_light" | "zone_only";

@@ -54,6 +54,7 @@ export function TacticalPrediction() {
   const [smartExplain, setSmartExplain] = useState(true);
   const [predState, setPredState] = useState<PredictionState>("idle");
   const [prediction, setPrediction] = useState<PredictResponse | null>(null);
+  const [mapImageUrl, setMapImageUrl] = useState(api.mapImageUrl("miramar"));
   const [error, setError] = useState<string | null>(null);
 
   const currentMap = useMemo(
@@ -93,6 +94,19 @@ export function TacticalPrediction() {
       }
     };
     void loadZoneConfig();
+  }, [selectedMap]);
+
+  useEffect(() => {
+    const ensureMapImage = async () => {
+      setMapImageUrl(api.mapImageUrl(selectedMap));
+      try {
+        const asset = await api.ensureMapAsset(selectedMap);
+        setMapImageUrl(asset.image_url);
+      } catch (err) {
+        setError(apiErrorMessage(err));
+      }
+    };
+    void ensureMapImage();
   }, [selectedMap]);
 
   const handleMapClick = (p: Point) => {
@@ -281,7 +295,7 @@ export function TacticalPrediction() {
           prediction={prediction}
           worldSize={worldSize}
           currentRadius={currentRadius}
-          mapImageUrl={api.mapImageUrl(selectedMap)}
+          mapImageUrl={mapImageUrl}
         />
 
         <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm p-3 rounded border border-white/10 pointer-events-none">

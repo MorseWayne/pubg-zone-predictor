@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     database_path: Path = Field(default=DEFAULT_DATABASE_PATH, alias="APP_DATABASE_PATH")
     assets_cache_dir: Path = Field(default=DEFAULT_ASSETS_CACHE_DIR, alias="PUBG_ASSETS_CACHE_DIR")
     assets_base_url: str = Field(
-        default="https://media.githubusercontent.com/media/pubg/api-assets/master",
+        default="https://raw.githubusercontent.com/pubg/api-assets/master",
         alias="PUBG_ASSETS_BASE_URL",
     )
     assets_download_timeout_seconds: int = Field(default=120, alias="PUBG_ASSETS_TIMEOUT_SECONDS")
