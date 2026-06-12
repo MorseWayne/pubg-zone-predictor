@@ -1,5 +1,6 @@
 import { Outlet, NavLink } from "react-router";
 import { Map as MapIcon, Database, Activity, Target } from "lucide-react";
+import { Button } from "./ui/button";
 
 export function Root() {
   return (
@@ -12,15 +13,21 @@ export function Root() {
           <h1 className="text-lg font-bold tracking-wider">战术<span className="text-orange-500">预测系统</span></h1>
         </div>
         <div className="flex flex-col gap-2 px-4 mt-4">
-          <NavLink to="/" className={({isActive}) => `flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}>
-             <MapIcon className="w-4 h-4" /> 战术预测
-          </NavLink>
-          <NavLink to="/collection" className={({isActive}) => `flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}>
-             <Database className="w-4 h-4" /> 数据采集
-          </NavLink>
-          <NavLink to="/preparation" className={({isActive}) => `flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}>
-             <Activity className="w-4 h-4" /> 数据准备
-          </NavLink>
+          <Button variant="ghost" asChild className="w-full justify-start h-auto py-3 px-4 font-medium transition-colors hover:bg-neutral-800 hover:text-neutral-200">
+            <NavLink to="/" className={({isActive}) => isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg' : 'text-neutral-400'}>
+               <MapIcon className="w-4 h-4 mr-3" /> 战术预测
+            </NavLink>
+          </Button>
+          <Button variant="ghost" asChild className="w-full justify-start h-auto py-3 px-4 font-medium transition-colors hover:bg-neutral-800 hover:text-neutral-200">
+            <NavLink to="/collection" className={({isActive}) => isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg' : 'text-neutral-400'}>
+               <Database className="w-4 h-4 mr-3" /> 数据采集
+            </NavLink>
+          </Button>
+          <Button variant="ghost" asChild className="w-full justify-start h-auto py-3 px-4 font-medium transition-colors hover:bg-neutral-800 hover:text-neutral-200">
+            <NavLink to="/preparation" className={({isActive}) => isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg' : 'text-neutral-400'}>
+               <Activity className="w-4 h-4 mr-3" /> 数据准备
+            </NavLink>
+          </Button>
         </div>
         <div className="mt-auto p-4 border-t border-neutral-800">
           <div className="flex items-center gap-3 px-2 py-2">

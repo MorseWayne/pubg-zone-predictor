@@ -7,8 +7,28 @@ import {
   Layers,
   RefreshCw,
   ShieldAlert,
+  Loader2,
 } from "lucide-react";
 import { api, apiErrorMessage, HotspotResult, IngestMatch, MapConfig, ModelRun } from "../api";
+import { Button } from "./ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { Badge } from "./ui/badge";
 
 function latestCompletedRun(runs: ModelRun[]) {
   return runs.find((run) => run.status === "completed") ?? null;
@@ -89,155 +109,188 @@ export function DataPreparation() {
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-neutral-950 p-6 gap-6 overflow-y-auto">
+    <div className="dark flex h-full w-full flex-col gap-6 overflow-y-auto bg-background p-6 text-foreground">
       <div className="flex items-center gap-3 mb-2">
         <div className="p-2 bg-purple-500/20 text-purple-400 rounded-lg">
-          <Activity className="w-6 h-6" />
+          <Activity className="size-6" />
         </div>
         <div>
           <h1 className="text-xl font-bold text-white">预测基建</h1>
-          <p className="text-sm text-neutral-400">管理数据就绪状态和模型状态，以确保准确的战术预测。</p>
+          <p className="text-sm text-muted-foreground">管理数据就绪状态和模型状态，以确保准确的战术预测。</p>
         </div>
       </div>
 
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col sm:flex-row gap-3 sm:items-center">
-        <select
-          value={selectedMap}
-          onChange={(event) => setSelectedMap(event.target.value)}
-          className="bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-        >
-          {maps.map((map) => (
-            <option key={map.map_id} value={map.map_id}>{map.display_name}</option>
-          ))}
-        </select>
-        <select
-          value={phase}
-          onChange={(event) => setPhase(Number(event.target.value))}
-          className="bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-        >
-          {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
-            <option key={item} value={item}>阶段 {item}</option>
-          ))}
-        </select>
-        <button onClick={refreshOverview} className="sm:ml-auto px-3 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm flex items-center justify-center gap-2">
-          <RefreshCw className="w-4 h-4" /> 刷新状态
-        </button>
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center rounded-xl border border-border bg-card p-4 shadow-sm">
+        <Select value={selectedMap} onValueChange={setSelectedMap}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="选择地图" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {maps.map((map) => (
+                <SelectItem key={map.map_id} value={map.map_id}>
+                  {map.display_name}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+
+        <Select value={String(phase)} onValueChange={(val) => setPhase(Number(val))}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="选择阶段" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
+                <SelectItem key={item} value={String(item)}>
+                  阶段 {item}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+
+        <Button variant="outline" onClick={refreshOverview} className="sm:ml-auto">
+          <RefreshCw data-icon="inline-start" />
+          刷新状态
+        </Button>
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-lg text-sm text-red-200">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <ShieldAlert />
+          <AlertTitle>错误</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 flex flex-col gap-4">
-          <div className="flex justify-between items-start">
+        <Card className="flex flex-col border-border bg-card shadow-sm">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-500/10 rounded border border-blue-500/20 text-blue-400">
-                <Layers className="w-5 h-5" />
+              <div className="rounded border border-blue-500/20 bg-blue-500/10 p-2 text-blue-400">
+                <Layers className="size-5" />
               </div>
-              <div>
-                <h3 className="font-bold text-neutral-200">热力图数据</h3>
-                <p className="text-xs text-neutral-500">空间密度映射</p>
+              <div className="flex flex-col gap-0.5">
+                <CardTitle className="text-base font-bold text-foreground">热力图数据</CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">空间密度映射</CardDescription>
               </div>
             </div>
             {hotspotReady ? (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-500/10 px-2 py-1 rounded">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 已生成
-              </span>
+              <Badge variant="secondary" className="bg-green-500/10 text-green-400 border-green-500/20">
+                <CheckCircle2 /> 已生成
+              </Badge>
             ) : (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded">
-                <ShieldAlert className="w-3.5 h-3.5" /> 未生成
-              </span>
+              <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
+                <ShieldAlert /> 未生成
+              </Badge>
             )}
-          </div>
-
-          <div className="text-sm text-neutral-400 mt-2 flex-1">
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground mt-2 flex-1">
             基于已采集对局生成高危区域。当前可用样本约 {sampleCount.toLocaleString()} 条。
             {latestHotspot && ` 本次生成 ${latestHotspot.tiles.length} 个热点网格。`}
-          </div>
+          </CardContent>
+          <CardFooter>
+            <Button
+              onClick={handleGenerate}
+              disabled={isGenerating}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 data-icon="inline-start" className="animate-spin" />
+                  正在生成...
+                </>
+              ) : (
+                "生成热力图"
+              )}
+            </Button>
+          </CardFooter>
+        </Card>
 
-          <button
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className={`w-full py-2.5 rounded-lg text-sm font-bold flex justify-center items-center gap-2 transition-all ${isGenerating ? "bg-neutral-800 text-neutral-400" : "bg-blue-600 hover:bg-blue-500 text-white"}`}
-          >
-            {isGenerating ? <RefreshCw className="w-4 h-4 animate-spin" /> : "生成热力图"}
-          </button>
-        </div>
-
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 flex flex-col gap-4">
-          <div className="flex justify-between items-start">
+        <Card className="flex flex-col border-border bg-card shadow-sm">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-500/10 rounded border border-purple-500/20 text-purple-400">
-                <Brain className="w-5 h-5" />
+              <div className="rounded border border-purple-500/20 bg-purple-500/10 p-2 text-purple-400">
+                <Brain className="size-5" />
               </div>
-              <div>
-                <h3 className="font-bold text-neutral-200">预测模型</h3>
-                <p className="text-xs text-neutral-500">统计偏移基线模型</p>
+              <div className="flex flex-col gap-0.5">
+                <CardTitle className="text-base font-bold text-foreground">预测模型</CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">统计偏移基线模型</CardDescription>
               </div>
             </div>
             {modelReady ? (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-500/10 px-2 py-1 rounded">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 已激活
-              </span>
+              <Badge variant="secondary" className="bg-green-500/10 text-green-400 border-green-500/20">
+                <CheckCircle2 /> 已激活
+              </Badge>
             ) : (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded">
-                <ShieldAlert className="w-3.5 h-3.5" /> 需要训练
-              </span>
+              <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
+                <ShieldAlert /> 需要训练
+              </Badge>
             )}
-          </div>
-
-          <div className="text-sm text-neutral-400 mt-2 flex-1">
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground mt-2 flex-1">
             {activeRun
               ? `最近模型 ${activeRun.id.slice(0, 14)} 使用 ${activeRun.sample_count.toLocaleString()} 条圈样本。`
               : "还没有完成的模型训练，预测会使用规则回退。"}
-          </div>
-
-          <button
-            onClick={handleTrain}
-            disabled={isTraining}
-            className={`w-full py-2.5 rounded-lg text-sm font-bold flex justify-center items-center gap-2 transition-all ${isTraining ? "bg-neutral-800 text-neutral-400" : "bg-purple-600 hover:bg-purple-500 text-white"}`}
-          >
-            {isTraining ? <RefreshCw className="w-4 h-4 animate-spin" /> : "训练模型"}
-          </button>
-        </div>
+          </CardContent>
+          <CardFooter>
+            <Button
+              onClick={handleTrain}
+              disabled={isTraining}
+              className="w-full bg-purple-600 hover:bg-purple-500 text-white"
+            >
+              {isTraining ? (
+                <>
+                  <Loader2 data-icon="inline-start" className="animate-spin" />
+                  正在训练...
+                </>
+              ) : (
+                "训练模型"
+              )}
+            </Button>
+          </CardFooter>
+        </Card>
       </div>
 
-      <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 mt-2">
-        <h3 className="text-sm font-bold text-neutral-200 mb-4 flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-neutral-400" /> 系统总览
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-neutral-950 p-4 rounded-lg border border-neutral-800">
-            <div className="text-xs text-neutral-500 mb-1">总对局数</div>
-            <div className="text-xl font-bold text-white">{matches.length.toLocaleString()}</div>
+      <Card className="border-border bg-card shadow-sm mt-2">
+        <CardHeader>
+          <CardTitle className="text-sm font-bold text-foreground flex items-center gap-2">
+            <Cpu className="size-4 text-muted-foreground" /> 系统总览
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card className="bg-muted/30 border-border p-4">
+              <div className="text-xs text-muted-foreground mb-1">总对局数</div>
+              <div className="text-xl font-bold text-foreground">{matches.length.toLocaleString()}</div>
+            </Card>
+            <Card className="bg-muted/30 border-border p-4">
+              <div className="text-xs text-muted-foreground mb-1">总样本数</div>
+              <div className="text-xl font-bold text-foreground">{sampleCount.toLocaleString()}</div>
+            </Card>
+            <Card className="bg-muted/30 border-border p-4">
+              <div className="text-xs text-muted-foreground mb-1">模型评分</div>
+              <div className="text-xl font-bold text-green-400">{formatAccuracy(activeRun)}</div>
+            </Card>
+            <Card className="bg-muted/30 border-border p-4">
+              <div className="text-xs text-muted-foreground mb-1">规则回退</div>
+              <div className="text-xl font-bold text-yellow-500">{modelReady ? "可用" : "启用"}</div>
+            </Card>
           </div>
-          <div className="bg-neutral-950 p-4 rounded-lg border border-neutral-800">
-            <div className="text-xs text-neutral-500 mb-1">总样本数</div>
-            <div className="text-xl font-bold text-white">{sampleCount.toLocaleString()}</div>
-          </div>
-          <div className="bg-neutral-950 p-4 rounded-lg border border-neutral-800">
-            <div className="text-xs text-neutral-500 mb-1">模型评分</div>
-            <div className="text-xl font-bold text-green-400">{formatAccuracy(activeRun)}</div>
-          </div>
-          <div className="bg-neutral-950 p-4 rounded-lg border border-neutral-800">
-            <div className="text-xs text-neutral-500 mb-1">规则回退</div>
-            <div className="text-xl font-bold text-yellow-500">{modelReady ? "可用" : "启用"}</div>
-          </div>
-        </div>
 
-        {!modelReady && (
-          <div className="mt-4 bg-orange-500/10 border border-orange-500/20 p-4 rounded-lg text-sm text-orange-200 flex items-start gap-3">
-            <ShieldAlert className="w-5 h-5 text-orange-400 shrink-0" />
-            <div>
-              <strong className="block text-orange-400 mb-1">规则回退已激活</strong>
-              如果在模型更新之前请求预测，系统将暂时依赖后端规则基线，并在响应 warnings 中标记原因。
-            </div>
-          </div>
-        )}
-      </div>
+          {!modelReady && (
+            <Alert className="mt-4 border-orange-500/20 bg-orange-500/10 text-orange-200">
+              <ShieldAlert className="text-orange-400" />
+              <AlertTitle className="text-orange-400">规则回退已激活</AlertTitle>
+              <AlertDescription>
+                如果在模型更新之前请求预测，系统将暂时依赖后端规则基线，并在响应 warnings 中标记原因。
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
