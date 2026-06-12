@@ -255,9 +255,9 @@ export function MapView({
                  d={routePath}
                  fill="none"
                  stroke="#f97316"
-                 strokeWidth="3"
+                 strokeWidth="1.5"
                  strokeDasharray={strategy === 'avoid' ? "8 5" : "6 6"}
-                 className="drop-shadow-md"
+                 className="drop-shadow-md animate-dash-flow"
                />
              )}
 

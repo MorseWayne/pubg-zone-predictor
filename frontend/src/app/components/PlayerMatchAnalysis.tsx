@@ -647,9 +647,11 @@ export function PlayerMatchAnalysis() {
                         stroke={playerColor(segment.playerId, selectedTeam)}
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        strokeWidth="3.5"
+                        strokeWidth="1.5"
+                        strokeDasharray="6 6"
                         opacity="0.9"
                         filter="url(#analysis-glow)"
+                        className="animate-dash-flow"
                       />
                     ))}
 

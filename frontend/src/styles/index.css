@@ -1,3 +1,13 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -156;
+  }
+}
+
+.animate-dash-flow {
+  animation: dash-flow 10s linear infinite;
+}
