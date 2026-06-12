@@ -659,3 +659,86 @@ def test_retry_job_starts_new_job_with_incremented_retry_count(
     assert retried.id != original.id
     assert retried.retry_count == 1
     assert retried.source_ref == "tournament-1"
+
+
+def test_retry_jobs_starts_new_jobs_for_each_selected_job(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    first = service.ingest_tournament("tournament-1")
+    second = service.ingest_tournament("tournament-1")
+
+    retried = service.retry_jobs([first.id, second.id])
+
+    assert len(retried) == 2
+    assert {job.retry_count for job in retried} == {1}
+    assert all(job.id not in {first.id, second.id} for job in retried)
+
+
+def test_cancel_jobs_cancels_each_selected_running_job(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    first = service.start_sample_matches(max_matches=1)
+    second = service.start_sample_matches(max_matches=1)
+
+    cancelled = service.cancel_jobs([first.id, second.id])
+
+    assert [job.status for job in cancelled] == ["cancelled", "cancelled"]
+    assert service.get_job(first.id).status == "cancelled"
+    assert service.get_job(second.id).status == "cancelled"
+
+
+def test_delete_job_removes_terminal_job_history_only(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    job = service.ingest_tournament("tournament-1")
+    repo = SQLiteRepository(migrated_connection)
+    match_count = repo.fetch_one("SELECT COUNT(*) AS count FROM matches")["count"]
+
+    result = service.delete_job(job.id)
+
+    assert result.job_id == job.id
+    assert result.deleted is True
+    with pytest.raises(AppError) as exc_info:
+        service.get_job(job.id)
+    assert exc_info.value.code == "INGEST_JOB_NOT_FOUND"
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM matches")["count"] == match_count
+
+
+def test_delete_job_rejects_running_job(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    job = service.start_sample_matches(max_matches=1)
+
+    with pytest.raises(AppError) as exc_info:
+        service.delete_job(job.id)
+
+    assert exc_info.value.code == "INGEST_JOB_RUNNING"
+    assert exc_info.value.status_code == 409
+    assert service.get_job(job.id).status == "running"
+
+
+def test_delete_jobs_removes_each_selected_terminal_job(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    first = service.ingest_tournament("tournament-1")
+    second = service.ingest_tournament("tournament-1")
+
+    deleted = service.delete_jobs([first.id, second.id])
+
+    assert [result.job_id for result in deleted] == [first.id, second.id]
+    assert all(result.deleted for result in deleted)
+    remaining = SQLiteRepository(migrated_connection).fetch_one(
+        "SELECT COUNT(*) AS count FROM ingest_jobs WHERE id IN (?, ?)",
+        (first.id, second.id),
+    )
+    assert remaining["count"] == 0

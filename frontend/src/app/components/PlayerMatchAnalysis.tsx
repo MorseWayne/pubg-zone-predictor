@@ -523,6 +523,18 @@ export function PlayerMatchAnalysis() {
       .sort((left, right) => left.elapsed_time - right.elapsed_time);
   }, [analysis, selectedTeamId, playbackTime]);
 
+  const deadPlayers = useMemo(() => {
+    const dead = new Set<string>();
+    if (!analysis) return dead;
+    for (let i = 0; i < analysis.life_events.length; i++) {
+      const e = analysis.life_events[i];
+      if (isEliminationEvent(e) && e.elapsed_time <= playbackTime && e.victim_player_id) {
+        dead.add(e.victim_player_id);
+      }
+    }
+    return dead;
+  }, [analysis, playbackTime]);
+
   const currentFriendlyPositions = useMemo(() => {
     const latest: Record<string, MatchAnalysisPosition> = {};
     for (const p of selectedPositions) {
@@ -530,8 +542,8 @@ export function PlayerMatchAnalysis() {
         latest[p.player_id] = p;
       }
     }
-    return Object.values(latest);
-  }, [selectedPositions]);
+    return Object.values(latest).filter(p => !deadPlayers.has(p.player_id));
+  }, [selectedPositions, deadPlayers]);
 
   const enemyPositions = useMemo(() => {
     if (!analysis || !selectedTeamId) return [];
@@ -544,15 +556,8 @@ export function PlayerMatchAnalysis() {
         }
       }
     }
-    const deadPlayers = new Set<string>();
-    for (let i = 0; i < analysis.life_events.length; i++) {
-      const e = analysis.life_events[i];
-      if (e.event_type === "LogPlayerKill" && e.elapsed_time <= playbackTime && e.victim_player_id) {
-        deadPlayers.add(e.victim_player_id);
-      }
-    }
     return Object.values(latestPositions).filter(p => !deadPlayers.has(p.player_id));
-  }, [analysis, selectedTeamId, playbackTime]);
+  }, [analysis, selectedTeamId, playbackTime, deadPlayers]);
 
   const currentCircle = useMemo(() => {
     if (!analysis) return null;
@@ -574,27 +579,47 @@ export function PlayerMatchAnalysis() {
 
   const flightPath = useMemo(() => {
     if (!analysis || analysis.positions.length === 0) return null;
-    const firstPositions = new Map<string, ApiPoint>();
-    for (const pos of analysis.positions) {
-      if (!firstPositions.has(pos.player_id)) {
-        firstPositions.set(pos.player_id, pos.point);
+
+    let pointsToUse = analysis.positions
+      .filter(p => p.z !== null && p.z >= AIRBORNE_Z_MIN)
+      .map(p => p.point);
+
+    if (pointsToUse.length < 2) {
+      const firstPositions = new Map<string, ApiPoint>();
+      for (const pos of analysis.positions) {
+        if (!firstPositions.has(pos.player_id)) {
+          firstPositions.set(pos.player_id, pos.point);
+        }
       }
+      pointsToUse = Array.from(firstPositions.values());
     }
-    const points = Array.from(firstPositions.values());
-    if (points.length < 2) return null;
+
+    if (pointsToUse.length < 2) return null;
     
+    let minX = pointsToUse[0], maxX = pointsToUse[0];
+    let minY = pointsToUse[0], maxY = pointsToUse[0];
+    
+    for (const p of pointsToUse) {
+      if (p.x < minX.x) minX = p;
+      if (p.x > maxX.x) maxX = p;
+      if (p.y < minY.y) minY = p;
+      if (p.y > maxY.y) maxY = p;
+    }
+    
+    const candidates = [minX, maxX, minY, maxY];
     let maxDist = 0;
-    let p1 = points[0];
-    let p2 = points[1];
-    for (let i = 0; i < points.length; i++) {
-      for (let j = i + 1; j < points.length; j++) {
-        const dx = points[i].x - points[j].x;
-        const dy = points[i].y - points[j].y;
+    let p1 = candidates[0];
+    let p2 = candidates[1];
+    
+    for (let i = 0; i < candidates.length; i++) {
+      for (let j = i + 1; j < candidates.length; j++) {
+        const dx = candidates[i].x - candidates[j].x;
+        const dy = candidates[i].y - candidates[j].y;
         const dist = dx * dx + dy * dy;
         if (dist > maxDist) {
           maxDist = dist;
-          p1 = points[i];
-          p2 = points[j];
+          p1 = candidates[i];
+          p2 = candidates[j];
         }
       }
     }

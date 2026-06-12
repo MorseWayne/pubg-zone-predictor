@@ -7,6 +7,7 @@ from app.api.ingest import (
 from app.core.errors import AppError
 from app.main import app
 from app.services.ingest import (
+    DeleteJobResult,
     DeleteMatchResult,
     IngestJobResult,
     IngestMatchAsset,
@@ -136,6 +137,13 @@ class FakeIngestService:
         assert job_id == "job_tournament"
         return _job(job_id="job_retry", retry_count=1)
 
+    def retry_jobs(self, job_ids: list[str]) -> list[IngestJobResult]:
+        assert job_ids == ["job_tournament", "job_latest"]
+        return [
+            _job(job_id="job_retry", retry_count=1),
+            _job(job_id="job_retry_latest", retry_count=2),
+        ]
+
     def cancel_job(self, job_id: str) -> IngestJobResult:
         assert job_id == "job_sample_matches"
         return IngestJobResult(
@@ -154,6 +162,36 @@ class FakeIngestService:
             error_message=None,
             warnings=[],
         )
+
+    def cancel_jobs(self, job_ids: list[str]) -> list[IngestJobResult]:
+        assert job_ids == ["job_sample_matches", "job_running"]
+        return [
+            self.cancel_job("job_sample_matches"),
+            IngestJobResult(
+                id="job_running",
+                job_type="sample_matches",
+                status="cancelled",
+                source_ref="samples:steam:squad:max=12:profile=zone_only:interval=30",
+                total_count=12,
+                success_count=3,
+                skipped_count=1,
+                failed_count=0,
+                retry_count=0,
+                started_at="2026-06-05T00:00:00+00:00",
+                finished_at="2026-06-05T00:02:00+00:00",
+                error_code=None,
+                error_message=None,
+                warnings=[],
+            ),
+        ]
+
+    def delete_job(self, job_id: str) -> DeleteJobResult:
+        assert job_id == "job_tournament"
+        return DeleteJobResult(job_id=job_id, deleted=True)
+
+    def delete_jobs(self, job_ids: list[str]) -> list[DeleteJobResult]:
+        assert job_ids == ["job_tournament", "job_latest"]
+        return [DeleteJobResult(job_id=job_id, deleted=True) for job_id in job_ids]
 
     def list_jobs(self, *, limit: int) -> list[IngestJobResult]:
         assert limit == 10
@@ -453,6 +491,71 @@ def test_retry_job_api_returns_new_job() -> None:
     body = response.json()
     assert body["id"] == "job_retry"
     assert body["retry_count"] == 1
+
+
+def test_retry_jobs_api_returns_new_jobs() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/ingest/jobs/retry",
+            json={"job_ids": ["job_tournament", "job_latest"]},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [job["id"] for job in body["jobs"]] == ["job_retry", "job_retry_latest"]
+    assert body["jobs"][1]["retry_count"] == 2
+
+
+def test_cancel_jobs_api_returns_cancelled_jobs() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/ingest/jobs/cancel",
+            json={"job_ids": ["job_sample_matches", "job_running"]},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [job["status"] for job in body["jobs"]] == ["cancelled", "cancelled"]
+
+
+def test_delete_job_api_returns_deleted_job() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.delete("/api/ingest/jobs/job_tournament")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["job_id"] == "job_tournament"
+    assert body["deleted"] is True
+
+
+def test_delete_jobs_api_returns_batch_result() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.request(
+            "DELETE",
+            "/api/ingest/jobs",
+            json={"job_ids": ["job_tournament", "job_latest"]},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted_count"] == 2
+    assert [job["job_id"] for job in body["jobs"]] == ["job_tournament", "job_latest"]
 
 
 def test_list_jobs_api_returns_history() -> None:

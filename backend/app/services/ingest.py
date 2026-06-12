@@ -139,6 +139,12 @@ class DeleteMatchResult:
     life_event_count: int
 
 
+@dataclass(frozen=True)
+class DeleteJobResult:
+    job_id: str
+    deleted: bool
+
+
 @dataclass
 class IngestService:
     connection: sqlite3.Connection
@@ -991,6 +997,9 @@ class IngestService:
             details={"job_id": job_id, "job_type": job.job_type},
         )
 
+    def retry_jobs(self, job_ids: list[str]) -> list[IngestJobResult]:
+        return [self.retry_job(job_id) for job_id in job_ids]
+
     def cancel_job(self, job_id: str) -> IngestJobResult:
         job = self.get_job(job_id)
         if job.status in TERMINAL_JOB_STATUSES:
@@ -1008,6 +1017,25 @@ class IngestService:
         )
         self.connection.commit()
         return self.get_job(job_id)
+
+    def cancel_jobs(self, job_ids: list[str]) -> list[IngestJobResult]:
+        return [self.cancel_job(job_id) for job_id in job_ids]
+
+    def delete_job(self, job_id: str) -> DeleteJobResult:
+        job = self.get_job(job_id)
+        if job.status not in TERMINAL_JOB_STATUSES:
+            raise AppError(
+                code="INGEST_JOB_RUNNING",
+                message=f"ingest job '{job_id}' is still running; cancel it before deleting it",
+                status_code=409,
+                details={"job_id": job_id, "status": job.status},
+            )
+        self.repo.execute("DELETE FROM ingest_jobs WHERE id = ?", (job_id,))
+        self.connection.commit()
+        return DeleteJobResult(job_id=job_id, deleted=True)
+
+    def delete_jobs(self, job_ids: list[str]) -> list[DeleteJobResult]:
+        return [self.delete_job(job_id) for job_id in job_ids]
 
     def _create_job(self, job_type: str, source_ref: str | None, *, retry_count: int = 0) -> str:
         job_id = f"job_{uuid4().hex}"

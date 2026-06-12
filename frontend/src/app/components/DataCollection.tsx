@@ -219,6 +219,7 @@ export function DataCollection() {
   const [currentJob, setCurrentJob] = useState<IngestJob | null>(null);
   const [jobs, setJobs] = useState<IngestJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(() => new Set());
   const [matches, setMatches] = useState<IngestMatch[]>([]);
   const [loadingMatches, setLoadingMatches] = useState(false);
   const [matchSearch, setMatchSearch] = useState("");
@@ -282,6 +283,23 @@ export function DataCollection() {
   const selectedVisibleCount = visibleMatchIds.filter((matchId) => selectedMatchIds.has(matchId)).length;
   const allVisibleSelected = visibleMatchIds.length > 0 && selectedVisibleCount === visibleMatchIds.length;
   const selectedMatchCount = selectedMatchIds.size;
+  const visibleJobIds = useMemo(() => jobs.map((job) => job.id), [jobs]);
+  const selectedVisibleJobCount = visibleJobIds.filter((jobId) => selectedJobIds.has(jobId)).length;
+  const allVisibleJobsSelected = visibleJobIds.length > 0 && selectedVisibleJobCount === visibleJobIds.length;
+  const selectedJobs = useMemo(
+    () => jobs.filter((job) => selectedJobIds.has(job.id)),
+    [jobs, selectedJobIds],
+  );
+  const selectedJobCount = selectedJobIds.size;
+  const selectedFailedJobIds = selectedJobs
+    .filter((job) => job.status === "failed")
+    .map((job) => job.id);
+  const selectedRunningJobIds = selectedJobs
+    .filter((job) => job.status === "running")
+    .map((job) => job.id);
+  const selectedTerminalJobIds = selectedJobs
+    .filter((job) => isTerminal(job.status))
+    .map((job) => job.id);
 
   const refreshMatches = async () => {
     setLoadingMatches(true);
@@ -304,6 +322,10 @@ export function DataCollection() {
     try {
       const response = await api.listIngestJobs(20);
       setJobs(response.jobs);
+      setSelectedJobIds((current) => {
+        const knownIds = new Set(response.jobs.map((job) => job.id));
+        return new Set(Array.from(current).filter((jobId) => knownIds.has(jobId)));
+      });
       if (currentJob) {
         const updatedCurrentJob = response.jobs.find((job) => job.id === currentJob.id);
         if (updatedCurrentJob) setCurrentJob(updatedCurrentJob);
@@ -456,6 +478,11 @@ export function DataCollection() {
       setCurrentJob(job);
       setSavedJobId(job.id);
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setSelectedJobIds((current) => {
+        const next = new Set(current);
+        next.delete(jobId);
+        return next;
+      });
       void refreshJobs();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -474,6 +501,11 @@ export function DataCollection() {
       setCurrentJob(job);
       setSavedJobId(job.id);
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
+      setSelectedJobIds((current) => {
+        const next = new Set(current);
+        next.delete(jobId);
+        return next;
+      });
       void refreshJobs();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -488,6 +520,116 @@ export function DataCollection() {
   const handleSelectJob = (job: IngestJob) => {
     setCurrentJob(job);
     setSavedJobId(job.id);
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    setError(null);
+    try {
+      await api.deleteIngestJob(jobId);
+      setSelectedJobIds((current) => {
+        const next = new Set(current);
+        next.delete(jobId);
+        return next;
+      });
+      setJobs((current) => current.filter((job) => job.id !== jobId));
+      if (currentJob?.id === jobId) {
+        setCurrentJob(null);
+        setSavedJobId(null);
+      }
+      void refreshJobs();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    }
+  };
+
+  const handleRetrySelectedJobs = async () => {
+    if (selectedFailedJobIds.length === 0) return;
+    setError(null);
+    try {
+      const response = await api.retryIngestJobs(selectedFailedJobIds);
+      setSelectedJobIds((current) => {
+        const next = new Set(current);
+        selectedFailedJobIds.forEach((jobId) => next.delete(jobId));
+        return next;
+      });
+      setJobs((current) => [
+        ...response.jobs,
+        ...current.filter((item) => !response.jobs.some((job) => job.id === item.id)),
+      ]);
+      const latestJob = response.jobs[0];
+      if (latestJob) {
+        setCurrentJob(latestJob);
+        setSavedJobId(latestJob.id);
+      }
+      void refreshJobs();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    }
+  };
+
+  const handleStopSelectedJobs = async () => {
+    if (selectedRunningJobIds.length === 0) return;
+    setError(null);
+    try {
+      const response = await api.cancelIngestJobs(selectedRunningJobIds);
+      setSelectedJobIds((current) => {
+        const next = new Set(current);
+        selectedRunningJobIds.forEach((jobId) => next.delete(jobId));
+        return next;
+      });
+      setJobs((current) => [
+        ...response.jobs,
+        ...current.filter((item) => !response.jobs.some((job) => job.id === item.id)),
+      ]);
+      if (currentJob && selectedRunningJobIds.includes(currentJob.id)) {
+        const updatedJob = response.jobs.find((job) => job.id === currentJob.id);
+        if (updatedJob) setCurrentJob(updatedJob);
+      }
+      void refreshJobs();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    }
+  };
+
+  const handleDeleteSelectedJobs = async () => {
+    if (selectedTerminalJobIds.length === 0) return;
+    setError(null);
+    try {
+      await api.deleteIngestJobs(selectedTerminalJobIds);
+      setSelectedJobIds((current) => {
+        const next = new Set(current);
+        selectedTerminalJobIds.forEach((jobId) => next.delete(jobId));
+        return next;
+      });
+      setJobs((current) => current.filter((job) => !selectedTerminalJobIds.includes(job.id)));
+      if (currentJob && selectedTerminalJobIds.includes(currentJob.id)) {
+        setCurrentJob(null);
+        setSavedJobId(null);
+      }
+      void refreshJobs();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    }
+  };
+
+  const handleToggleJob = (jobId: string, checked: boolean) => {
+    setSelectedJobIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(jobId);
+      else next.delete(jobId);
+      return next;
+    });
+  };
+
+  const handleToggleVisibleJobs = (checked: boolean) => {
+    setSelectedJobIds((current) => {
+      const next = new Set(current);
+      visibleJobIds.forEach((jobId) => {
+        if (checked) next.add(jobId);
+        else next.delete(jobId);
+      });
+      return next;
+    });
   };
 
   const handleDeleteMatch = async (matchId: string) => {
@@ -800,13 +942,52 @@ export function DataCollection() {
         </Card>
 
         <Card className="border-border bg-card shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between gap-3">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Clock3 className="size-5 text-blue-400" /> 历史采集任务
-            </CardTitle>
-            <Button onClick={() => void refreshJobs()} variant="ghost" size="icon" title="刷新任务">
-              <RotateCcw className={cn(loadingJobs && "animate-spin")} />
-            </Button>
+          <CardHeader className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Clock3 className="size-5 text-blue-400" /> 历史采集任务
+              </CardTitle>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={() => void handleRetrySelectedJobs()}
+                  variant="outline"
+                  size="sm"
+                  disabled={selectedFailedJobIds.length === 0}
+                >
+                  <RotateCcw data-icon="inline-start" /> 重试失败 {selectedFailedJobIds.length || ""}
+                </Button>
+                <Button
+                  onClick={() => void handleStopSelectedJobs()}
+                  variant="outline"
+                  size="sm"
+                  disabled={selectedRunningJobIds.length === 0}
+                >
+                  <Square className="fill-current" data-icon="inline-start" /> 终止运行中{" "}
+                  {selectedRunningJobIds.length || ""}
+                </Button>
+                <Button
+                  onClick={() => void handleDeleteSelectedJobs()}
+                  variant="destructive"
+                  size="sm"
+                  disabled={selectedTerminalJobIds.length === 0}
+                >
+                  <Trash2 data-icon="inline-start" /> 清理选中 {selectedTerminalJobIds.length || ""}
+                </Button>
+                <Button onClick={() => void refreshJobs()} variant="ghost" size="icon" title="刷新任务">
+                  <RotateCcw className={cn(loadingJobs && "animate-spin")} />
+                </Button>
+              </div>
+            </div>
+            {jobs.length > 0 && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Checkbox
+                  checked={allVisibleJobsSelected ? true : selectedVisibleJobCount > 0 ? "indeterminate" : false}
+                  onCheckedChange={(checked) => handleToggleVisibleJobs(checked === true)}
+                  aria-label="选择全部历史任务"
+                />
+                <span>已选择 {selectedJobCount} 个任务</span>
+              </div>
+            )}
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {jobs.length === 0 ? (
@@ -824,49 +1005,68 @@ export function DataCollection() {
                       currentJob?.id === job.id && "border-blue-500 bg-blue-500/10",
                     )}
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{jobTypeLabel(job.job_type)}</span>
-                          <Badge variant="secondary" className="shrink-0">
-                            {statusLabel(job.status)} · {itemProgress}%
-                          </Badge>
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        checked={selectedJobIds.has(job.id)}
+                        onCheckedChange={(checked) => handleToggleJob(job.id, checked === true)}
+                        aria-label={`选择任务 ${job.id}`}
+                        className="mt-1"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{jobTypeLabel(job.job_type)}</span>
+                              <Badge variant="secondary" className="shrink-0">
+                                {statusLabel(job.status)} · {itemProgress}%
+                              </Badge>
+                            </div>
+                            <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{job.id}</div>
+                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                              {job.source_ref ?? "无来源信息"} · {compactDate(job.started_at)}
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button onClick={() => handleSelectJob(job)} variant="outline" size="sm">
+                              查看
+                            </Button>
+                            {job.status === "failed" && (
+                              <Button onClick={() => void handleRetryJob(job.id)} variant="outline" size="sm">
+                                <RotateCcw data-icon="inline-start" /> 重试
+                              </Button>
+                            )}
+                            {job.status === "running" ? (
+                              <Button onClick={() => void handleStopJob(job.id)} variant="destructive" size="sm">
+                                <Square className="fill-current" data-icon="inline-start" /> 终止
+                              </Button>
+                            ) : (
+                              <Button
+                                onClick={() => void handleDeleteJob(job.id)}
+                                variant="ghost"
+                                size="icon"
+                                title="清理任务"
+                              >
+                                <Trash2 />
+                              </Button>
+                            )}
+                          </div>
                         </div>
-                        <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{job.id}</div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">
-                          {job.source_ref ?? "无来源信息"} · {compactDate(job.started_at)}
+                        <Progress value={itemProgress} className="mt-3" />
+                        <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                          <span>{job.success_count} 成功 / {job.total_count || "?"} 总数</span>
+                          <span>{job.skipped_count} 跳过</span>
+                          <span>{job.failed_count} 失败</span>
+                          <span>重试 {job.retry_count}</span>
+                          {job.finished_at && <span>结束 {compactDate(job.finished_at)}</span>}
                         </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Button onClick={() => handleSelectJob(job)} variant="outline" size="sm">
-                          查看
-                        </Button>
-                        {job.status === "failed" && (
-                          <Button onClick={() => void handleRetryJob(job.id)} variant="outline" size="sm">
-                            <RotateCcw data-icon="inline-start" /> 重试
-                          </Button>
+                        {job.status === "failed" && job.error_message && (
+                          <div className="mt-2 text-xs text-destructive">{job.error_message}</div>
                         )}
-                        {job.status === "running" && (
-                          <Button onClick={() => void handleStopJob(job.id)} variant="destructive" size="sm">
-                            <Square className="fill-current" data-icon="inline-start" /> 终止
-                          </Button>
+                        {job.warnings.length > 0 && (
+                          <div className="mt-2 text-xs text-yellow-500">{job.warnings.slice(0, 2).join("；")}</div>
                         )}
                       </div>
                     </div>
-                    <Progress value={itemProgress} />
-                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                      <span>{job.success_count} 成功 / {job.total_count || "?"} 总数</span>
-                      <span>{job.skipped_count} 跳过</span>
-                      <span>{job.failed_count} 失败</span>
-                      <span>重试 {job.retry_count}</span>
-                      {job.finished_at && <span>结束 {compactDate(job.finished_at)}</span>}
-                    </div>
-                    {job.status === "failed" && job.error_message && (
-                      <div className="text-xs text-destructive">{job.error_message}</div>
-                    )}
-                    {job.warnings.length > 0 && (
-                      <div className="text-xs text-yellow-500">{job.warnings.slice(0, 2).join("；")}</div>
-                    )}
                   </div>
                 );
               })

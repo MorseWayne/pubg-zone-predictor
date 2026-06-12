@@ -129,6 +129,11 @@ export type DeleteMatchResult = {
   life_event_count: number;
 };
 
+export type DeleteJobResult = {
+  job_id: string;
+  deleted: boolean;
+};
+
 export type PlayerSearchResult = {
   player_id: string;
   player_name: string;
@@ -344,8 +349,25 @@ export const api = {
   getIngestJob: async (jobId: string) => apiRequest<IngestJob>(`/api/ingest/jobs/${jobId}`),
   cancelIngestJob: async (jobId: string) =>
     apiRequest<IngestJob>(`/api/ingest/jobs/${jobId}/cancel`, { method: "POST" }),
+  cancelIngestJobs: async (jobIds: string[]) =>
+    apiRequest<{ jobs: IngestJob[] }>("/api/ingest/jobs/cancel", {
+      method: "POST",
+      body: JSON.stringify({ job_ids: jobIds }),
+    }),
   retryIngestJob: async (jobId: string) =>
     apiRequest<IngestJob>(`/api/ingest/jobs/${jobId}/retry`, { method: "POST" }),
+  retryIngestJobs: async (jobIds: string[]) =>
+    apiRequest<{ jobs: IngestJob[] }>("/api/ingest/jobs/retry", {
+      method: "POST",
+      body: JSON.stringify({ job_ids: jobIds }),
+    }),
+  deleteIngestJob: async (jobId: string) =>
+    apiRequest<DeleteJobResult>(`/api/ingest/jobs/${jobId}`, { method: "DELETE" }),
+  deleteIngestJobs: async (jobIds: string[]) =>
+    apiRequest<{ deleted_count: number; jobs: DeleteJobResult[] }>("/api/ingest/jobs", {
+      method: "DELETE",
+      body: JSON.stringify({ job_ids: jobIds }),
+    }),
   deleteMatch: async (matchId: string) =>
     apiRequest<DeleteMatchResult>(`/api/ingest/matches/${matchId}`, { method: "DELETE" }),
   deleteMatches: async (matchIds: string[]) =>

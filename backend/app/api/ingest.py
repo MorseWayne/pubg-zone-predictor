@@ -13,6 +13,7 @@ from app.db.connection import connect_database
 from app.services.ingest import (
     DEFAULT_SAMPLE_PARSE_PROFILE,
     DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+    DeleteJobResult,
     DeleteMatchResult,
     IngestJobResult,
     IngestMatchAsset,
@@ -88,6 +89,10 @@ class PlayerIngestRequest(BaseModel):
 
 class DeleteMatchesRequest(BaseModel):
     match_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class BatchJobsRequest(BaseModel):
+    job_ids: list[str] = Field(min_length=1, max_length=100)
 
 
 def get_sample_ingest_runner(settings: SettingsDep) -> SampleIngestRunner:
@@ -315,6 +320,36 @@ def delete_match(match_id: str, ingest_service: IngestServiceDep) -> dict[str, o
     return _delete_match_response(ingest_service.delete_match(match_id))
 
 
+@router.post("/jobs/retry")
+def retry_jobs(
+    request: BatchJobsRequest,
+    ingest_service: IngestServiceDep,
+) -> dict[str, object]:
+    jobs = ingest_service.retry_jobs(request.job_ids)
+    return {"jobs": [_job_response(job) for job in jobs]}
+
+
+@router.post("/jobs/cancel")
+def cancel_jobs(
+    request: BatchJobsRequest,
+    ingest_service: IngestServiceDep,
+) -> dict[str, object]:
+    jobs = ingest_service.cancel_jobs(request.job_ids)
+    return {"jobs": [_job_response(job) for job in jobs]}
+
+
+@router.delete("/jobs")
+def delete_jobs(
+    request: BatchJobsRequest,
+    ingest_service: IngestServiceDep,
+) -> dict[str, object]:
+    results = ingest_service.delete_jobs(request.job_ids)
+    return {
+        "deleted_count": len(results),
+        "jobs": [_delete_job_response(result) for result in results],
+    }
+
+
 @router.get("/jobs")
 def list_jobs(
     ingest_service: IngestServiceDep,
@@ -337,6 +372,11 @@ def retry_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object
 @router.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
     return _job_response(ingest_service.cancel_job(job_id))
+
+
+@router.delete("/jobs/{job_id}")
+def delete_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
+    return _delete_job_response(ingest_service.delete_job(job_id))
 
 
 def _match_response(match: IngestMatchAsset) -> dict[str, object]:
@@ -429,6 +469,13 @@ def _delete_match_response(result: DeleteMatchResult) -> dict[str, object]:
         "circle_phase_count": result.circle_phase_count,
         "position_sample_count": result.position_sample_count,
         "life_event_count": result.life_event_count,
+    }
+
+
+def _delete_job_response(result: DeleteJobResult) -> dict[str, object]:
+    return {
+        "job_id": result.job_id,
+        "deleted": result.deleted,
     }
 
 
