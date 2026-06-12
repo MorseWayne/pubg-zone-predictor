@@ -18,6 +18,7 @@ import {
   Pause,
   FastForward,
   Rewind,
+  Plane,
 } from "lucide-react";
 import {
   api,
@@ -67,7 +68,7 @@ const PLAYER_COLORS = [
 const AIRBORNE_Z_MIN = 10000;
 const AIRBORNE_DESCENT_Z_DELTA = 1000;
 
-type LayerId = "route" | "combat" | "eliminations" | "zones";
+type LayerId = "route" | "combat" | "eliminations" | "zones" | "flightPath";
 type TeamSummary = {
   teamId: string;
   teamRank: number | null;
@@ -341,7 +342,7 @@ export function PlayerMatchAnalysis() {
         }
       }
     }
-    return ["route", "combat", "eliminations", "zones"];
+    return ["route", "combat", "eliminations", "zones", "flightPath"];
   });
 
   useEffect(() => {
@@ -570,6 +571,51 @@ export function PlayerMatchAnalysis() {
     () => (analysis?.life_events.filter((event) => isSelectedEvent(event, selectedTeamId) && event.elapsed_time <= playbackTime) ?? []),
     [analysis, selectedTeamId, playbackTime],
   );
+
+  const flightPath = useMemo(() => {
+    if (!analysis || analysis.positions.length === 0) return null;
+    const firstPositions = new Map<string, ApiPoint>();
+    for (const pos of analysis.positions) {
+      if (!firstPositions.has(pos.player_id)) {
+        firstPositions.set(pos.player_id, pos.point);
+      }
+    }
+    const points = Array.from(firstPositions.values());
+    if (points.length < 2) return null;
+    
+    let maxDist = 0;
+    let p1 = points[0];
+    let p2 = points[1];
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        const dx = points[i].x - points[j].x;
+        const dy = points[i].y - points[j].y;
+        const dist = dx * dx + dy * dy;
+        if (dist > maxDist) {
+          maxDist = dist;
+          p1 = points[i];
+          p2 = points[j];
+        }
+      }
+    }
+    if (maxDist === 0) return null;
+    
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.sqrt(maxDist);
+    const nx = dx / len;
+    const ny = dy / len;
+    
+    const startX = p1.x - nx * worldSize * 2;
+    const startY = p1.y - ny * worldSize * 2;
+    const endX = p2.x + nx * worldSize * 2;
+    const endY = p2.y + ny * worldSize * 2;
+    
+    return {
+      start: pointToView({ x: startX, y: startY }, worldSize),
+      end: pointToView({ x: endX, y: endY }, worldSize)
+    };
+  }, [analysis, worldSize]);
   const positionGroups = groupedPositions(selectedPositions);
   const groundSegments = Object.entries(positionGroups).flatMap<PlayerGroundSegment>(([playerId, positions]) =>
     groundedPositionSegments(positions, worldSize).map((segmentPositions, index) => ({
@@ -919,6 +965,18 @@ export function PlayerMatchAnalysis() {
                   </defs>
                   <rect width={MAP_VIEW_SIZE} height={MAP_VIEW_SIZE} fill="url(#analysis-grid)" />
 
+                  {flightPath && layers.includes("flightPath") && (
+                    <line
+                      x1={flightPath.start.x}
+                      y1={flightPath.start.y}
+                      x2={flightPath.end.x}
+                      y2={flightPath.end.y}
+                      stroke="rgba(255, 255, 255, 0.4)"
+                      strokeWidth="2.5"
+                      strokeDasharray="10 10"
+                    />
+                  )}
+
                   {currentCircle && layers.includes("zones") && (
                     <g>
                       {(() => {
@@ -1119,6 +1177,10 @@ export function PlayerMatchAnalysis() {
                   <ToggleGroupItem value="zones" aria-label="圈型" className="h-8 px-2 text-xs">
                     <Shield className="mr-1.5 size-3.5" />
                     圈型
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="flightPath" aria-label="航线" className="h-8 px-2 text-xs">
+                    <Plane className="mr-1.5 size-3.5" />
+                    航线
                   </ToggleGroupItem>
                 </ToggleGroup>
               </div>
