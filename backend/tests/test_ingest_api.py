@@ -6,7 +6,16 @@ from app.api.ingest import (
 )
 from app.core.errors import AppError
 from app.main import app
-from app.services.ingest import DeleteMatchResult, IngestJobResult, IngestMatchAsset
+from app.services.ingest import (
+    DeleteMatchResult,
+    IngestJobResult,
+    IngestMatchAsset,
+    MatchAnalysis,
+    MatchAnalysisCircle,
+    MatchAnalysisLifeEvent,
+    MatchAnalysisPlayer,
+    MatchAnalysisPosition,
+)
 from fastapi.testclient import TestClient
 
 
@@ -189,6 +198,60 @@ class FakeIngestService:
                 life_event_count=8,
             )
         ]
+
+    def get_match_analysis(self, match_id: str) -> MatchAnalysis:
+        assert match_id == "match-1"
+        return MatchAnalysis(
+            match=self.list_matches(limit=25)[0],
+            players=[
+                MatchAnalysisPlayer(
+                    player_id="account.1",
+                    player_name="PlayerOne",
+                    team_id="team-1",
+                    team_rank=3,
+                    is_unknown_team=False,
+                )
+            ],
+            circles=[
+                MatchAnalysisCircle(
+                    phase=1,
+                    elapsed_time=60.0,
+                    center_x=400000.0,
+                    center_y=410000.0,
+                    radius=400000.0,
+                    num_alive_teams=16,
+                    num_alive_players=64,
+                )
+            ],
+            positions=[
+                MatchAnalysisPosition(
+                    player_id="account.1",
+                    team_id="team-1",
+                    phase=1,
+                    elapsed_time=62.5,
+                    x=401000.0,
+                    y=411000.0,
+                    z=100.0,
+                    alive=True,
+                )
+            ],
+            life_events=[
+                MatchAnalysisLifeEvent(
+                    id=1,
+                    elapsed_time=120.0,
+                    phase=1,
+                    event_type="LogPlayerKill",
+                    actor_player_id="account.1",
+                    actor_player_name="PlayerOne",
+                    actor_team_id="team-1",
+                    victim_player_id="account.2",
+                    victim_player_name="PlayerTwo",
+                    victim_team_id="team-2",
+                    x=405000.0,
+                    y=412000.0,
+                )
+            ],
+        )
 
     def delete_match(self, match_id: str) -> DeleteMatchResult:
         assert match_id == "match-1"
@@ -441,6 +504,24 @@ def test_list_matches_api_returns_assets() -> None:
     assert body["matches"][0]["match_id"] == "match-1"
     assert body["matches"][0]["circle_phase_count"] == 6
     assert "api_key" not in body["matches"][0]
+
+
+def test_get_match_analysis_api_returns_timeline_layers() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.get("/api/ingest/matches/match-1/analysis")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["match"]["match_id"] == "match-1"
+    assert body["players"][0]["player_name"] == "PlayerOne"
+    assert body["circles"][0]["center"] == {"x": 400000.0, "y": 410000.0}
+    assert body["positions"][0]["point"] == {"x": 401000.0, "y": 411000.0}
+    assert body["life_events"][0]["victim_player_name"] == "PlayerTwo"
+    assert "api_key" not in body
 
 
 def test_delete_match_api_returns_deleted_counts() -> None:

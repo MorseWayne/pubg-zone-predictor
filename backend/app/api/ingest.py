@@ -17,6 +17,7 @@ from app.services.ingest import (
     IngestJobResult,
     IngestMatchAsset,
     IngestService,
+    MatchAnalysis,
 )
 from app.services.pubg_api import PubgApiClient
 
@@ -292,6 +293,11 @@ def list_matches(
     return {"matches": [_match_response(match) for match in matches]}
 
 
+@router.get("/matches/{match_id}/analysis")
+def get_match_analysis(match_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
+    return _match_analysis_response(ingest_service.get_match_analysis(match_id))
+
+
 @router.delete("/matches")
 def delete_matches(
     request: DeleteMatchesRequest,
@@ -353,6 +359,65 @@ def _match_response(match: IngestMatchAsset) -> dict[str, object]:
     }
 
 
+def _match_analysis_response(analysis: MatchAnalysis) -> dict[str, object]:
+    return {
+        "match": _match_response(analysis.match),
+        "players": [
+            {
+                "player_id": player.player_id,
+                "player_name": player.player_name,
+                "team_id": player.team_id,
+                "team_rank": player.team_rank,
+                "is_unknown_team": player.is_unknown_team,
+            }
+            for player in analysis.players
+        ],
+        "circles": [
+            {
+                "phase": circle.phase,
+                "elapsed_time": circle.elapsed_time,
+                "center": {"x": circle.center_x, "y": circle.center_y},
+                "radius": circle.radius,
+                "num_alive_teams": circle.num_alive_teams,
+                "num_alive_players": circle.num_alive_players,
+            }
+            for circle in analysis.circles
+        ],
+        "positions": [
+            {
+                "player_id": position.player_id,
+                "team_id": position.team_id,
+                "phase": position.phase,
+                "elapsed_time": position.elapsed_time,
+                "point": {"x": position.x, "y": position.y},
+                "z": position.z,
+                "alive": position.alive,
+            }
+            for position in analysis.positions
+        ],
+        "life_events": [
+            {
+                "id": event.id,
+                "elapsed_time": event.elapsed_time,
+                "phase": event.phase,
+                "event_type": event.event_type,
+                "actor_player_id": event.actor_player_id,
+                "actor_player_name": event.actor_player_name,
+                "actor_team_id": event.actor_team_id,
+                "victim_player_id": event.victim_player_id,
+                "victim_player_name": event.victim_player_name,
+                "victim_team_id": event.victim_team_id,
+                "point": (
+                    {"x": event.x, "y": event.y}
+                    if event.x is not None and event.y is not None
+                    else None
+                ),
+            }
+            for event in analysis.life_events
+        ],
+    }
+
+
 def _delete_match_response(result: DeleteMatchResult) -> dict[str, object]:
     return {
         "match_id": result.match_id,
@@ -375,7 +440,9 @@ def _player_search_response(player: dict[str, object], platform: str) -> dict[st
         "player_id": player_id if isinstance(player_id, str) else "",
         "player_name": player_name if isinstance(player_name, str) else str(player_id or ""),
         "platform": platform,
-        "recent_match_count": sum(1 for item in match_refs if isinstance(item, dict) and item.get("id")),
+        "recent_match_count": sum(
+            1 for item in match_refs if isinstance(item, dict) and item.get("id")
+        ),
     }
 
 

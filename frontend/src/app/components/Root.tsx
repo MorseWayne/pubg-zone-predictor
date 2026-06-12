@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from "react-router";
-import { Map as MapIcon, Database, Activity, Target } from "lucide-react";
+import { Map as MapIcon, Database, Activity, Target, Route } from "lucide-react";
 import { Button } from "./ui/button";
 
 export function Root() {
@@ -26,6 +26,11 @@ export function Root() {
           <Button variant="ghost" asChild className="w-full justify-start h-auto py-3 px-4 font-medium transition-colors hover:bg-neutral-800 hover:text-neutral-200">
             <NavLink to="/preparation" className={({isActive}) => isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg' : 'text-neutral-400'}>
                <Activity className="w-4 h-4 mr-3" /> 数据准备
+            </NavLink>
+          </Button>
+          <Button variant="ghost" asChild className="w-full justify-start h-auto py-3 px-4 font-medium transition-colors hover:bg-neutral-800 hover:text-neutral-200">
+            <NavLink to="/analysis" className={({isActive}) => isActive ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 rounded-lg' : 'text-neutral-400'}>
+               <Route className="w-4 h-4 mr-3" /> 对局分析
             </NavLink>
           </Button>
         </div>

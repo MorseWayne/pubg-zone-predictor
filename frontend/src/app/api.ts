@@ -68,6 +68,55 @@ export type IngestMatch = {
   life_event_count: number;
 };
 
+export type MatchAnalysisPlayer = {
+  player_id: string;
+  player_name: string | null;
+  team_id: string;
+  team_rank: number | null;
+  is_unknown_team: boolean;
+};
+
+export type MatchAnalysisCircle = {
+  phase: number;
+  elapsed_time: number;
+  center: ApiPoint;
+  radius: number;
+  num_alive_teams: number | null;
+  num_alive_players: number | null;
+};
+
+export type MatchAnalysisPosition = {
+  player_id: string;
+  team_id: string;
+  phase: number | null;
+  elapsed_time: number;
+  point: ApiPoint;
+  z: number | null;
+  alive: boolean | null;
+};
+
+export type MatchAnalysisLifeEvent = {
+  id: number;
+  elapsed_time: number;
+  phase: number | null;
+  event_type: string;
+  actor_player_id: string | null;
+  actor_player_name: string | null;
+  actor_team_id: string | null;
+  victim_player_id: string | null;
+  victim_player_name: string | null;
+  victim_team_id: string | null;
+  point: ApiPoint | null;
+};
+
+export type MatchAnalysis = {
+  match: IngestMatch;
+  players: MatchAnalysisPlayer[];
+  circles: MatchAnalysisCircle[];
+  positions: MatchAnalysisPosition[];
+  life_events: MatchAnalysisLifeEvent[];
+};
+
 export type DeleteMatchResult = {
   match_id: string;
   deleted: boolean;
@@ -285,6 +334,8 @@ export const api = {
     ),
   listMatches: async (limit = 50) =>
     apiRequest<{ matches: IngestMatch[] }>(`/api/ingest/matches${toQuery({ limit })}`),
+  getMatchAnalysis: async (matchId: string) =>
+    apiRequest<MatchAnalysis>(`/api/ingest/matches/${encodeURIComponent(matchId)}/analysis`),
   listIngestJobs: async (limit = 20) =>
     apiRequest<{ jobs: IngestJob[] }>(`/api/ingest/jobs${toQuery({ limit })}`),
   getIngestJob: async (jobId: string) => apiRequest<IngestJob>(`/api/ingest/jobs/${jobId}`),

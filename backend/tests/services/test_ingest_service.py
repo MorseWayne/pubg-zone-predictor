@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from app.core.errors import AppError
 from app.db.repository import SQLiteRepository
 from app.services.ingest import IngestService
@@ -420,6 +419,115 @@ def test_parse_match_telemetry_writes_training_rows(
     assert job.success_count == 1
     assert asset["parse_status"] == "completed"
     assert repo.fetch_one("SELECT COUNT(*) AS count FROM circle_phases")["count"] == 1
+
+
+def test_get_match_analysis_returns_players_route_and_events(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    repo = SQLiteRepository(migrated_connection)
+    repo.execute(
+        """
+        INSERT INTO matches (
+            match_id,
+            map_name,
+            shard_id,
+            game_mode,
+            match_type,
+            created_at,
+            duration,
+            telemetry_url,
+            ingest_status
+        )
+        VALUES (
+            'match-analysis',
+            'Erangel_Main',
+            'steam',
+            'squad',
+            'official',
+            '2026-06-05T00:00:00Z',
+            1800,
+            'https://telemetry.test/match-analysis.json',
+            'completed'
+        )
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO telemetry_assets (match_id, telemetry_url, parse_status)
+        VALUES ('match-analysis', 'https://telemetry.test/match-analysis.json', 'completed')
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO match_teams (match_id, team_id, team_rank)
+        VALUES ('match-analysis', 'team-1', 2)
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO match_rosters (match_id, team_id, player_id, player_name)
+        VALUES ('match-analysis', 'team-1', 'account.1', 'PlayerOne')
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO circle_phases (
+            match_id,
+            phase,
+            elapsed_time,
+            center_x,
+            center_y,
+            radius,
+            num_alive_teams,
+            num_alive_players
+        )
+        VALUES ('match-analysis', 1, 60, 400000, 410000, 400000, 16, 64)
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO player_position_samples (
+            match_id,
+            player_id,
+            team_id,
+            phase,
+            elapsed_time,
+            elapsed_time_bucket,
+            x,
+            y,
+            alive
+        )
+        VALUES ('match-analysis', 'account.1', 'team-1', 1, 62, 12, 401000, 411000, 1)
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO player_life_events (
+            match_id,
+            elapsed_time,
+            phase,
+            event_type,
+            actor_player_id,
+            victim_player_id,
+            x,
+            y
+        )
+        VALUES ('match-analysis', 120, 1, 'LogPlayerKill', 'account.1', 'account.2', 405000, 412000)
+        """
+    )
+    migrated_connection.commit()
+
+    analysis = service.get_match_analysis("match-analysis")
+
+    assert analysis.match.match_id == "match-analysis"
+    assert analysis.players[0].player_name == "PlayerOne"
+    assert analysis.players[0].team_rank == 2
+    assert analysis.circles[0].center_x == 400000
+    assert analysis.positions[0].alive is True
+    assert analysis.life_events[0].actor_player_name == "PlayerOne"
+    assert analysis.life_events[0].x == 405000
 
 
 def test_retry_job_starts_new_job_with_incremented_retry_count(

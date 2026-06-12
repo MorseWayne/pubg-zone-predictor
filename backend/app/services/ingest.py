@@ -68,6 +68,63 @@ class IngestMatchAsset:
 
 
 @dataclass(frozen=True)
+class MatchAnalysisPlayer:
+    player_id: str
+    player_name: str | None
+    team_id: str
+    team_rank: int | None
+    is_unknown_team: bool
+
+
+@dataclass(frozen=True)
+class MatchAnalysisCircle:
+    phase: int
+    elapsed_time: float
+    center_x: float
+    center_y: float
+    radius: float
+    num_alive_teams: int | None
+    num_alive_players: int | None
+
+
+@dataclass(frozen=True)
+class MatchAnalysisPosition:
+    player_id: str
+    team_id: str
+    phase: int | None
+    elapsed_time: float
+    x: float
+    y: float
+    z: float | None
+    alive: bool | None
+
+
+@dataclass(frozen=True)
+class MatchAnalysisLifeEvent:
+    id: int
+    elapsed_time: float
+    phase: int | None
+    event_type: str
+    actor_player_id: str | None
+    actor_player_name: str | None
+    actor_team_id: str | None
+    victim_player_id: str | None
+    victim_player_name: str | None
+    victim_team_id: str | None
+    x: float | None
+    y: float | None
+
+
+@dataclass(frozen=True)
+class MatchAnalysis:
+    match: IngestMatchAsset
+    players: list[MatchAnalysisPlayer]
+    circles: list[MatchAnalysisCircle]
+    positions: list[MatchAnalysisPosition]
+    life_events: list[MatchAnalysisLifeEvent]
+
+
+@dataclass(frozen=True)
 class DeleteMatchResult:
     match_id: str
     deleted: bool
@@ -125,6 +182,93 @@ class IngestService:
             (limit,),
         )
         return [self._match_asset(row) for row in rows]
+
+    def get_match_analysis(self, match_id: str) -> MatchAnalysis:
+        match = self._get_match_asset(match_id)
+        player_rows = self.repo.fetch_all(
+            """
+            SELECT
+                mr.player_id,
+                mr.player_name,
+                mr.team_id,
+                mt.team_rank,
+                mt.is_unknown
+            FROM match_rosters mr
+            LEFT JOIN match_teams mt
+                ON mt.match_id = mr.match_id
+                AND mt.team_id = mr.team_id
+            WHERE mr.match_id = ?
+            ORDER BY COALESCE(mt.team_rank, 999), mr.team_id, COALESCE(mr.player_name, mr.player_id)
+            """,
+            (match_id,),
+        )
+        circle_rows = self.repo.fetch_all(
+            """
+            SELECT
+                phase,
+                elapsed_time,
+                center_x,
+                center_y,
+                radius,
+                num_alive_teams,
+                num_alive_players
+            FROM circle_phases
+            WHERE match_id = ?
+            ORDER BY phase ASC
+            """,
+            (match_id,),
+        )
+        position_rows = self.repo.fetch_all(
+            """
+            SELECT
+                player_id,
+                team_id,
+                phase,
+                elapsed_time,
+                x,
+                y,
+                z,
+                alive
+            FROM player_position_samples
+            WHERE match_id = ?
+            ORDER BY elapsed_time ASC, player_id ASC
+            """,
+            (match_id,),
+        )
+        life_event_rows = self.repo.fetch_all(
+            """
+            SELECT
+                le.id,
+                le.elapsed_time,
+                le.phase,
+                le.event_type,
+                le.actor_player_id,
+                actor.player_name AS actor_player_name,
+                actor.team_id AS actor_team_id,
+                le.victim_player_id,
+                victim.player_name AS victim_player_name,
+                victim.team_id AS victim_team_id,
+                le.x,
+                le.y
+            FROM player_life_events le
+            LEFT JOIN match_rosters actor
+                ON actor.match_id = le.match_id
+                AND actor.player_id = le.actor_player_id
+            LEFT JOIN match_rosters victim
+                ON victim.match_id = le.match_id
+                AND victim.player_id = le.victim_player_id
+            WHERE le.match_id = ?
+            ORDER BY le.elapsed_time ASC, le.id ASC
+            """,
+            (match_id,),
+        )
+        return MatchAnalysis(
+            match=match,
+            players=[self._analysis_player(row) for row in player_rows],
+            circles=[self._analysis_circle(row) for row in circle_rows],
+            positions=[self._analysis_position(row) for row in position_rows],
+            life_events=[self._analysis_life_event(row) for row in life_event_rows],
+        )
 
     def list_jobs(self, *, limit: int = 20) -> list[IngestJobResult]:
         rows = self.repo.fetch_all(
@@ -994,6 +1138,105 @@ class IngestService:
             circle_phase_count=int(row["circle_phase_count"]),
             position_sample_count=int(row["position_sample_count"]),
             life_event_count=int(row["life_event_count"]),
+        )
+
+    def _get_match_asset(self, match_id: str) -> IngestMatchAsset:
+        row = self.repo.fetch_one(
+            """
+            SELECT
+                m.match_id,
+                m.map_name,
+                m.shard_id,
+                m.game_mode,
+                m.match_type,
+                m.created_at,
+                m.duration,
+                m.ingest_status,
+                m.telemetry_url,
+                ta.cache_path AS telemetry_cache_path,
+                ta.parse_status AS telemetry_parse_status,
+                ta.downloaded_at AS telemetry_downloaded_at,
+                (
+                    SELECT COUNT(*)
+                    FROM circle_phases cp
+                    WHERE cp.match_id = m.match_id
+                ) AS circle_phase_count,
+                (
+                    SELECT COUNT(*)
+                    FROM player_position_samples ps
+                    WHERE ps.match_id = m.match_id
+                ) AS position_sample_count,
+                (
+                    SELECT COUNT(*)
+                    FROM player_life_events le
+                    WHERE le.match_id = m.match_id
+                ) AS life_event_count
+            FROM matches m
+            LEFT JOIN telemetry_assets ta ON ta.match_id = m.match_id
+            WHERE m.match_id = ?
+            """,
+            (match_id,),
+        )
+        if row is None:
+            raise AppError(
+                code="INGEST_MATCH_NOT_FOUND",
+                message=f"match '{match_id}' was not found",
+                status_code=404,
+                details={"match_id": match_id},
+            )
+        return self._match_asset(row)
+
+    @staticmethod
+    def _analysis_player(row: sqlite3.Row) -> MatchAnalysisPlayer:
+        return MatchAnalysisPlayer(
+            player_id=row["player_id"],
+            player_name=row["player_name"],
+            team_id=row["team_id"],
+            team_rank=row["team_rank"],
+            is_unknown_team=bool(row["is_unknown"]),
+        )
+
+    @staticmethod
+    def _analysis_circle(row: sqlite3.Row) -> MatchAnalysisCircle:
+        return MatchAnalysisCircle(
+            phase=int(row["phase"]),
+            elapsed_time=float(row["elapsed_time"]),
+            center_x=float(row["center_x"]),
+            center_y=float(row["center_y"]),
+            radius=float(row["radius"]),
+            num_alive_teams=row["num_alive_teams"],
+            num_alive_players=row["num_alive_players"],
+        )
+
+    @staticmethod
+    def _analysis_position(row: sqlite3.Row) -> MatchAnalysisPosition:
+        alive = row["alive"]
+        return MatchAnalysisPosition(
+            player_id=row["player_id"],
+            team_id=row["team_id"],
+            phase=row["phase"],
+            elapsed_time=float(row["elapsed_time"]),
+            x=float(row["x"]),
+            y=float(row["y"]),
+            z=float(row["z"]) if row["z"] is not None else None,
+            alive=bool(alive) if alive is not None else None,
+        )
+
+    @staticmethod
+    def _analysis_life_event(row: sqlite3.Row) -> MatchAnalysisLifeEvent:
+        return MatchAnalysisLifeEvent(
+            id=int(row["id"]),
+            elapsed_time=float(row["elapsed_time"]),
+            phase=row["phase"],
+            event_type=row["event_type"],
+            actor_player_id=row["actor_player_id"],
+            actor_player_name=row["actor_player_name"],
+            actor_team_id=row["actor_team_id"],
+            victim_player_id=row["victim_player_id"],
+            victim_player_name=row["victim_player_name"],
+            victim_team_id=row["victim_team_id"],
+            x=float(row["x"]) if row["x"] is not None else None,
+            y=float(row["y"]) if row["y"] is not None else None,
         )
 
     @staticmethod
