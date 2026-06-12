@@ -14,6 +14,10 @@ import {
   ZoomIn,
   ZoomOut,
   GripVertical,
+  Play,
+  Pause,
+  FastForward,
+  Rewind,
 } from "lucide-react";
 import {
   api,
@@ -31,6 +35,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { Slider } from "./ui/slider";
 import {
   Select,
   SelectContent,
@@ -274,6 +279,12 @@ function clampMapTransform(transform: MapTransform, width: number, height: numbe
   };
 }
 
+function formatPlaybackTime(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
 function StatCard({
   icon: Icon,
   label,
@@ -365,6 +376,10 @@ export function PlayerMatchAnalysis() {
   const [error, setError] = useState<string | null>(null);
   const [decodedHighResUrl, setDecodedHighResUrl] = useState<string | null>(null);
 
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(8);
+
   const [layersPanelPos, setLayersPanelPos] = useState(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("pzp_analysis_layersPanelPos");
@@ -454,17 +469,105 @@ export function PlayerMatchAnalysis() {
     return () => { isMounted = false; };
   }, [activeMap]);
 
+  const maxPlaybackTime = useMemo(() => {
+    if (!analysis) return 0;
+    const maxCircle = analysis.circles.length > 0 ? Math.max(...analysis.circles.map(c => c.elapsed_time)) : 0;
+    const maxEvent = analysis.life_events.length > 0 ? Math.max(...analysis.life_events.map(e => e.elapsed_time)) : 0;
+    const maxPos = analysis.positions.length > 0 ? Math.max(...analysis.positions.map(p => p.elapsed_time)) : 0;
+    return Math.max(maxCircle, maxEvent, maxPos);
+  }, [analysis]);
+
+  useEffect(() => {
+    setPlaybackTime(maxPlaybackTime);
+    setIsPlaying(false);
+  }, [maxPlaybackTime]);
+
+  const lastTimeRef = useRef<number>(0);
+  useEffect(() => {
+    if (!isPlaying) return;
+    let animationFrameId: number;
+
+    const tick = (time: number) => {
+      if (lastTimeRef.current !== 0) {
+        const deltaSeconds = (time - lastTimeRef.current) / 1000;
+        setPlaybackTime((prev) => {
+          const next = prev + deltaSeconds * playbackSpeed;
+          if (next >= maxPlaybackTime) {
+            setIsPlaying(false);
+            return maxPlaybackTime;
+          }
+          return next;
+        });
+      }
+      lastTimeRef.current = time;
+      animationFrameId = requestAnimationFrame(tick);
+    };
+
+    lastTimeRef.current = performance.now();
+    animationFrameId = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      lastTimeRef.current = 0;
+    };
+  }, [isPlaying, playbackSpeed, maxPlaybackTime]);
+
   const teams = useMemo(() => teamSummaries(analysis?.players ?? []), [analysis]);
   const selectedTeam = teams.find((team) => team.teamId === selectedTeamId);
   const selectedPositions = useMemo(() => {
     if (!analysis || !selectedTeamId) return [];
     return analysis.positions
-      .filter((position) => position.team_id === selectedTeamId)
+      .filter((position) => position.team_id === selectedTeamId && position.elapsed_time <= playbackTime)
       .sort((left, right) => left.elapsed_time - right.elapsed_time);
-  }, [analysis, selectedTeamId]);
+  }, [analysis, selectedTeamId, playbackTime]);
+
+  const currentFriendlyPositions = useMemo(() => {
+    const latest: Record<string, MatchAnalysisPosition> = {};
+    for (const p of selectedPositions) {
+      if (!latest[p.player_id] || p.elapsed_time > latest[p.player_id].elapsed_time) {
+        latest[p.player_id] = p;
+      }
+    }
+    return Object.values(latest);
+  }, [selectedPositions]);
+
+  const enemyPositions = useMemo(() => {
+    if (!analysis || !selectedTeamId) return [];
+    const latestPositions: Record<string, MatchAnalysisPosition> = {};
+    for (let i = 0; i < analysis.positions.length; i++) {
+      const p = analysis.positions[i];
+      if (p.team_id !== selectedTeamId && p.elapsed_time <= playbackTime) {
+        if (!latestPositions[p.player_id] || p.elapsed_time > latestPositions[p.player_id].elapsed_time) {
+          latestPositions[p.player_id] = p;
+        }
+      }
+    }
+    const deadPlayers = new Set<string>();
+    for (let i = 0; i < analysis.life_events.length; i++) {
+      const e = analysis.life_events[i];
+      if (e.event_type === "LogPlayerKill" && e.elapsed_time <= playbackTime && e.victim_player_id) {
+        deadPlayers.add(e.victim_player_id);
+      }
+    }
+    return Object.values(latestPositions).filter(p => !deadPlayers.has(p.player_id));
+  }, [analysis, selectedTeamId, playbackTime]);
+
+  const currentCircle = useMemo(() => {
+    if (!analysis) return null;
+    let latest = null;
+    for (const c of analysis.circles) {
+      if (c.elapsed_time <= playbackTime) {
+        if (!latest || c.elapsed_time > latest.elapsed_time) {
+          latest = c;
+        }
+      }
+    }
+    return latest;
+  }, [analysis, playbackTime]);
+
   const selectedEvents = useMemo(
-    () => (analysis?.life_events.filter((event) => isSelectedEvent(event, selectedTeamId)) ?? []),
-    [analysis, selectedTeamId],
+    () => (analysis?.life_events.filter((event) => isSelectedEvent(event, selectedTeamId) && event.elapsed_time <= playbackTime) ?? []),
+    [analysis, selectedTeamId, playbackTime],
   );
   const positionGroups = groupedPositions(selectedPositions);
   const groundSegments = Object.entries(positionGroups).flatMap<PlayerGroundSegment>(([playerId, positions]) =>
@@ -815,13 +918,13 @@ export function PlayerMatchAnalysis() {
                   </defs>
                   <rect width={MAP_VIEW_SIZE} height={MAP_VIEW_SIZE} fill="url(#analysis-grid)" />
 
-                  {analysis && layers.includes("zones") && (
+                  {currentCircle && layers.includes("zones") && (
                     <g>
-                      {analysis.circles.map((circle) => {
-                        const center = pointToView(circle.center, worldSize);
-                        const radius = radiusToView(circle.radius, worldSize);
+                      {(() => {
+                        const center = pointToView(currentCircle.center, worldSize);
+                        const radius = radiusToView(currentCircle.radius, worldSize);
                         return (
-                          <g key={circle.phase}>
+                          <g key={currentCircle.phase}>
                             <circle
                               cx={center.x}
                               cy={center.y}
@@ -832,11 +935,11 @@ export function PlayerMatchAnalysis() {
                               strokeWidth="2"
                             />
                             <text x={center.x + 8} y={center.y - 8} fill="#bfdbfe" fontSize="12">
-                              P{circle.phase}
+                              P{currentCircle.phase}
                             </text>
                           </g>
                         );
-                      })}
+                      })()}
                     </g>
                   )}
 
@@ -879,6 +982,29 @@ export function PlayerMatchAnalysis() {
                         />
                       );
                     })}
+
+                  {currentFriendlyPositions.map((position) => {
+                    const point = pointToView(position.point, worldSize);
+                    const color = playerColor(position.player_id, selectedTeam);
+                    const invScale = 1 / mapTransform.scale;
+                    return (
+                      <g key={`friendly-${position.player_id}`} transform={`translate(${point.x}, ${point.y}) scale(${invScale})`} pointerEvents="none">
+                        <circle cx="0" cy="0" r="8" fill={color} stroke="#fff" strokeWidth="1.5" />
+                        <circle cx="0" cy="0" r="14" fill="none" stroke={color} strokeWidth="1.5" opacity="0.6" className="animate-ping" style={{ animationDuration: "2s" }} />
+                      </g>
+                    );
+                  })}
+
+                  {enemyPositions.map((position) => {
+                    const point = pointToView(position.point, worldSize);
+                    const invScale = 1 / mapTransform.scale;
+                    return (
+                      <g key={`enemy-${position.player_id}`} transform={`translate(${point.x}, ${point.y}) scale(${invScale})`} pointerEvents="none">
+                        <circle cx="0" cy="0" r="4" fill="#ef4444" />
+                        <circle cx="0" cy="0" r="8" fill="none" stroke="#ef4444" strokeWidth="1" opacity="0.8" className="animate-ping" style={{ animationDuration: "1.5s" }} />
+                      </g>
+                    );
+                  })}
 
                   {clusteredMapEvents.map(cluster => {
                     const invScale = 1 / mapTransform.scale;
@@ -1048,6 +1174,71 @@ export function PlayerMatchAnalysis() {
                 </div>
               )}
             </div>
+            
+            {/* Playback Timeline Controls */}
+            {analysis && (
+              <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col gap-2 bg-background/90 p-3 backdrop-blur-sm border-t border-border shadow-lg">
+                <div className="flex items-center gap-4">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => setIsPlaying(!isPlaying)}
+                  >
+                    {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+                  </Button>
+                  <div className="text-sm font-medium tabular-nums w-14 shrink-0 text-right">
+                    {formatPlaybackTime(playbackTime)}
+                  </div>
+                  
+                  <div className="relative flex-1 px-2 flex items-center h-8">
+                    <Slider
+                      value={[playbackTime]}
+                      min={0}
+                      max={maxPlaybackTime}
+                      step={0.5}
+                      onValueChange={(vals) => {
+                        setIsPlaying(false);
+                        setPlaybackTime(vals[0]);
+                      }}
+                      className="cursor-grab active:cursor-grabbing"
+                    />
+                    {/* Circle phase markers */}
+                    <div className="absolute inset-x-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                      {analysis.circles.map(circle => {
+                        const percent = (circle.elapsed_time / maxPlaybackTime) * 100;
+                        if (percent > 100 || isNaN(percent)) return null;
+                        return (
+                          <div 
+                            key={`marker-${circle.phase}`} 
+                            className="absolute w-[2px] h-3 bg-blue-400/70 -mt-[1px] transform -translate-x-1/2"
+                            style={{ left: `${percent}%` }}
+                            title={`Phase ${circle.phase}`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="text-sm font-medium tabular-nums w-14 shrink-0 text-left text-muted-foreground">
+                    {formatPlaybackTime(maxPlaybackTime)}
+                  </div>
+
+                  <Select value={playbackSpeed.toString()} onValueChange={(val) => setPlaybackSpeed(Number(val))}>
+                    <SelectTrigger className="w-[80px] h-8 shrink-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1x</SelectItem>
+                      <SelectItem value="4">4x</SelectItem>
+                      <SelectItem value="8">8x</SelectItem>
+                      <SelectItem value="16">16x</SelectItem>
+                      <SelectItem value="32">32x</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
           </TooltipProvider>
         </CardContent>
       </Card>
