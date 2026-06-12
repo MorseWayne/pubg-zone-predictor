@@ -58,6 +58,7 @@ const PLAYER_COLORS = [
   "#14b8a6",
   "#fb7185",
 ];
+const LANDING_Z_MAX = 1500;
 
 type LayerId = "route" | "combat" | "eliminations" | "zones";
 type TeamSummary = {
@@ -141,6 +142,19 @@ function groupedPositions(positions: MatchAnalysisPosition[]) {
     groups[position.player_id] = [...(groups[position.player_id] ?? []), position];
     return groups;
   }, {});
+}
+
+function positionsFromLanding(positions: MatchAnalysisPosition[]) {
+  const phaseStartIndex = positions.findIndex((position) => position.phase !== null);
+  if (phaseStartIndex < 0) return positions;
+
+  const landingIndex = positions.findIndex(
+    (position, index) =>
+      index >= phaseStartIndex &&
+      position.z !== null &&
+      position.z <= LANDING_Z_MAX,
+  );
+  return positions.slice(landingIndex >= 0 ? landingIndex : phaseStartIndex);
 }
 
 function isSquadMatch(match: IngestMatch) {
@@ -307,8 +321,11 @@ export function PlayerMatchAnalysis() {
   const selectedTeam = teams.find((team) => team.teamId === selectedTeamId);
   const selectedPositions = useMemo(() => {
     if (!analysis || !selectedTeamId) return [];
-    return analysis.positions
+    const teamPositions = analysis.positions
       .filter((position) => position.team_id === selectedTeamId)
+      .sort((left, right) => left.elapsed_time - right.elapsed_time);
+    return Object.values(groupedPositions(teamPositions))
+      .flatMap(positionsFromLanding)
       .sort((left, right) => left.elapsed_time - right.elapsed_time);
   }, [analysis, selectedTeamId]);
   const selectedEvents = useMemo(
