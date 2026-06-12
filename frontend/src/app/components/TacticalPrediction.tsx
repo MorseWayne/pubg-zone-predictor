@@ -22,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 
 type MapMode = "center" | "team";
 type PredictionState = "idle" | "loading" | "success" | "error";
+export type MapAssetStatus = "loading" | "ready" | "error";
 export type Point = { x: number; y: number };
 
 const MAP_VIEW_SIZE = 1000;
@@ -48,6 +49,10 @@ function percentScore(score: number) {
   return Math.round(score * 100);
 }
 
+function withCacheBust(url: string) {
+  return `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
+}
+
 export function TacticalPrediction() {
   const [maps, setMaps] = useState<MapConfig[]>([]);
   const [zoneConfig, setZoneConfig] = useState<ZonePhaseConfig | null>(null);
@@ -60,7 +65,11 @@ export function TacticalPrediction() {
   const [smartExplain, setSmartExplain] = useState(true);
   const [predState, setPredState] = useState<PredictionState>("idle");
   const [prediction, setPrediction] = useState<PredictResponse | null>(null);
-  const [mapImageUrl, setMapImageUrl] = useState(api.mapImageUrl("miramar"));
+  const [mapImageUrl, setMapImageUrl] = useState("");
+  const [mapAssetStatus, setMapAssetStatus] = useState<MapAssetStatus>("loading");
+  const [mapAssetProgress, setMapAssetProgress] = useState(0);
+  const [mapAssetMessage, setMapAssetMessage] = useState("准备地图资源...");
+  const [mapAssetRetryKey, setMapAssetRetryKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const currentMap = useMemo(
@@ -103,17 +112,63 @@ export function TacticalPrediction() {
   }, [selectedMap]);
 
   useEffect(() => {
+    let cancelled = false;
+    let progress = 8;
+    let timer: number | undefined;
+
     const ensureMapImage = async () => {
-      setMapImageUrl(api.mapImageUrl(selectedMap));
+      setMapImageUrl("");
+      setMapAssetStatus("loading");
+      setMapAssetProgress(progress);
+      setMapAssetMessage("正在检查地图资源缓存...");
+
+      timer = window.setInterval(() => {
+        progress = Math.min(progress + (progress < 65 ? 9 : 4), 88);
+        setMapAssetProgress(progress);
+        if (progress >= 40) setMapAssetMessage("地图资源下载中，请稍候...");
+      }, 500);
+
       try {
         const asset = await api.ensureMapAsset(selectedMap);
-        setMapImageUrl(asset.image_url);
+        window.clearInterval(timer);
+        if (cancelled) return;
+        setMapAssetProgress(96);
+        setMapAssetMessage(asset.downloaded ? "地图资源下载完成，正在渲染..." : "已命中缓存，正在渲染...");
+        setMapImageUrl(withCacheBust(asset.image_url));
       } catch (err) {
-        setError(apiErrorMessage(err));
+        window.clearInterval(timer);
+        if (cancelled) return;
+        setMapImageUrl("");
+        setMapAssetStatus("error");
+        setMapAssetProgress(100);
+        setMapAssetMessage(`地图资源加载失败：${apiErrorMessage(err)}`);
       }
     };
+
     void ensureMapImage();
-  }, [selectedMap]);
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [selectedMap, mapAssetRetryKey]);
+
+  const handleMapImageLoaded = () => {
+    setMapAssetProgress(100);
+    setMapAssetStatus("ready");
+    setMapAssetMessage("地图资源已就绪");
+  };
+
+  const handleMapImageFailed = () => {
+    setMapImageUrl("");
+    setMapAssetStatus("error");
+    setMapAssetProgress(100);
+    setMapAssetMessage("地图图片渲染失败，请重试资源加载。");
+  };
+
+  const retryMapAsset = () => {
+    setMapAssetRetryKey((value) => value + 1);
+  };
 
   const handleMapClick = (p: Point) => {
     setPrediction(null);
@@ -301,6 +356,12 @@ export function TacticalPrediction() {
           worldSize={worldSize}
           currentRadius={currentRadius}
           mapImageUrl={mapImageUrl}
+          mapAssetStatus={mapAssetStatus}
+          mapAssetProgress={mapAssetProgress}
+          mapAssetMessage={mapAssetMessage}
+          onMapImageLoad={handleMapImageLoaded}
+          onMapImageError={handleMapImageFailed}
+          onRetryMapAsset={retryMapAsset}
         />
 
         <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm p-3 rounded border border-white/10 pointer-events-none">

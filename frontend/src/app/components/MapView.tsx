@@ -1,6 +1,9 @@
 import { useRef, useEffect, useState } from "react";
-import { Point } from "./TacticalPrediction";
-import { PredictResponse } from "../api";
+import { RefreshCw } from "lucide-react";
+import type { Point, MapAssetStatus } from "./TacticalPrediction";
+import type { PredictResponse } from "../api";
+import { Button } from "./ui/button";
+import { Progress } from "./ui/progress";
 
 interface MapViewProps {
   selectedMap: string;
@@ -15,6 +18,12 @@ interface MapViewProps {
   worldSize: number;
   currentRadius: number;
   mapImageUrl: string;
+  mapAssetStatus: MapAssetStatus;
+  mapAssetProgress: number;
+  mapAssetMessage: string;
+  onMapImageLoad: () => void;
+  onMapImageError: () => void;
+  onRetryMapAsset: () => void;
 }
 
 const MAP_VIEW_SIZE = 1000;
@@ -48,6 +57,12 @@ export function MapView({
   worldSize,
   currentRadius,
   mapImageUrl,
+  mapAssetStatus,
+  mapAssetProgress,
+  mapAssetMessage,
+  onMapImageLoad,
+  onMapImageError,
+  onRetryMapAsset,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -192,11 +207,15 @@ export function MapView({
         }}
       >
         {/* Background Map Image */}
-        <img 
-          src={mapImageUrl}
-          alt={`${selectedMap} map base`}
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none opacity-80 mix-blend-normal"
-        />
+        {mapImageUrl && (
+          <img
+            src={mapImageUrl}
+            alt={`${selectedMap} map base`}
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none opacity-80 mix-blend-normal"
+            onLoad={onMapImageLoad}
+            onError={onMapImageError}
+          />
+        )}
 
         <svg 
           width="100%" 
@@ -286,6 +305,54 @@ export function MapView({
             <div className="w-12 h-12 border-4 border-neutral-700 border-t-orange-500 rounded-full animate-spin" />
             <div className="text-orange-400 font-medium tracking-wide">正在处理地形数据...</div>
             <div className="text-xs text-neutral-500">正在评估 12,400 个历史场景</div>
+          </div>
+        </div>
+      )}
+
+      {mapAssetStatus !== "ready" && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-[#202329]/85 backdrop-blur-sm"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="w-[min(420px,calc(100%-2rem))] rounded border border-white/10 bg-neutral-950/90 p-5 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded bg-orange-500/15">
+                {mapAssetStatus === "loading" ? (
+                  <>
+                    <span className="absolute h-8 w-8 animate-ping rounded-full border border-orange-400/40" />
+                    <span className="h-5 w-5 rounded-full border-2 border-orange-500/30 border-t-orange-400 animate-spin" />
+                  </>
+                ) : (
+                  <RefreshCw className="h-5 w-5 text-orange-300" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-white">
+                  {mapAssetStatus === "loading" ? "地图资源加载中" : "地图资源未就绪"}
+                </div>
+                <div className="mt-1 truncate text-xs text-neutral-400">{mapAssetMessage}</div>
+              </div>
+            </div>
+
+            <Progress
+              value={mapAssetProgress}
+              className="h-2 bg-neutral-800 [&_[data-slot=progress-indicator]]:bg-orange-500"
+            />
+            <div className="mt-2 flex items-center justify-between text-xs text-neutral-500">
+              <span>{mapAssetStatus === "loading" ? "缓存检查 / 下载 / 渲染" : "可重新触发后端下载"}</span>
+              <span>{Math.round(mapAssetProgress)}%</span>
+            </div>
+
+            {mapAssetStatus === "error" && (
+              <Button
+                onClick={onRetryMapAsset}
+                className="mt-4 h-9 w-full rounded border border-orange-500/40 bg-orange-600 text-white hover:bg-orange-500"
+              >
+                <RefreshCw className="w-4 h-4" />
+                重新加载地图
+              </Button>
+            )}
           </div>
         </div>
       )}
