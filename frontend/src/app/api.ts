@@ -110,6 +110,7 @@ export type MatchAnalysisLifeEvent = {
   victim_player_name: string | null;
   victim_team_id: string | null;
   point: ApiPoint | null;
+  damage: number | null;
 };
 
 export type MatchAnalysis = {

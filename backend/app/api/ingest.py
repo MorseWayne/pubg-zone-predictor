@@ -455,6 +455,7 @@ def _match_analysis_response(analysis: MatchAnalysis) -> dict[str, object]:
                     if event.x is not None and event.y is not None
                     else None
                 ),
+                "damage": event.damage,
             }
             for event in analysis.life_events
         ],

@@ -118,6 +118,7 @@ class MatchAnalysisLifeEvent:
     victim_team_id: str | None
     x: float | None
     y: float | None
+    damage: float | None
 
 
 @dataclass(frozen=True)
@@ -264,7 +265,8 @@ class IngestService:
                 victim.player_name AS victim_player_name,
                 victim.team_id AS victim_team_id,
                 le.x,
-                le.y
+                le.y,
+                le.damage
             FROM player_life_events le
             LEFT JOIN match_rosters actor
                 ON actor.match_id = le.match_id
@@ -1374,6 +1376,7 @@ class IngestService:
             victim_team_id=row["victim_team_id"],
             x=float(row["x"]) if row["x"] is not None else None,
             y=float(row["y"]) if row["y"] is not None else None,
+            damage=float(row["damage"]) if row["damage"] is not None else None,
         )
 
     @staticmethod

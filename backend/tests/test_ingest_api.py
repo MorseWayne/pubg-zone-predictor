@@ -290,6 +290,7 @@ class FakeIngestService:
                     victim_team_id="team-2",
                     x=405000.0,
                     y=412000.0,
+                    damage=12.5,
                 )
             ],
         )
@@ -627,6 +628,7 @@ def test_get_match_analysis_api_returns_timeline_layers() -> None:
     assert body["circles"][0]["center"] == {"x": 400000.0, "y": 410000.0}
     assert body["positions"][0]["point"] == {"x": 401000.0, "y": 411000.0}
     assert body["life_events"][0]["victim_player_name"] == "PlayerTwo"
+    assert body["life_events"][0]["damage"] == 12.5
     assert "api_key" not in body
 
 

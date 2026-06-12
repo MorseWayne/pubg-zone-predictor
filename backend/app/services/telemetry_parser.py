@@ -253,6 +253,7 @@ class TelemetryParser:
                     )
 
         location = _location(victim or {}) or _location(actor or {}) or _location(event)
+        damage = _number(event.get("damage"))
         counts["life_event_count"] += self.repo.insert_or_ignore(
             "player_life_events",
             {
@@ -264,6 +265,7 @@ class TelemetryParser:
                 "victim_player_id": _player_id(victim or {}),
                 "x": location.get("x") if location else None,
                 "y": location.get("y") if location else None,
+                "damage": damage,
             },
         ).rowcount
 

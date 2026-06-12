@@ -10,7 +10,7 @@ from app.db.migrations import initialize_database
 def test_initialize_database_applies_initial_schema(database_path: Path) -> None:
     applied = initialize_database(database_path)
 
-    assert [migration.version for migration in applied] == ["001", "002", "003", "004"]
+    assert [migration.version for migration in applied] == ["001", "002", "003", "004", "005"]
 
     with connect_database(database_path) as connection:
         tables = {
@@ -38,6 +38,13 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
     assert "parsed_at" in telemetry_columns
 
     with connect_database(database_path) as connection:
+        life_event_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(player_life_events)").fetchall()
+        }
+    assert "damage" in life_event_columns
+
+    with connect_database(database_path) as connection:
         connection.execute(
             """
             INSERT INTO ingest_jobs (id, job_type, status)
@@ -56,7 +63,7 @@ def test_initialize_database_is_idempotent(database_path: Path) -> None:
     first_run = initialize_database(database_path)
     second_run = initialize_database(database_path)
 
-    assert [migration.version for migration in first_run] == ["001", "002", "003", "004"]
+    assert [migration.version for migration in first_run] == ["001", "002", "003", "004", "005"]
     assert second_run == []
 
 

@@ -23,6 +23,7 @@ import {
 import {
   api,
   apiErrorMessage,
+  ApiPoint,
   IngestMatch,
   MapConfig,
   MatchAnalysis,
@@ -67,6 +68,8 @@ const PLAYER_COLORS = [
 ];
 const AIRBORNE_Z_MIN = 10000;
 const AIRBORNE_DESCENT_Z_DELTA = 1000;
+const FLIGHT_PATH_EARLY_WINDOW_SECONDS = 180;
+const FLIGHT_PATH_MIN_POINTS = 6;
 
 type LayerId = "route" | "combat" | "eliminations" | "zones" | "flightPath";
 type TeamSummary = {
@@ -92,6 +95,10 @@ type PlayerGroundSegment = {
 };
 type PlayerRouteSegment = PlayerGroundSegment & {
   path: string;
+};
+type FlightLine = {
+  center: ApiPoint;
+  direction: ApiPoint;
 };
 
 function matchTitle(match: IngestMatch) {
@@ -158,6 +165,149 @@ function groupedPositions(positions: MatchAnalysisPosition[]) {
     groups[position.player_id] = [...(groups[position.player_id] ?? []), position];
     return groups;
   }, {});
+}
+
+function squaredDistance(left: ApiPoint, right: ApiPoint) {
+  const dx = left.x - right.x;
+  const dy = left.y - right.y;
+  return dx * dx + dy * dy;
+}
+
+function median(values: number[]) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function fitPrincipalLine(points: ApiPoint[]): FlightLine | null {
+  if (points.length < 2) return null;
+
+  const center = points.reduce(
+    (total, point) => ({ x: total.x + point.x, y: total.y + point.y }),
+    { x: 0, y: 0 },
+  );
+  center.x /= points.length;
+  center.y /= points.length;
+
+  let xx = 0;
+  let xy = 0;
+  let yy = 0;
+  for (const point of points) {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    xx += dx * dx;
+    xy += dx * dy;
+    yy += dy * dy;
+  }
+
+  if (xx === 0 && yy === 0) return null;
+
+  const angle = Math.atan2(2 * xy, xx - yy) / 2;
+  return {
+    center,
+    direction: { x: Math.cos(angle), y: Math.sin(angle) },
+  };
+}
+
+function perpendicularDistance(point: ApiPoint, line: FlightLine) {
+  const dx = point.x - line.center.x;
+  const dy = point.y - line.center.y;
+  return Math.abs(dx * -line.direction.y + dy * line.direction.x);
+}
+
+function projectedSpan(points: ApiPoint[], line: FlightLine) {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  for (const point of points) {
+    const projection =
+      (point.x - line.center.x) * line.direction.x +
+      (point.y - line.center.y) * line.direction.y;
+    min = Math.min(min, projection);
+    max = Math.max(max, projection);
+  }
+
+  return { min, max };
+}
+
+function buildFlightPathFromPoints(points: ApiPoint[], worldSize: number) {
+  const uniquePoints = points.filter(
+    (point, index) => points.findIndex((candidate) => squaredDistance(candidate, point) < 1) === index,
+  );
+  if (uniquePoints.length < 2) return null;
+
+  let line = fitPrincipalLine(uniquePoints);
+  if (!line) return null;
+
+  const residuals = uniquePoints.map((point) => perpendicularDistance(point, line));
+  const residualLimit = Math.max(
+    worldSize * 0.015,
+    Math.min(worldSize * 0.08, median(residuals) * 2.5),
+  );
+  const inliers = uniquePoints.filter((point) => perpendicularDistance(point, line) <= residualLimit);
+
+  if (inliers.length >= FLIGHT_PATH_MIN_POINTS) {
+    line = fitPrincipalLine(inliers) ?? line;
+  }
+
+  const pathPoints = inliers.length >= 2 ? inliers : uniquePoints;
+  const span = projectedSpan(pathPoints, line);
+  if (!Number.isFinite(span.min) || !Number.isFinite(span.max) || span.max - span.min <= 0) return null;
+
+  const extension = worldSize * 2;
+  const startProjection = span.min - extension;
+  const endProjection = span.max + extension;
+
+  return {
+    start: pointToView(
+      {
+        x: line.center.x + line.direction.x * startProjection,
+        y: line.center.y + line.direction.y * startProjection,
+      },
+      worldSize,
+    ),
+    end: pointToView(
+      {
+        x: line.center.x + line.direction.x * endProjection,
+        y: line.center.y + line.direction.y * endProjection,
+      },
+      worldSize,
+    ),
+  };
+}
+
+function inferFlightPath(positions: MatchAnalysisPosition[], worldSize: number) {
+  if (positions.length < 2) return null;
+
+  const airborne = positions
+    .filter((position) => position.z !== null && position.z >= AIRBORNE_Z_MIN)
+    .sort((left, right) => left.elapsed_time - right.elapsed_time);
+  const earliestAirborneTime = airborne[0]?.elapsed_time;
+
+  if (earliestAirborneTime !== undefined) {
+    const earlyAirborne = airborne.filter(
+      (position) => position.elapsed_time <= earliestAirborneTime + FLIGHT_PATH_EARLY_WINDOW_SECONDS,
+    );
+    const preCircleAirborne = airborne.filter((position) => position.phase === null);
+    const candidateSets = [earlyAirborne, preCircleAirborne, airborne].filter(
+      (candidates) => candidates.length >= 2,
+    );
+
+    for (const candidates of candidateSets) {
+      const fittedPath = buildFlightPathFromPoints(candidates.map((position) => position.point), worldSize);
+      if (fittedPath) return fittedPath;
+    }
+  }
+
+  const firstPositions = new Map<string, ApiPoint>();
+  for (const position of positions) {
+    if (!firstPositions.has(position.player_id)) {
+      firstPositions.set(position.player_id, position.point);
+    }
+  }
+
+  return buildFlightPathFromPoints(Array.from(firstPositions.values()), worldSize);
 }
 
 function isOutsideMap(position: MatchAnalysisPosition, worldSize: number) {
@@ -578,68 +728,7 @@ export function PlayerMatchAnalysis() {
   );
 
   const flightPath = useMemo(() => {
-    if (!analysis || analysis.positions.length === 0) return null;
-
-    let pointsToUse = analysis.positions
-      .filter(p => p.z !== null && p.z >= AIRBORNE_Z_MIN)
-      .map(p => p.point);
-
-    if (pointsToUse.length < 2) {
-      const firstPositions = new Map<string, ApiPoint>();
-      for (const pos of analysis.positions) {
-        if (!firstPositions.has(pos.player_id)) {
-          firstPositions.set(pos.player_id, pos.point);
-        }
-      }
-      pointsToUse = Array.from(firstPositions.values());
-    }
-
-    if (pointsToUse.length < 2) return null;
-    
-    let minX = pointsToUse[0], maxX = pointsToUse[0];
-    let minY = pointsToUse[0], maxY = pointsToUse[0];
-    
-    for (const p of pointsToUse) {
-      if (p.x < minX.x) minX = p;
-      if (p.x > maxX.x) maxX = p;
-      if (p.y < minY.y) minY = p;
-      if (p.y > maxY.y) maxY = p;
-    }
-    
-    const candidates = [minX, maxX, minY, maxY];
-    let maxDist = 0;
-    let p1 = candidates[0];
-    let p2 = candidates[1];
-    
-    for (let i = 0; i < candidates.length; i++) {
-      for (let j = i + 1; j < candidates.length; j++) {
-        const dx = candidates[i].x - candidates[j].x;
-        const dy = candidates[i].y - candidates[j].y;
-        const dist = dx * dx + dy * dy;
-        if (dist > maxDist) {
-          maxDist = dist;
-          p1 = candidates[i];
-          p2 = candidates[j];
-        }
-      }
-    }
-    if (maxDist === 0) return null;
-    
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const len = Math.sqrt(maxDist);
-    const nx = dx / len;
-    const ny = dy / len;
-    
-    const startX = p1.x - nx * worldSize * 2;
-    const startY = p1.y - ny * worldSize * 2;
-    const endX = p2.x + nx * worldSize * 2;
-    const endY = p2.y + ny * worldSize * 2;
-    
-    return {
-      start: pointToView({ x: startX, y: startY }, worldSize),
-      end: pointToView({ x: endX, y: endY }, worldSize)
-    };
+    return analysis ? inferFlightPath(analysis.positions, worldSize) : null;
   }, [analysis, worldSize]);
   const positionGroups = groupedPositions(selectedPositions);
   const groundSegments = Object.entries(positionGroups).flatMap<PlayerGroundSegment>(([playerId, positions]) =>
@@ -714,6 +803,27 @@ export function PlayerMatchAnalysis() {
   const deathCount = eliminationEvents.filter(
     (event) => event.victim_team_id === selectedTeamId,
   ).length;
+
+  const playerStats = useMemo(() => {
+    const stats: Record<string, { kills: number; damage: number }> = {};
+    if (!selectedTeam) return stats;
+    for (const player of selectedTeam.players) {
+      stats[player.player_id] = { kills: 0, damage: 0 };
+    }
+    if (analysis) {
+      for (const event of analysis.life_events) {
+        if (event.elapsed_time > playbackTime) break;
+        if (event.actor_player_id && stats[event.actor_player_id]) {
+          if (isEliminationEvent(event)) {
+            stats[event.actor_player_id].kills += 1;
+          } else if (event.event_type === "LogPlayerTakeDamage" && event.damage) {
+            stats[event.actor_player_id].damage += event.damage;
+          }
+        }
+      }
+    }
+    return stats;
+  }, [analysis, selectedTeam, playbackTime]);
 
   const refreshMatches = async () => {
     setError(null);
@@ -915,15 +1025,20 @@ export function PlayerMatchAnalysis() {
                 <Badge variant="outline">队伍 {selectedTeam.teamId}</Badge>
                 <Badge variant="outline">排名 {teamRankLabel(selectedTeam)}</Badge>
                 <Badge variant="outline">{selectedTeam.players.length} 人</Badge>
-                {selectedTeam.players.map((player) => (
-                  <Badge key={player.player_id} variant="secondary" className="max-w-[150px]">
-                    <span
-                      className="mr-1.5 size-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
-                    />
-                    <span className="truncate">{playerDisplayName(player)}</span>
-                  </Badge>
-                ))}
+                {selectedTeam.players.map((player) => {
+                  const stats = playerStats[player.player_id] || { kills: 0, damage: 0 };
+                  return (
+                    <Badge key={player.player_id} variant="secondary" className="max-w-[250px]">
+                      <span
+                        className="mr-1.5 size-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
+                      />
+                      <span className="truncate">
+                        {playerDisplayName(player)} - 击杀: {stats.kills} | 伤害: {Math.round(stats.damage)}
+                      </span>
+                    </Badge>
+                  );
+                })}
               </div>
             )}
           </CardContent>
