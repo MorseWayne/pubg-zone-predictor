@@ -25,6 +25,7 @@ import {
   MatchAnalysisPosition,
   MatchAnalysisPlayer,
 } from "../api";
+import { pubgUnitsToKilometers } from "../pubgUnits";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -184,6 +185,18 @@ function isSelectedEvent(event: MatchAnalysisLifeEvent, teamId: string) {
   );
 }
 
+function isEliminationEvent(event: MatchAnalysisLifeEvent) {
+  return event.event_type === "LogPlayerKill" || event.event_type === "LogPlayerKillV2";
+}
+
+function isCombatEvent(event: MatchAnalysisLifeEvent) {
+  return (
+    isEliminationEvent(event) ||
+    event.event_type === "LogPlayerMakeGroggy" ||
+    event.event_type === "LogPlayerTakeDamage"
+  );
+}
+
 function eventTeamPlayerId(event: MatchAnalysisLifeEvent, teamId: string) {
   if (event.actor_team_id === teamId) return event.actor_player_id;
   if (event.victim_team_id === teamId) return event.victim_player_id;
@@ -310,8 +323,11 @@ export function PlayerMatchAnalysis() {
     }))
     .filter((segment): segment is { playerId: string; path: string } => Boolean(segment.path));
   const totalDistanceKm =
-    Object.values(positionGroups).reduce((total, positions) => total + traveledDistance(positions), 0) / 1000;
-  const eliminationEvents = selectedEvents.filter((event) => event.event_type.includes("Kill"));
+    pubgUnitsToKilometers(
+      Object.values(positionGroups).reduce((total, positions) => total + traveledDistance(positions), 0),
+    );
+  const combatEvents = selectedEvents.filter(isCombatEvent);
+  const eliminationEvents = selectedEvents.filter(isEliminationEvent);
   const killCount = eliminationEvents.filter(
     (event) => event.actor_team_id === selectedTeamId,
   ).length;
@@ -467,7 +483,7 @@ export function PlayerMatchAnalysis() {
             </SelectTrigger>
             <SelectContent>
               <SelectGroup>
-                {(parsedMatches.length > 0 ? parsedMatches : squadMatches).map((match) => (
+                {squadMatches.map((match) => (
                   <SelectItem key={match.match_id} value={match.match_id}>
                     {matchTitle(match)}
                   </SelectItem>
@@ -530,7 +546,7 @@ export function PlayerMatchAnalysis() {
 
         <div className="flex flex-1 flex-wrap gap-3">
           <StatCard icon={Route} label="转移距离" value={`${totalDistanceKm.toFixed(1)} km`} />
-          <StatCard icon={Crosshair} label="参与交战" value={`${selectedEvents.length}`} />
+          <StatCard icon={Crosshair} label="交战事件" value={`${combatEvents.length}`} />
           <StatCard icon={Skull} label="淘汰" value={`${killCount}`} />
           <StatCard icon={Target} label="阵亡" value={`${deathCount}`} />
         </div>

@@ -63,6 +63,9 @@ export type IngestMatch = {
   telemetry_cache_path: string | null;
   telemetry_parse_status: string | null;
   telemetry_downloaded_at: string | null;
+  telemetry_parse_profile: string | null;
+  telemetry_position_interval_seconds: number | null;
+  telemetry_parsed_at: string | null;
   circle_phase_count: number;
   position_sample_count: number;
   life_event_count: number;

@@ -26,6 +26,8 @@ DEFAULT_SAMPLE_PLATFORM = "steam"
 DEFAULT_SAMPLE_GAME_MODE = "squad"
 DEFAULT_SAMPLE_PARSE_PROFILE = PARSE_PROFILE_HOTSPOT_LIGHT
 DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS = 30
+ANALYSIS_PARSE_PROFILE = PARSE_PROFILE_FULL
+ANALYSIS_POSITION_INTERVAL_SECONDS = 5
 EXCLUDED_SAMPLE_MATCH_TYPES = {"custom", "competitive"}
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,9 @@ class IngestMatchAsset:
     telemetry_cache_path: str | None
     telemetry_parse_status: str | None
     telemetry_downloaded_at: str | None
+    telemetry_parse_profile: str | None
+    telemetry_position_interval_seconds: int | None
+    telemetry_parsed_at: str | None
     circle_phase_count: int
     position_sample_count: int
     life_event_count: int
@@ -159,6 +164,9 @@ class IngestService:
                 ta.cache_path AS telemetry_cache_path,
                 ta.parse_status AS telemetry_parse_status,
                 ta.downloaded_at AS telemetry_downloaded_at,
+                ta.parse_profile AS telemetry_parse_profile,
+                ta.position_interval_seconds AS telemetry_position_interval_seconds,
+                ta.parsed_at AS telemetry_parsed_at,
                 (
                     SELECT COUNT(*)
                     FROM circle_phases cp
@@ -184,6 +192,7 @@ class IngestService:
         return [self._match_asset(row) for row in rows]
 
     def get_match_analysis(self, match_id: str) -> MatchAnalysis:
+        self._ensure_match_analysis_data(match_id)
         match = self._get_match_asset(match_id)
         player_rows = self.repo.fetch_all(
             """
@@ -268,6 +277,86 @@ class IngestService:
             circles=[self._analysis_circle(row) for row in circle_rows],
             positions=[self._analysis_position(row) for row in position_rows],
             life_events=[self._analysis_life_event(row) for row in life_event_rows],
+        )
+
+    def _ensure_match_analysis_data(self, match_id: str) -> None:
+        match = self._get_match_asset(match_id)
+        if self._has_match_analysis_data(match):
+            return
+
+        cache_path = self._ensure_match_telemetry_cache(match)
+        try:
+            parse_result = self._parse_cached_match_telemetry(
+                match_id,
+                cache_path,
+                parse_profile=ANALYSIS_PARSE_PROFILE,
+                position_interval_seconds=ANALYSIS_POSITION_INTERVAL_SECONDS,
+            )
+        except AppError as exc:
+            self.repo.execute(
+                """
+                UPDATE telemetry_assets
+                SET parse_status = 'failed',
+                    error_message = ?
+                WHERE match_id = ?
+                """,
+                (exc.message, match_id),
+            )
+            self.connection.commit()
+            raise
+        _log_parse_warnings(match_id, parse_result.warnings)
+
+    def _ensure_match_telemetry_cache(self, match: IngestMatchAsset) -> Path:
+        if match.telemetry_cache_path:
+            cache_path = Path(match.telemetry_cache_path)
+            if cache_path.exists():
+                return cache_path
+
+        telemetry_url = self._ensure_match_telemetry_url(match)
+        return self._cache_match_telemetry(match.match_id, telemetry_url)
+
+    def _ensure_match_telemetry_url(self, match: IngestMatchAsset) -> str:
+        if match.telemetry_url:
+            return match.telemetry_url
+
+        asset = self.repo.fetch_one(
+            "SELECT telemetry_url FROM telemetry_assets WHERE match_id = ?",
+            (match.match_id,),
+        )
+        if asset is not None and asset["telemetry_url"]:
+            return asset["telemetry_url"]
+
+        platform = match.shard_id or DEFAULT_SAMPLE_PLATFORM
+        if platform == "tournament":
+            payload = self.pubg_client.get_tournament_match(match.match_id)
+        else:
+            payload = self.pubg_client.get_match(match.match_id, platform)
+
+        current = self.repo.fetch_one(
+            "SELECT tournament_id FROM matches WHERE match_id = ?",
+            (match.match_id,),
+        )
+        tournament_id = current["tournament_id"] if current else None
+        match_values, telemetry_url = self._match_values(match.match_id, tournament_id, payload)
+        self.repo.upsert("matches", match_values, conflict_columns=("match_id",))
+        if telemetry_url:
+            return telemetry_url
+
+        raise AppError(
+            code="TELEMETRY_URL_NOT_FOUND",
+            message=f"telemetry URL is not known for match '{match.match_id}'",
+            status_code=404,
+            details={"match_id": match.match_id},
+        )
+
+    @staticmethod
+    def _has_match_analysis_data(match: IngestMatchAsset) -> bool:
+        return (
+            match.telemetry_parse_status == "completed"
+            and match.telemetry_parse_profile == ANALYSIS_PARSE_PROFILE
+            and match.telemetry_position_interval_seconds == ANALYSIS_POSITION_INTERVAL_SECONDS
+            and match.circle_phase_count > 0
+            and (match.position_sample_count > 0 or match.life_event_count > 0)
         )
 
     def list_jobs(self, *, limit: int = 20) -> list[IngestJobResult]:
@@ -787,6 +876,10 @@ class IngestService:
                 "content_hash": content_hash,
                 "downloaded_at": _utc_now(),
                 "parse_status": "pending",
+                "parse_profile": None,
+                "position_interval_seconds": None,
+                "parsed_at": None,
+                "error_message": None,
             },
             conflict_columns=("match_id",),
         )
@@ -810,13 +903,19 @@ class IngestService:
             """
             UPDATE telemetry_assets
             SET parse_status = 'completed',
-                error_message = ?
+                error_message = ?,
+                parse_profile = ?,
+                position_interval_seconds = ?,
+                parsed_at = ?
             WHERE match_id = ?
             """,
             (
                 json.dumps(parse_result.warnings, ensure_ascii=False)
                 if parse_result.warnings
                 else None,
+                parse_profile,
+                position_interval_seconds,
+                _utc_now(),
                 match_id,
             ),
         )
@@ -1135,6 +1234,13 @@ class IngestService:
             telemetry_cache_path=row["telemetry_cache_path"],
             telemetry_parse_status=row["telemetry_parse_status"],
             telemetry_downloaded_at=row["telemetry_downloaded_at"],
+            telemetry_parse_profile=row["telemetry_parse_profile"],
+            telemetry_position_interval_seconds=(
+                int(row["telemetry_position_interval_seconds"])
+                if row["telemetry_position_interval_seconds"] is not None
+                else None
+            ),
+            telemetry_parsed_at=row["telemetry_parsed_at"],
             circle_phase_count=int(row["circle_phase_count"]),
             position_sample_count=int(row["position_sample_count"]),
             life_event_count=int(row["life_event_count"]),
@@ -1156,6 +1262,9 @@ class IngestService:
                 ta.cache_path AS telemetry_cache_path,
                 ta.parse_status AS telemetry_parse_status,
                 ta.downloaded_at AS telemetry_downloaded_at,
+                ta.parse_profile AS telemetry_parse_profile,
+                ta.position_interval_seconds AS telemetry_position_interval_seconds,
+                ta.parsed_at AS telemetry_parsed_at,
                 (
                     SELECT COUNT(*)
                     FROM circle_phases cp

@@ -183,6 +183,53 @@ class WarningTelemetryPubgClient(FakePubgClient):
         ).encode()
 
 
+class AnalysisTelemetryPubgClient(FakePubgClient):
+    def download_telemetry(self, telemetry_url: str) -> bytes:
+        assert telemetry_url == "https://telemetry.test/match-auto.json"
+        return json.dumps(
+            [
+                {
+                    "_T": "LogGameStatePeriodic",
+                    "common": {"isGame": 1},
+                    "gameState": {
+                        "elapsedTime": 60,
+                        "numAliveTeams": 16,
+                        "numAlivePlayers": 64,
+                        "poisonGasWarningPosition": {"x": 400000, "y": 410000},
+                        "poisonGasWarningRadius": 400000,
+                    },
+                },
+                {
+                    "_T": "LogPlayerPosition",
+                    "common": {"isGame": 1, "elapsedTime": 62},
+                    "character": {
+                        "accountId": "account.1",
+                        "name": "PlayerOne",
+                        "teamId": 1,
+                        "location": {"x": 401000, "y": 411000, "z": 120},
+                        "health": 100,
+                    },
+                },
+                {
+                    "_T": "LogPlayerKill",
+                    "common": {"isGame": 1, "elapsedTime": 120},
+                    "attacker": {
+                        "accountId": "account.1",
+                        "name": "PlayerOne",
+                        "teamId": 1,
+                        "location": {"x": 405000, "y": 412000},
+                    },
+                    "victim": {
+                        "accountId": "account.2",
+                        "name": "PlayerTwo",
+                        "teamId": 2,
+                        "location": {"x": 405000, "y": 412000},
+                    },
+                },
+            ]
+        ).encode()
+
+
 def test_ingest_tournaments_upserts_tournament_rows(
     migrated_connection: sqlite3.Connection,
     tmp_path: Path,
@@ -455,8 +502,22 @@ def test_get_match_analysis_returns_players_route_and_events(
     )
     repo.execute(
         """
-        INSERT INTO telemetry_assets (match_id, telemetry_url, parse_status)
-        VALUES ('match-analysis', 'https://telemetry.test/match-analysis.json', 'completed')
+        INSERT INTO telemetry_assets (
+            match_id,
+            telemetry_url,
+            parse_status,
+            parse_profile,
+            position_interval_seconds,
+            parsed_at
+        )
+        VALUES (
+            'match-analysis',
+            'https://telemetry.test/match-analysis.json',
+            'completed',
+            'full',
+            5,
+            '2026-06-05T00:02:00+00:00'
+        )
         """
     )
     repo.execute(
@@ -528,6 +589,62 @@ def test_get_match_analysis_returns_players_route_and_events(
     assert analysis.positions[0].alive is True
     assert analysis.life_events[0].actor_player_name == "PlayerOne"
     assert analysis.life_events[0].x == 405000
+
+
+def test_get_match_analysis_downloads_and_parses_missing_telemetry_data(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, AnalysisTelemetryPubgClient(), tmp_path)
+    repo = SQLiteRepository(migrated_connection)
+    repo.execute(
+        """
+        INSERT INTO matches (
+            match_id,
+            map_name,
+            shard_id,
+            game_mode,
+            match_type,
+            created_at,
+            duration,
+            telemetry_url,
+            ingest_status
+        )
+        VALUES (
+            'match-auto',
+            'Erangel_Main',
+            'steam',
+            'squad',
+            'official',
+            '2026-06-05T00:00:00Z',
+            1800,
+            'https://telemetry.test/match-auto.json',
+            'completed'
+        )
+        """
+    )
+    migrated_connection.commit()
+
+    analysis = service.get_match_analysis("match-auto")
+
+    asset = repo.fetch_one(
+        """
+        SELECT cache_path, parse_status, parse_profile, position_interval_seconds, parsed_at
+        FROM telemetry_assets
+        WHERE match_id = 'match-auto'
+        """
+    )
+    assert asset["parse_status"] == "completed"
+    assert asset["parse_profile"] == "full"
+    assert asset["position_interval_seconds"] == 5
+    assert asset["parsed_at"] is not None
+    assert Path(asset["cache_path"]).exists()
+    assert analysis.match.circle_phase_count == 1
+    assert analysis.match.position_sample_count == 1
+    assert analysis.match.life_event_count == 1
+    assert analysis.players[0].player_name == "PlayerOne"
+    assert analysis.positions[0].x == 401000
+    assert analysis.life_events[0].event_type == "LogPlayerKill"
 
 
 def test_retry_job_starts_new_job_with_incremented_retry_count(

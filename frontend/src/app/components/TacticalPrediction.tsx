@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { api, apiErrorMessage, MapConfig, PredictResponse, ZonePhaseConfig } from "../api";
+import { formatPubgDistance } from "../pubgUnits";
 import { MapView } from "./MapView";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { Slider } from "./ui/slider";
@@ -38,11 +39,6 @@ function mapPointToWorld(point: Point, worldSize: number) {
     x: (point.x / MAP_VIEW_SIZE) * worldSize,
     y: (point.y / MAP_VIEW_SIZE) * worldSize,
   };
-}
-
-function meters(value: number) {
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}km`;
-  return `${Math.round(value)}m`;
 }
 
 function percentScore(score: number) {
@@ -393,7 +389,7 @@ export function TacticalPrediction() {
                 <div className="text-lg font-medium text-blue-300">
                   {Math.round(prediction.next_circle.center.x)}, {Math.round(prediction.next_circle.center.y)}
                 </div>
-                <div className="text-xs text-blue-400/70">半径: {meters(prediction.next_circle.radius)}</div>
+                <div className="text-xs text-blue-400/70">半径: {formatPubgDistance(prediction.next_circle.radius)}</div>
               </div>
             </div>
 
@@ -418,7 +414,7 @@ export function TacticalPrediction() {
                 </div>
                 <div className="bg-neutral-800 p-3 rounded flex flex-col">
                   <span className="text-xs text-neutral-500">距离</span>
-                  <span className="text-xl font-bold text-neutral-200">{meters(prediction.route.risk_summary.distance)}</span>
+                  <span className="text-xl font-bold text-neutral-200">{formatPubgDistance(prediction.route.risk_summary.distance)}</span>
                 </div>
               </div>
             </div>

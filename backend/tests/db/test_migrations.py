@@ -10,7 +10,7 @@ from app.db.migrations import initialize_database
 def test_initialize_database_applies_initial_schema(database_path: Path) -> None:
     applied = initialize_database(database_path)
 
-    assert [migration.version for migration in applied] == ["001", "002", "003"]
+    assert [migration.version for migration in applied] == ["001", "002", "003", "004"]
 
     with connect_database(database_path) as connection:
         tables = {
@@ -27,6 +27,15 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
     assert "player_position_samples" in tables
     assert "hotspot_tiles" in tables
     assert "model_metrics" in tables
+
+    with connect_database(database_path) as connection:
+        telemetry_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(telemetry_assets)").fetchall()
+        }
+    assert "parse_profile" in telemetry_columns
+    assert "position_interval_seconds" in telemetry_columns
+    assert "parsed_at" in telemetry_columns
 
     with connect_database(database_path) as connection:
         connection.execute(
@@ -47,7 +56,7 @@ def test_initialize_database_is_idempotent(database_path: Path) -> None:
     first_run = initialize_database(database_path)
     second_run = initialize_database(database_path)
 
-    assert [migration.version for migration in first_run] == ["001", "002", "003"]
+    assert [migration.version for migration in first_run] == ["001", "002", "003", "004"]
     assert second_run == []
 
 
