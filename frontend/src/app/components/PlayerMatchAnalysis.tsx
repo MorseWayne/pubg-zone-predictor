@@ -302,16 +302,60 @@ export function PlayerMatchAnalysis() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [maps, setMaps] = useState<MapConfig[]>([]);
   const [matches, setMatches] = useState<IngestMatch[]>([]);
-  const [selectedMatchId, setSelectedMatchId] = useState("");
+  const [selectedMatchId, setSelectedMatchId] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("pzp_analysis_selectedMatchId") || "";
+    }
+    return "";
+  });
+  
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
-  const [selectedTeamId, setSelectedTeamId] = useState("");
-  const [layers, setLayers] = useState<LayerId[]>(["route", "combat", "eliminations", "zones"]);
+  
+  const [selectedTeamId, setSelectedTeamId] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("pzp_analysis_selectedTeamId") || "";
+    }
+    return "";
+  });
+
+  const [layers, setLayers] = useState<LayerId[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("pzp_analysis_layers");
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          // ignore parse error
+        }
+      }
+    }
+    return ["route", "combat", "eliminations", "zones"];
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pzp_analysis_selectedMatchId", selectedMatchId);
+    }
+  }, [selectedMatchId]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pzp_analysis_selectedTeamId", selectedTeamId);
+    }
+  }, [selectedTeamId]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pzp_analysis_layers", JSON.stringify(layers));
+    }
+  }, [layers]);
   const [mapTransform, setMapTransform] = useState<MapTransform>({ x: 0, y: 0, scale: 1 });
   const [isMapDragging, setIsMapDragging] = useState(false);
   const [mapDragStart, setMapDragStart] = useState<MapDragStart | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [decodedHighResUrl, setDecodedHighResUrl] = useState<string | null>(null);
 
   const [layersPanelPos, setLayersPanelPos] = useState({ x: 12, y: 12 });
   const [isLayersDragging, setIsLayersDragging] = useState(false);
@@ -363,6 +407,25 @@ export function PlayerMatchAnalysis() {
     analysis?.match ?? parsedMatches.find((match) => match.match_id === selectedMatchId) ?? squadMatches[0] ?? null;
   const activeMap = mapForMatch(activeMatch, maps);
   const worldSize = activeMap?.world_size ?? 816000;
+
+  useEffect(() => {
+    if (!activeMap) {
+      setDecodedHighResUrl(null);
+      return;
+    }
+    setDecodedHighResUrl(null);
+    let isMounted = true;
+    const url = api.mapImageUrl(activeMap.map_id, "high");
+    const img = new Image();
+    img.src = url;
+    img.decode().then(() => {
+      if (isMounted) setDecodedHighResUrl(url);
+    }).catch(() => {
+      if (isMounted) setDecodedHighResUrl(url); // fallback
+    });
+    return () => { isMounted = false; };
+  }, [activeMap]);
+
   const teams = useMemo(() => teamSummaries(analysis?.players ?? []), [analysis]);
   const selectedTeam = teams.find((team) => team.teamId === selectedTeamId);
   const selectedPositions = useMemo(() => {
@@ -640,11 +703,20 @@ export function PlayerMatchAnalysis() {
                 }}
               >
                 {activeMap && (
-                  <img
-                    src={api.mapImageUrl(activeMap.map_id, "high")}
-                    alt={`${activeMap.display_name} map`}
-                    className="absolute inset-0 size-full object-contain opacity-80"
-                  />
+                  <>
+                    <img
+                      src={api.mapImageUrl(activeMap.map_id, "low")}
+                      alt={`${activeMap.display_name} map low res`}
+                      className="absolute inset-0 h-full w-full object-contain mix-blend-normal opacity-80"
+                    />
+                    {decodedHighResUrl && (
+                      <img
+                        src={decodedHighResUrl}
+                        alt={`${activeMap.display_name} map high res`}
+                        className="absolute inset-0 h-full w-full object-contain mix-blend-normal opacity-80 animate-in fade-in duration-1000"
+                      />
+                    )}
+                  </>
                 )}
                 <svg
                   viewBox={`0 0 ${MAP_VIEW_SIZE} ${MAP_VIEW_SIZE}`}
@@ -723,9 +795,9 @@ export function PlayerMatchAnalysis() {
                           key={`${position.player_id}-${position.elapsed_time}-${position.point.x}-${position.point.y}`}
                           cx={point.x}
                           cy={point.y}
-                          r={isEndpoint ? 5 : 2.5}
+                          r={isEndpoint ? 2.5 : 1}
                           fill={color}
-                          opacity={isEndpoint ? 0.95 : 0.55}
+                          opacity={isEndpoint ? 0.9 : 0.3}
                         />
                       );
                     })}

@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { Point, MapAssetStatus } from "./TacticalPrediction";
 import type { PredictResponse } from "../api";
+import { api } from "../api";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 
@@ -71,6 +72,29 @@ export function MapView({
   const [dragStart, setDragStart] = useState({ mouseX: 0, mouseY: 0, startX: 0, startY: 0 });
   const [hasDragged, setHasDragged] = useState(false);
   const [mapFrame, setMapFrame] = useState({ left: 0, top: 0, size: 0 });
+  const [decodedHighResUrl, setDecodedHighResUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDecodedHighResUrl(null);
+    if (!mapImageUrl) return;
+
+    let isMounted = true;
+    const img = new Image();
+    img.src = mapImageUrl;
+    img.decode().then(() => {
+      if (isMounted) {
+        setDecodedHighResUrl(mapImageUrl);
+        onMapImageLoad();
+      }
+    }).catch(() => {
+      if (isMounted) {
+        setDecodedHighResUrl(mapImageUrl); // fallback
+        onMapImageLoad();
+      }
+    });
+
+    return () => { isMounted = false; };
+  }, [mapImageUrl, onMapImageLoad]);
 
   const clampTransform = (x: number, y: number, scale: number) => {
     const min = mapFrame.size * (1 - scale);
@@ -206,13 +230,20 @@ export function MapView({
           transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
         }}
       >
-        {/* Background Map Image */}
-        {mapImageUrl && (
+        {/* Background Map Image (Progressive Loading) */}
+        {selectedMap && (
           <img
-            src={mapImageUrl}
-            alt={`${selectedMap} map base`}
+            src={api.mapImageUrl(selectedMap, "low")}
+            alt={`${selectedMap} map base low`}
             className="absolute inset-0 w-full h-full object-contain pointer-events-none opacity-80 mix-blend-normal"
-            onLoad={onMapImageLoad}
+          />
+        )}
+        
+        {decodedHighResUrl && (
+          <img
+            src={decodedHighResUrl}
+            alt={`${selectedMap} map base high`}
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none opacity-80 mix-blend-normal animate-in fade-in duration-1000"
             onError={onMapImageError}
           />
         )}
