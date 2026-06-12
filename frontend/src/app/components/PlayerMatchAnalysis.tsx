@@ -349,7 +349,15 @@ export function PlayerMatchAnalysis() {
       localStorage.setItem("pzp_analysis_layers", JSON.stringify(layers));
     }
   }, [layers]);
-  const [mapTransform, setMapTransform] = useState<MapTransform>({ x: 0, y: 0, scale: 1 });
+  const [mapTransform, setMapTransform] = useState<MapTransform>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("pzp_analysis_mapTransform");
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return { x: 0, y: 0, scale: 1 };
+  });
   const [isMapDragging, setIsMapDragging] = useState(false);
   const [mapDragStart, setMapDragStart] = useState<MapDragStart | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -357,8 +365,28 @@ export function PlayerMatchAnalysis() {
   const [error, setError] = useState<string | null>(null);
   const [decodedHighResUrl, setDecodedHighResUrl] = useState<string | null>(null);
 
-  const [layersPanelPos, setLayersPanelPos] = useState({ x: 12, y: 12 });
+  const [layersPanelPos, setLayersPanelPos] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("pzp_analysis_layersPanelPos");
+      if (saved) {
+        try { return JSON.parse(saved); } catch (e) {}
+      }
+    }
+    return { x: 12, y: 12 };
+  });
   const [isLayersDragging, setIsLayersDragging] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pzp_analysis_mapTransform", JSON.stringify(mapTransform));
+    }
+  }, [mapTransform]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pzp_analysis_layersPanelPos", JSON.stringify(layersPanelPos));
+    }
+  }, [layersPanelPos]);
   const layersDragStart = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
 
   const handleLayersMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -494,7 +522,12 @@ export function PlayerMatchAnalysis() {
     void refreshMatches();
   }, []);
 
+  const isInitialMount = useRef(true);
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
     setMapTransform({ x: 0, y: 0, scale: 1 });
     setIsMapDragging(false);
     setMapDragStart(null);
@@ -809,10 +842,11 @@ export function PlayerMatchAnalysis() {
                       .map((event) => {
                         const point = pointToView(event.point as { x: number; y: number }, worldSize);
                         const color = playerColor(eventTeamPlayerId(event, selectedTeamId), selectedTeam);
+                        const isKnockdown = event.event_type === "LogPlayerMakeGroggy";
                         return (
-                          <g key={event.id}>
-                            <circle cx={point.x} cy={point.y} r="8" fill="rgba(250,204,21,0.18)" stroke={color} strokeWidth="2" />
-                            <circle cx={point.x} cy={point.y} r="2.5" fill={color} />
+                          <g key={event.id} transform={`translate(${point.x - 8}, ${point.y - 8})`}>
+                            <circle cx="8" cy="8" r={isKnockdown ? "12" : "10"} fill="rgba(250,204,21,0.2)" stroke={color} strokeWidth="1.5" strokeDasharray={isKnockdown ? "" : "2 2"} />
+                            <Target width="16" height="16" color={color} strokeWidth={isKnockdown ? 2.5 : 2} />
                           </g>
                         );
                       })}
@@ -825,9 +859,9 @@ export function PlayerMatchAnalysis() {
                         const point = pointToView(event.point as { x: number; y: number }, worldSize);
                         const color = playerColor(eventTeamPlayerId(event, selectedTeamId), selectedTeam);
                         return (
-                          <g key={event.id}>
-                            <circle cx={point.x} cy={point.y} r="11" fill="rgba(244,63,94,0.2)" stroke={color} strokeWidth="2.5" />
-                            <path d={`M ${point.x - 5} ${point.y - 5} L ${point.x + 5} ${point.y + 5} M ${point.x + 5} ${point.y - 5} L ${point.x - 5} ${point.y + 5}`} stroke={color} strokeLinecap="round" strokeWidth="2" />
+                          <g key={event.id} transform={`translate(${point.x - 10}, ${point.y - 10})`}>
+                            <circle cx="10" cy="10" r="14" fill="rgba(244,63,94,0.3)" stroke={color} strokeWidth="1.5" />
+                            <Skull width="20" height="20" color="#fff" style={{ filter: `drop-shadow(0px 0px 3px ${color})` }} />
                           </g>
                         );
                       })}
