@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 from uuid import uuid4
 
 from app.core.errors import AppError
@@ -125,6 +126,18 @@ class IngestService:
         )
         return [self._match_asset(row) for row in rows]
 
+    def list_jobs(self, *, limit: int = 20) -> list[IngestJobResult]:
+        rows = self.repo.fetch_all(
+            """
+            SELECT *
+            FROM ingest_jobs
+            ORDER BY COALESCE(started_at, '') DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [self._job_result(row) for row in rows]
+
     def delete_match(self, match_id: str) -> DeleteMatchResult:
         match = self.repo.fetch_one(
             """
@@ -169,6 +182,12 @@ class IngestService:
             position_sample_count=int(match["position_sample_count"]),
             life_event_count=int(match["life_event_count"]),
         )
+
+    def delete_matches(self, match_ids: list[str]) -> list[DeleteMatchResult]:
+        results: list[DeleteMatchResult] = []
+        for match_id in dict.fromkeys(match_ids):
+            results.append(self.delete_match(match_id))
+        return results
 
     def ingest_tournaments(self, *, retry_count: int = 0) -> IngestJobResult:
         job_id = self._create_job("tournament_list", "pubg-api", retry_count=retry_count)
@@ -277,6 +296,37 @@ class IngestService:
         )
         return self.get_job(job.id)
 
+    def ingest_player_matches(
+        self,
+        *,
+        platform: str = DEFAULT_SAMPLE_PLATFORM,
+        player_names: list[str],
+        game_mode: str = DEFAULT_SAMPLE_GAME_MODE,
+        max_matches_per_player: int | None = None,
+        parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+        position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+        retry_count: int = 0,
+    ) -> IngestJobResult:
+        job = self.start_player_matches(
+            platform=platform,
+            player_names=player_names,
+            game_mode=game_mode,
+            max_matches_per_player=max_matches_per_player,
+            parse_profile=parse_profile,
+            position_interval_seconds=position_interval_seconds,
+            retry_count=retry_count,
+        )
+        self.run_player_matches_job(
+            job.id,
+            platform=platform,
+            player_names=player_names,
+            game_mode=game_mode,
+            max_matches_per_player=max_matches_per_player,
+            parse_profile=parse_profile,
+            position_interval_seconds=position_interval_seconds,
+        )
+        return self.get_job(job.id)
+
     def start_sample_matches(
         self,
         *,
@@ -313,6 +363,45 @@ class IngestService:
             warnings=[],
         )
 
+    def start_player_matches(
+        self,
+        *,
+        platform: str = DEFAULT_SAMPLE_PLATFORM,
+        player_names: list[str],
+        game_mode: str = DEFAULT_SAMPLE_GAME_MODE,
+        max_matches_per_player: int | None = None,
+        parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+        position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+        retry_count: int = 0,
+    ) -> IngestJobResult:
+        _validate_parse_options(parse_profile, position_interval_seconds)
+        normalized_names = _normalize_player_names(player_names)
+        source_ref = _player_source_ref(
+            platform,
+            game_mode,
+            normalized_names,
+            max_matches_per_player=max_matches_per_player,
+            parse_profile=parse_profile,
+            position_interval_seconds=position_interval_seconds,
+        )
+        job_id = self._create_job("player_matches", source_ref, retry_count=retry_count)
+        return IngestJobResult(
+            id=job_id,
+            job_type="player_matches",
+            status="running",
+            source_ref=source_ref,
+            total_count=0,
+            success_count=0,
+            skipped_count=0,
+            failed_count=0,
+            retry_count=retry_count,
+            started_at=_utc_now(),
+            finished_at=None,
+            error_code=None,
+            error_message=None,
+            warnings=[],
+        )
+
     def run_sample_matches_job(
         self,
         job_id: str,
@@ -330,6 +419,84 @@ class IngestService:
             match_refs = self._sample_match_refs(payload)
             if max_matches is not None:
                 match_refs = match_refs[:max_matches]
+            stats = _empty_stats(total_count=len(match_refs))
+            self._update_job_progress(job_id, stats, warnings=warnings)
+            cancelled = False
+
+            for match_id in match_refs:
+                if self._is_job_cancelled(job_id):
+                    return
+                try:
+                    match_payload = self.pubg_client.get_match(match_id, platform)
+                    match_values, telemetry_url = self._match_values(
+                        match_id,
+                        None,
+                        match_payload,
+                    )
+                    attributes = self._match_attributes(match_payload)
+                    match_game_mode = attributes.get("gameMode")
+                    match_type = attributes.get("matchType")
+                    if match_game_mode != game_mode:
+                        stats["skipped_count"] += 1
+                        warnings.append(
+                            f"match '{match_id}' skipped: gameMode is '{match_game_mode}'"
+                        )
+                        continue
+                    if isinstance(match_type, str) and match_type in EXCLUDED_SAMPLE_MATCH_TYPES:
+                        stats["skipped_count"] += 1
+                        warnings.append(f"match '{match_id}' skipped: matchType is '{match_type}'")
+                        continue
+
+                    self.repo.upsert("matches", match_values, conflict_columns=("match_id",))
+                    if not telemetry_url:
+                        stats["skipped_count"] += 1
+                        warnings.append(f"match '{match_id}' has no telemetry URL")
+                        continue
+
+                    cache_path = self._cache_match_telemetry(match_id, telemetry_url)
+                    parse_result = self._parse_cached_match_telemetry(
+                        match_id,
+                        cache_path,
+                        parse_profile=parse_profile,
+                        position_interval_seconds=position_interval_seconds,
+                    )
+                    _log_parse_warnings(match_id, parse_result.warnings)
+                    stats["success_count"] += 1
+                except AppError as exc:
+                    stats["failed_count"] += 1
+                    warnings.append(f"match '{match_id}' failed: {exc.message}")
+                finally:
+                    self._update_job_progress(job_id, stats, warnings=warnings)
+                    cancelled = self._is_job_cancelled(job_id)
+                if cancelled:
+                    break
+
+            if cancelled or self._is_job_cancelled(job_id):
+                return
+            self._complete_job(job_id, stats, warnings=warnings)
+        except AppError as exc:
+            self._fail_job(job_id, exc.code, exc.message)
+
+    def run_player_matches_job(
+        self,
+        job_id: str,
+        *,
+        platform: str = DEFAULT_SAMPLE_PLATFORM,
+        player_names: list[str],
+        game_mode: str = DEFAULT_SAMPLE_GAME_MODE,
+        max_matches_per_player: int | None = None,
+        parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+        position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+    ) -> None:
+        _validate_parse_options(parse_profile, position_interval_seconds)
+        warnings: list[str] = []
+        try:
+            normalized_names = _normalize_player_names(player_names)
+            payload = self.pubg_client.get_players_by_names(platform, normalized_names)
+            match_refs = self._player_match_refs(
+                payload,
+                max_matches_per_player=max_matches_per_player,
+            )
             stats = _empty_stats(total_count=len(match_refs))
             self._update_job_progress(job_id, stats, warnings=warnings)
             cancelled = False
@@ -553,6 +720,24 @@ class IngestService:
                 position_interval_seconds=position_interval_seconds,
                 retry_count=next_retry_count,
             )
+        if job.job_type == "player_matches" and job.source_ref:
+            (
+                platform,
+                game_mode,
+                player_names,
+                max_matches_per_player,
+                parse_profile,
+                position_interval_seconds,
+            ) = _player_source_ref_parts(job.source_ref)
+            return self.ingest_player_matches(
+                platform=platform,
+                player_names=player_names,
+                game_mode=game_mode,
+                max_matches_per_player=max_matches_per_player,
+                parse_profile=parse_profile,
+                position_interval_seconds=position_interval_seconds,
+                retry_count=next_retry_count,
+            )
         if job.job_type == "telemetry_download" and job.source_ref:
             return self.download_match_telemetry(job.source_ref, retry_count=next_retry_count)
         if job.job_type == "telemetry_parse" and job.source_ref:
@@ -725,6 +910,26 @@ class IngestService:
             match_ids.extend(
                 item["id"] for item in refs if isinstance(item, dict) and item.get("id")
             )
+        return match_ids
+
+    @staticmethod
+    def _player_match_refs(
+        payload: dict[str, Any],
+        *,
+        max_matches_per_player: int | None = None,
+    ) -> list[str]:
+        players = IngestService._data_list(payload)
+        seen: set[str] = set()
+        match_ids: list[str] = []
+        for player in players:
+            refs = IngestService._match_refs(player)
+            if max_matches_per_player is not None:
+                refs = refs[:max_matches_per_player]
+            for match_id in refs:
+                if match_id in seen:
+                    continue
+                seen.add(match_id)
+                match_ids.append(match_id)
         return match_ids
 
     @staticmethod
@@ -901,6 +1106,115 @@ def _sample_source_ref_parts(source_ref: str) -> tuple[str, str, int | None, str
             )
     _validate_parse_options(parse_profile, position_interval_seconds)
     return parts[1], parts[2], max_matches, parse_profile, position_interval_seconds
+
+
+def _player_source_ref(
+    platform: str,
+    game_mode: str,
+    player_names: list[str],
+    *,
+    max_matches_per_player: int | None = None,
+    parse_profile: str = DEFAULT_SAMPLE_PARSE_PROFILE,
+    position_interval_seconds: int = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+) -> str:
+    encoded_names = ",".join(quote(name, safe="") for name in _normalize_player_names(player_names))
+    parts = [f"players:{platform}:{game_mode}", f"names={encoded_names}"]
+    if max_matches_per_player is not None:
+        parts.append(f"max={max_matches_per_player}")
+    parts.append(f"profile={parse_profile}")
+    parts.append(f"interval={position_interval_seconds}")
+    return ":".join(parts)
+
+
+def _player_source_ref_parts(source_ref: str) -> tuple[str, str, list[str], int | None, str, int]:
+    parts = source_ref.split(":")
+    if len(parts) < 4 or parts[0] != "players" or not parts[1] or not parts[2]:
+        raise AppError(
+            code="INGEST_JOB_SOURCE_REF_INVALID",
+            message=f"player ingest job source_ref '{source_ref}' is invalid",
+            details={"source_ref": source_ref},
+        )
+    names: list[str] | None = None
+    max_matches_per_player: int | None = None
+    parse_profile = DEFAULT_SAMPLE_PARSE_PROFILE
+    position_interval_seconds = DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS
+    for option in parts[3:]:
+        key, _, value = option.partition("=")
+        if not key or not value:
+            raise AppError(
+                code="INGEST_JOB_SOURCE_REF_INVALID",
+                message=f"player ingest job source_ref '{source_ref}' is invalid",
+                details={"source_ref": source_ref},
+            )
+        if key == "names":
+            names = [unquote(item) for item in value.split(",") if item]
+        elif key == "max":
+            try:
+                max_matches_per_player = int(value)
+            except ValueError as exc:
+                raise AppError(
+                    code="INGEST_JOB_SOURCE_REF_INVALID",
+                    message=f"player ingest job source_ref '{source_ref}' is invalid",
+                    details={"source_ref": source_ref},
+                ) from exc
+        elif key == "profile":
+            parse_profile = value
+        elif key == "interval":
+            try:
+                position_interval_seconds = int(value)
+            except ValueError as exc:
+                raise AppError(
+                    code="INGEST_JOB_SOURCE_REF_INVALID",
+                    message=f"player ingest job source_ref '{source_ref}' is invalid",
+                    details={"source_ref": source_ref},
+                ) from exc
+        else:
+            raise AppError(
+                code="INGEST_JOB_SOURCE_REF_INVALID",
+                message=f"player ingest job source_ref '{source_ref}' is invalid",
+                details={"source_ref": source_ref},
+            )
+    if names is None:
+        raise AppError(
+            code="INGEST_JOB_SOURCE_REF_INVALID",
+            message=f"player ingest job source_ref '{source_ref}' is invalid",
+            details={"source_ref": source_ref},
+        )
+    _validate_parse_options(parse_profile, position_interval_seconds)
+    return (
+        parts[1],
+        parts[2],
+        _normalize_player_names(names),
+        max_matches_per_player,
+        parse_profile,
+        position_interval_seconds,
+    )
+
+
+def _normalize_player_names(player_names: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for name in player_names:
+        value = name.strip()
+        key = value.lower()
+        if not value or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(value)
+    if not normalized:
+        raise AppError(
+            code="INGEST_PLAYER_NAMES_REQUIRED",
+            message="at least one player name is required",
+            status_code=400,
+        )
+    if len(normalized) > 10:
+        raise AppError(
+            code="INGEST_PLAYER_NAMES_LIMIT_EXCEEDED",
+            message="player ingest supports at most 10 player names per job",
+            status_code=400,
+            details={"count": len(normalized)},
+        )
+    return normalized
 
 
 def _validate_parse_options(parse_profile: str, position_interval_seconds: int) -> None:

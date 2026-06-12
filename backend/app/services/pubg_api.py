@@ -30,6 +30,20 @@ class PubgApiClient:
     def get_match_samples(self, platform: str) -> dict[str, Any]:
         return self._get_json(f"/shards/{_path_segment(platform)}/samples", authenticated=True)
 
+    def get_players_by_names(self, platform: str, player_names: list[str]) -> dict[str, Any]:
+        names = [_player_name(name) for name in player_names]
+        if not names:
+            raise AppError(
+                code="PUBG_PLAYER_NAMES_REQUIRED",
+                message="at least one player name is required",
+                status_code=400,
+            )
+        return self._get_json(
+            f"/shards/{_path_segment(platform)}/players",
+            authenticated=True,
+            params={"filter[playerNames]": ",".join(names)},
+        )
+
     def get_match(self, match_id: str, platform: str) -> dict[str, Any]:
         return self._get_json(
             f"/shards/{_path_segment(platform)}/matches/{_path_segment(match_id)}",
@@ -50,7 +64,13 @@ class PubgApiClient:
                 ) from exc
         return response.content
 
-    def _get_json(self, path: str, *, authenticated: bool) -> dict[str, Any]:
+    def _get_json(
+        self,
+        path: str,
+        *,
+        authenticated: bool,
+        params: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         headers = dict(JSON_HEADERS)
         if authenticated:
             if not self.api_key:
@@ -63,7 +83,7 @@ class PubgApiClient:
 
         with self._client() as client:
             try:
-                response = client.get(path, headers=headers)
+                response = client.get(path, headers=headers, params=params)
                 response.raise_for_status()
                 payload = response.json()
             except httpx.HTTPError as exc:
@@ -105,6 +125,18 @@ def _path_segment(value: str) -> str:
         raise AppError(
             code="PUBG_API_PATH_INVALID",
             message="PUBG API path segment must be non-empty and cannot contain '/'",
+            status_code=400,
+            details={"value": value},
+        )
+    return normalized
+
+
+def _player_name(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise AppError(
+            code="PUBG_PLAYER_NAME_INVALID",
+            message="player name must be non-empty",
             status_code=400,
             details={"value": value},
         )

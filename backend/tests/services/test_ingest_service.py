@@ -81,6 +81,40 @@ class FakePubgClient:
             }
         }
 
+    def get_players_by_names(self, platform: str, player_names: list[str]) -> dict[str, Any]:
+        assert platform == "steam"
+        assert player_names == ["PlayerOne", "PlayerTwo"]
+        return {
+            "data": [
+                {
+                    "id": "account.1",
+                    "type": "player",
+                    "attributes": {"name": "PlayerOne"},
+                    "relationships": {
+                        "matches": {
+                            "data": [
+                                {"id": "player-match-1"},
+                                {"id": "player-match-2"},
+                            ]
+                        }
+                    },
+                },
+                {
+                    "id": "account.2",
+                    "type": "player",
+                    "attributes": {"name": "PlayerTwo"},
+                    "relationships": {
+                        "matches": {
+                            "data": [
+                                {"id": "player-match-1"},
+                                {"id": "player-match-3"},
+                            ]
+                        }
+                    },
+                },
+            ]
+        }
+
     def get_match(self, match_id: str, platform: str) -> dict[str, Any]:
         assert platform == "steam"
         game_mode = "squad"
@@ -89,6 +123,8 @@ class FakePubgClient:
             game_mode = "squad-fpp"
         if match_id == "sample-match-3":
             match_type = "custom"
+        if match_id == "player-match-3":
+            game_mode = "duo"
         return {
             "data": {
                 "id": match_id,
@@ -233,6 +269,33 @@ def test_ingest_sample_matches_respects_max_matches_limit(
     assert job.success_count == 1
     assert job.skipped_count == 0
     assert repo.fetch_one("SELECT COUNT(*) AS count FROM matches")["count"] == 1
+
+
+def test_ingest_player_matches_deduplicates_recent_player_matches(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+
+    job = service.ingest_player_matches(
+        player_names=["PlayerOne", "PlayerTwo"],
+        max_matches_per_player=2,
+    )
+
+    repo = SQLiteRepository(migrated_connection)
+    assert job.status == "completed"
+    assert job.job_type == "player_matches"
+    assert job.source_ref == (
+        "players:steam:squad:names=PlayerOne,PlayerTwo:max=2:"
+        "profile=hotspot_light:interval=30"
+    )
+    assert job.total_count == 3
+    assert job.success_count == 2
+    assert job.skipped_count == 1
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM matches")["count"] == 2
+    assert repo.fetch_one(
+        "SELECT COUNT(*) AS count FROM circle_phases WHERE match_id = 'player-match-1'"
+    )["count"] == 1
 
 
 def test_cancelled_sample_match_job_stops_before_processing_matches(

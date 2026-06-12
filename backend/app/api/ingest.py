@@ -5,8 +5,10 @@ from collections.abc import Callable, Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from pydantic import BaseModel, Field
 
 from app.core.config import Settings, get_settings
+from app.core.errors import AppError
 from app.db.connection import connect_database
 from app.services.ingest import (
     DEFAULT_SAMPLE_PARSE_PROFILE,
@@ -64,6 +66,27 @@ IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
 
 
 SampleIngestRunner = Callable[[str, str, str, int | None, str, int], None]
+PlayerIngestRunner = Callable[[str, str, list[str], str, int | None, str, int], None]
+
+
+class PlayerIngestRequest(BaseModel):
+    platform: str = Field(default="steam", pattern=r"^[a-z0-9-]+$")
+    player_names: list[str] = Field(min_length=1, max_length=10)
+    game_mode: str = Field(default="squad", pattern=r"^[a-z0-9-]+$")
+    max_matches_per_player: int = Field(default=20, ge=1, le=100)
+    parse_profile: str = Field(
+        default=DEFAULT_SAMPLE_PARSE_PROFILE,
+        pattern=r"^(full|hotspot_light|zone_only)$",
+    )
+    position_interval_seconds: int = Field(
+        default=DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS,
+        ge=5,
+        le=120,
+    )
+
+
+class DeleteMatchesRequest(BaseModel):
+    match_ids: list[str] = Field(min_length=1, max_length=200)
 
 
 def get_sample_ingest_runner(settings: SettingsDep) -> SampleIngestRunner:
@@ -102,6 +125,46 @@ def get_sample_ingest_runner(settings: SettingsDep) -> SampleIngestRunner:
 
 
 SampleIngestRunnerDep = Annotated[SampleIngestRunner, Depends(get_sample_ingest_runner)]
+
+
+def get_player_ingest_runner(settings: SettingsDep) -> PlayerIngestRunner:
+    def run(
+        job_id: str,
+        platform: str,
+        player_names: list[str],
+        game_mode: str,
+        max_matches_per_player: int | None,
+        parse_profile: str,
+        position_interval_seconds: int,
+    ) -> None:
+        connection = connect_database(settings.database_path)
+        try:
+            pubg_client = PubgApiClient(
+                api_key=settings.pubg_api_key,
+                base_url=settings.pubg_api_base_url,
+                timeout_seconds=settings.pubg_api_timeout_seconds,
+            )
+            service = IngestService(
+                connection=connection,
+                pubg_client=pubg_client,
+                telemetry_cache_dir=settings.telemetry_cache_dir,
+            )
+            service.run_player_matches_job(
+                job_id,
+                platform=platform,
+                player_names=player_names,
+                game_mode=game_mode,
+                max_matches_per_player=max_matches_per_player,
+                parse_profile=parse_profile,
+                position_interval_seconds=position_interval_seconds,
+            )
+        finally:
+            connection.close()
+
+    return run
+
+
+PlayerIngestRunnerDep = Annotated[PlayerIngestRunner, Depends(get_player_ingest_runner)]
 
 
 @router.post("/tournaments")
@@ -153,6 +216,57 @@ def ingest_squad_samples(
     return _job_response(job)
 
 
+@router.post("/players")
+def ingest_player_matches(
+    request: PlayerIngestRequest,
+    background_tasks: BackgroundTasks,
+    ingest_service: IngestServiceDep,
+    player_ingest_runner: PlayerIngestRunnerDep,
+) -> dict[str, object]:
+    job = ingest_service.start_player_matches(
+        platform=request.platform,
+        player_names=request.player_names,
+        game_mode=request.game_mode,
+        max_matches_per_player=request.max_matches_per_player,
+        parse_profile=request.parse_profile,
+        position_interval_seconds=request.position_interval_seconds,
+    )
+    background_tasks.add_task(
+        player_ingest_runner,
+        job.id,
+        request.platform,
+        request.player_names,
+        request.game_mode,
+        request.max_matches_per_player,
+        request.parse_profile,
+        request.position_interval_seconds,
+    )
+    return _job_response(job)
+
+
+@router.get("/players/search")
+def search_players(
+    pubg_client: PubgClientDep,
+    platform: str = Query(default="steam", pattern=r"^[a-z0-9-]+$"),
+    query: str = Query(min_length=1, max_length=64),
+) -> dict[str, object]:
+    try:
+        payload = pubg_client.get_players_by_names(platform, [query])
+    except AppError as exc:
+        reason = str(exc.details.get("reason", ""))
+        if exc.code == "PUBG_API_REQUEST_FAILED" and "404" in reason:
+            return {"players": []}
+        raise
+    players = payload.get("data", [])
+    return {
+        "players": [
+            _player_search_response(player, platform)
+            for player in players
+            if isinstance(player, dict)
+        ]
+    }
+
+
 @router.post("/matches/{match_id}/telemetry")
 def download_match_telemetry(
     match_id: str,
@@ -178,9 +292,30 @@ def list_matches(
     return {"matches": [_match_response(match) for match in matches]}
 
 
+@router.delete("/matches")
+def delete_matches(
+    request: DeleteMatchesRequest,
+    ingest_service: IngestServiceDep,
+) -> dict[str, object]:
+    results = ingest_service.delete_matches(request.match_ids)
+    return {
+        "deleted_count": len(results),
+        "matches": [_delete_match_response(result) for result in results],
+    }
+
+
 @router.delete("/matches/{match_id}")
 def delete_match(match_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
     return _delete_match_response(ingest_service.delete_match(match_id))
+
+
+@router.get("/jobs")
+def list_jobs(
+    ingest_service: IngestServiceDep,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, object]:
+    jobs = ingest_service.list_jobs(limit=limit)
+    return {"jobs": [_job_response(job) for job in jobs]}
 
 
 @router.get("/jobs/{job_id}")
@@ -226,6 +361,21 @@ def _delete_match_response(result: DeleteMatchResult) -> dict[str, object]:
         "circle_phase_count": result.circle_phase_count,
         "position_sample_count": result.position_sample_count,
         "life_event_count": result.life_event_count,
+    }
+
+
+def _player_search_response(player: dict[str, object], platform: str) -> dict[str, object]:
+    attributes = player.get("attributes", {})
+    relationships = player.get("relationships", {})
+    matches = relationships.get("matches", {}) if isinstance(relationships, dict) else {}
+    match_refs = matches.get("data", []) if isinstance(matches, dict) else []
+    player_id = player.get("id")
+    player_name = attributes.get("name") if isinstance(attributes, dict) else None
+    return {
+        "player_id": player_id if isinstance(player_id, str) else "",
+        "player_name": player_name if isinstance(player_name, str) else str(player_id or ""),
+        "platform": platform,
+        "recent_match_count": sum(1 for item in match_refs if isinstance(item, dict) and item.get("id")),
     }
 
 

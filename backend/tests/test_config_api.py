@@ -11,9 +11,12 @@ def test_list_maps_api_returns_configured_maps() -> None:
     body = response.json()
     map_ids = [map_config["map_id"] for map_config in body["maps"]]
 
-    assert map_ids == ["erangel", "miramar"]
-    assert body["maps"][1]["display_name"] == "Miramar"
-    assert body["maps"][1]["assets"]["high"] == "Assets/Maps/Miramar_Main_High_Res.png"
+    assert map_ids == ["erangel", "karakin", "miramar"]
+    assert body["maps"][1]["display_name"] == "Karakin"
+    assert body["maps"][1]["telemetry_names"] == ["Summerland_Main"]
+    assert body["maps"][1]["assets"]["high"] == "Assets/Maps/Karakin_Main_High_Res.png"
+    assert body["maps"][2]["display_name"] == "Miramar"
+    assert body["maps"][2]["assets"]["high"] == "Assets/Maps/Miramar_Main_High_Res.png"
 
 
 def test_zone_phases_api_returns_mvp_config() -> None:
@@ -36,6 +39,19 @@ def test_zone_phases_api_supports_miramar() -> None:
     body = response.json()
     assert body["map_id"] == "miramar"
     assert body["final_phase"] == 8
+    assert body["phases"][-1]["is_final_candidate"] is True
+
+
+def test_zone_phases_api_supports_karakin() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/config/zone-phases", params={"map_id": "karakin"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["map_id"] == "karakin"
+    assert body["final_phase"] == 8
+    assert body["phases"][0]["radius"] == 100000
     assert body["phases"][-1]["is_final_candidate"] is True
 
 

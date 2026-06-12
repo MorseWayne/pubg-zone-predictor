@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ChevronRight,
@@ -71,6 +71,7 @@ export function TacticalPrediction() {
   const [mapAssetMessage, setMapAssetMessage] = useState("准备地图资源...");
   const [mapAssetRetryKey, setMapAssetRetryKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const previousMapAssetRetryKeyRef = useRef(mapAssetRetryKey);
 
   const currentMap = useMemo(
     () => maps.find((map) => map.map_id === selectedMap) ?? null,
@@ -115,6 +116,8 @@ export function TacticalPrediction() {
     let cancelled = false;
     let progress = 8;
     let timer: number | undefined;
+    const retryRequested = previousMapAssetRetryKeyRef.current !== mapAssetRetryKey;
+    previousMapAssetRetryKeyRef.current = mapAssetRetryKey;
 
     const ensureMapImage = async () => {
       setMapImageUrl("");
@@ -134,7 +137,7 @@ export function TacticalPrediction() {
         if (cancelled) return;
         setMapAssetProgress(96);
         setMapAssetMessage(asset.downloaded ? "地图资源下载完成，正在渲染..." : "已命中缓存，正在渲染...");
-        setMapImageUrl(withCacheBust(asset.image_url));
+        setMapImageUrl(asset.downloaded || retryRequested ? withCacheBust(asset.image_url) : asset.image_url);
       } catch (err) {
         window.clearInterval(timer);
         if (cancelled) return;

@@ -68,6 +68,22 @@ export type IngestMatch = {
   life_event_count: number;
 };
 
+export type DeleteMatchResult = {
+  match_id: string;
+  deleted: boolean;
+  telemetry_cache_deleted: boolean;
+  circle_phase_count: number;
+  position_sample_count: number;
+  life_event_count: number;
+};
+
+export type PlayerSearchResult = {
+  player_id: string;
+  player_name: string;
+  platform: string;
+  recent_match_count: number;
+};
+
 export type HotspotResult = {
   map_id: string;
   phase: number;
@@ -241,15 +257,48 @@ export const api = {
       })}`,
       { method: "POST" },
     ),
+  startPlayerIngest: async (params: {
+    platform: string;
+    playerNames: string[];
+    gameMode: string;
+    maxMatchesPerPlayer: number;
+    parseProfile: "full" | "hotspot_light" | "zone_only";
+    positionIntervalSeconds: number;
+  }) =>
+    apiRequest<IngestJob>("/api/ingest/players", {
+      method: "POST",
+      body: JSON.stringify({
+        platform: params.platform,
+        player_names: params.playerNames,
+        game_mode: params.gameMode,
+        max_matches_per_player: params.maxMatchesPerPlayer,
+        parse_profile: params.parseProfile,
+        position_interval_seconds: params.positionIntervalSeconds,
+      }),
+    }),
+  searchPlayers: async (params: { platform: string; query: string }) =>
+    apiRequest<{ players: PlayerSearchResult[] }>(
+      `/api/ingest/players/search${toQuery({
+        platform: params.platform,
+        query: params.query,
+      })}`,
+    ),
   listMatches: async (limit = 50) =>
     apiRequest<{ matches: IngestMatch[] }>(`/api/ingest/matches${toQuery({ limit })}`),
+  listIngestJobs: async (limit = 20) =>
+    apiRequest<{ jobs: IngestJob[] }>(`/api/ingest/jobs${toQuery({ limit })}`),
   getIngestJob: async (jobId: string) => apiRequest<IngestJob>(`/api/ingest/jobs/${jobId}`),
   cancelIngestJob: async (jobId: string) =>
     apiRequest<IngestJob>(`/api/ingest/jobs/${jobId}/cancel`, { method: "POST" }),
   retryIngestJob: async (jobId: string) =>
     apiRequest<IngestJob>(`/api/ingest/jobs/${jobId}/retry`, { method: "POST" }),
   deleteMatch: async (matchId: string) =>
-    apiRequest<{ deleted: boolean }>(`/api/ingest/matches/${matchId}`, { method: "DELETE" }),
+    apiRequest<DeleteMatchResult>(`/api/ingest/matches/${matchId}`, { method: "DELETE" }),
+  deleteMatches: async (matchIds: string[]) =>
+    apiRequest<{ deleted_count: number; matches: DeleteMatchResult[] }>("/api/ingest/matches", {
+      method: "DELETE",
+      body: JSON.stringify({ match_ids: matchIds }),
+    }),
   generateHotspots: async (mapId: string, phase: number) =>
     apiRequest<HotspotResult>(
       `/api/hotspots/generate${toQuery({ map_id: mapId, phase })}`,

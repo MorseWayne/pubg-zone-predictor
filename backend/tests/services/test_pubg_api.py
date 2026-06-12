@@ -44,6 +44,22 @@ def test_pubg_api_client_fetches_match_samples_with_api_key() -> None:
     assert client.get_match_samples("steam") == {"data": {"id": "sample-1"}}
 
 
+def test_pubg_api_client_fetches_players_by_names_with_api_key() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/shards/steam/players"
+        assert request.url.params["filter[playerNames]"] == "PlayerOne,PlayerTwo"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        return httpx.Response(200, json={"data": []})
+
+    client = PubgApiClient(
+        api_key="test-key",
+        base_url="https://api.pubg.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_players_by_names("steam", ["PlayerOne", " PlayerTwo "]) == {"data": []}
+
+
 def test_pubg_api_client_fetches_tournament_match_without_api_key() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/shards/tournament/matches/match-1"

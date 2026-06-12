@@ -16,6 +16,22 @@ maps:
       low: Assets/Maps/Erangel_Main_Low_Res.png
       no_text_high: Assets/Maps/Erangel_Main_No_Text_High_Res.png
       high: Assets/Maps/Erangel_Main_High_Res.png
+  karakin:
+    display_name: Karakin
+    telemetry_names:
+      - Summerland_Main
+    world_size: 204000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 204000
+      max_y: 204000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Karakin_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Karakin_Main_Low_Res.png
+      no_text_high: Assets/Maps/Karakin_Main_No_Text_High_Res.png
+      high: Assets/Maps/Karakin_Main_High_Res.png
   miramar:
     display_name: Miramar
     telemetry_names:

@@ -1,4 +1,9 @@
-from app.api.ingest import get_ingest_service, get_sample_ingest_runner
+from app.api.ingest import (
+    get_ingest_service,
+    get_player_ingest_runner,
+    get_pubg_client,
+    get_sample_ingest_runner,
+)
 from app.core.errors import AppError
 from app.main import app
 from app.services.ingest import DeleteMatchResult, IngestJobResult, IngestMatchAsset
@@ -63,6 +68,42 @@ class FakeIngestService:
             warnings=[],
         )
 
+    def start_player_matches(
+        self,
+        *,
+        platform: str,
+        player_names: list[str],
+        game_mode: str,
+        max_matches_per_player: int,
+        parse_profile: str,
+        position_interval_seconds: int,
+    ) -> IngestJobResult:
+        assert platform == "steam"
+        assert player_names == ["PlayerOne", "PlayerTwo"]
+        assert game_mode == "squad"
+        assert max_matches_per_player == 8
+        assert parse_profile == "hotspot_light"
+        assert position_interval_seconds == 30
+        return IngestJobResult(
+            id="job_player_matches",
+            job_type="player_matches",
+            status="running",
+            source_ref=(
+                "players:steam:squad:names=PlayerOne,PlayerTwo:max=8:"
+                "profile=hotspot_light:interval=30"
+            ),
+            total_count=0,
+            success_count=0,
+            skipped_count=0,
+            failed_count=0,
+            retry_count=0,
+            started_at="2026-06-05T00:00:00+00:00",
+            finished_at=None,
+            error_code=None,
+            error_message=None,
+            warnings=[],
+        )
+
     def download_match_telemetry(self, match_id: str) -> IngestJobResult:
         assert match_id == "match-1"
         return _job(job_id="job_telemetry")
@@ -105,6 +146,28 @@ class FakeIngestService:
             warnings=[],
         )
 
+    def list_jobs(self, *, limit: int) -> list[IngestJobResult]:
+        assert limit == 10
+        return [
+            _job(job_id="job_latest"),
+            IngestJobResult(
+                id="job_running",
+                job_type="sample_matches",
+                status="running",
+                source_ref="samples:steam:squad:max=12:profile=zone_only:interval=30",
+                total_count=12,
+                success_count=3,
+                skipped_count=1,
+                failed_count=0,
+                retry_count=0,
+                started_at="2026-06-05T00:02:00+00:00",
+                finished_at=None,
+                error_code=None,
+                error_message=None,
+                warnings=[],
+            ),
+        ]
+
     def list_matches(self, *, limit: int) -> list[IngestMatchAsset]:
         assert limit == 25
         return [
@@ -136,6 +199,57 @@ class FakeIngestService:
             circle_phase_count=6,
             position_sample_count=120,
             life_event_count=8,
+        )
+
+    def delete_matches(self, match_ids: list[str]) -> list[DeleteMatchResult]:
+        assert match_ids == ["match-1", "match-2"]
+        return [
+            self.delete_match("match-1"),
+            DeleteMatchResult(
+                match_id="match-2",
+                deleted=True,
+                telemetry_cache_deleted=False,
+                circle_phase_count=2,
+                position_sample_count=24,
+                life_event_count=1,
+            ),
+        ]
+
+
+class FakePubgClient:
+    def get_players_by_names(self, platform: str, player_names: list[str]) -> dict[str, object]:
+        assert platform == "steam"
+        assert player_names == ["PlayerOne"]
+        return {
+            "data": [
+                {
+                    "id": "account.1",
+                    "attributes": {"name": "PlayerOne"},
+                    "relationships": {
+                        "matches": {
+                            "data": [
+                                {"id": "match-1"},
+                                {"id": "match-2"},
+                            ]
+                        }
+                    },
+                }
+            ]
+        }
+
+
+class MissingPlayerPubgClient:
+    def get_players_by_names(self, platform: str, player_names: list[str]) -> dict[str, object]:
+        assert platform == "steam"
+        assert player_names == ["rookiiie"]
+        raise AppError(
+            code="PUBG_API_REQUEST_FAILED",
+            message="PUBG API request failed",
+            status_code=502,
+            details={
+                "path": "/shards/steam/players",
+                "reason": "Client error '404 Not Found'",
+            },
         )
 
 
@@ -177,6 +291,76 @@ def test_ingest_squad_samples_api_returns_job_status() -> None:
     assert body["source_ref"] == "samples:steam:squad:max=12:profile=zone_only:interval=30"
 
 
+def test_ingest_player_matches_api_returns_job_status() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    app.dependency_overrides[get_player_ingest_runner] = lambda: (
+        lambda _job_id,
+        _platform,
+        _player_names,
+        _game_mode,
+        _max_matches_per_player,
+        _parse_profile,
+        _interval: None
+    )
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/ingest/players",
+            json={
+                "platform": "steam",
+                "player_names": ["PlayerOne", "PlayerTwo"],
+                "game_mode": "squad",
+                "max_matches_per_player": 8,
+                "parse_profile": "hotspot_light",
+                "position_interval_seconds": 30,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "job_player_matches"
+    assert body["job_type"] == "player_matches"
+    assert body["status"] == "running"
+    assert body["source_ref"] == (
+        "players:steam:squad:names=PlayerOne,PlayerTwo:max=8:"
+        "profile=hotspot_light:interval=30"
+    )
+
+
+def test_search_players_api_returns_match_candidates() -> None:
+    app.dependency_overrides[get_pubg_client] = lambda: FakePubgClient()
+    client = TestClient(app)
+    try:
+        response = client.get("/api/ingest/players/search?platform=steam&query=PlayerOne")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == [
+        {
+            "player_id": "account.1",
+            "player_name": "PlayerOne",
+            "platform": "steam",
+            "recent_match_count": 2,
+        }
+    ]
+
+
+def test_search_players_api_returns_empty_candidates_for_missing_player() -> None:
+    app.dependency_overrides[get_pubg_client] = lambda: MissingPlayerPubgClient()
+    client = TestClient(app)
+    try:
+        response = client.get("/api/ingest/players/search?platform=steam&query=rookiiie")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"players": []}
+
+
 def test_cancel_job_api_returns_cancelled_job() -> None:
     app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
     client = TestClient(app)
@@ -203,6 +387,21 @@ def test_retry_job_api_returns_new_job() -> None:
     body = response.json()
     assert body["id"] == "job_retry"
     assert body["retry_count"] == 1
+
+
+def test_list_jobs_api_returns_history() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.get("/api/ingest/jobs?limit=10")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["jobs"][0]["id"] == "job_latest"
+    assert body["jobs"][1]["status"] == "running"
+    assert body["jobs"][1]["success_count"] == 3
 
 
 def test_get_missing_job_api_returns_not_found_error() -> None:
@@ -257,3 +456,22 @@ def test_delete_match_api_returns_deleted_counts() -> None:
     assert body["deleted"] is True
     assert body["telemetry_cache_deleted"] is True
     assert body["position_sample_count"] == 120
+
+
+def test_delete_matches_api_returns_batch_result() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.request(
+            "DELETE",
+            "/api/ingest/matches",
+            json={"match_ids": ["match-1", "match-2"]},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted_count"] == 2
+    assert body["matches"][0]["match_id"] == "match-1"
+    assert body["matches"][1]["telemetry_cache_deleted"] is False
