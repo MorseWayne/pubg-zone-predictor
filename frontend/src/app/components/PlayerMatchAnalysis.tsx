@@ -136,6 +136,21 @@ function playerColor(playerId: string | null | undefined, team: TeamSummary | un
   return PLAYER_COLORS[index % PLAYER_COLORS.length];
 }
 
+const ENEMY_COLORS = [
+  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
+  "#22c55e", "#10b981", "#14b8a6", "#06b6d4", "#0ea5e9",
+  "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#f43f5e",
+];
+
+function enemyTeamColor(teamId: string | null | undefined) {
+  if (!teamId) return "#ef4444";
+  let hash = 0;
+  for (let i = 0; i < teamId.length; i++) {
+    hash = teamId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return ENEMY_COLORS[Math.abs(hash) % ENEMY_COLORS.length];
+}
+
 function pointToView(point: { x: number; y: number }, worldSize: number) {
   return {
     x: (point.x / worldSize) * MAP_VIEW_SIZE,
@@ -1238,10 +1253,11 @@ export function PlayerMatchAnalysis() {
                   {enemyPositions.map((position) => {
                     const point = pointToView(position.point, worldSize);
                     const invScale = 1 / mapTransform.scale;
+                    const color = enemyTeamColor(position.team_id);
                     return (
                       <g key={`enemy-${position.player_id}`} transform={`translate(${point.x}, ${point.y}) scale(${invScale})`} pointerEvents="none">
-                        <circle cx="0" cy="0" r="4" fill="#ef4444" />
-                        <circle cx="0" cy="0" r="8" fill="none" stroke="#ef4444" strokeWidth="1" opacity="0.8" className="animate-ping" style={{ animationDuration: "1.5s" }} />
+                        <circle cx="0" cy="0" r="4" fill={color} />
+                        <circle cx="0" cy="0" r="8" fill="none" stroke={color} strokeWidth="1" opacity="0.8" className="animate-ping" style={{ animationDuration: "1.5s" }} />
                       </g>
                     );
                   })}

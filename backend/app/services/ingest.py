@@ -289,10 +289,18 @@ class IngestService:
 
     def _ensure_match_analysis_data(self, match_id: str) -> None:
         match = self._get_match_asset(match_id)
-        if self._has_match_analysis_data(match):
+        has_analysis_data = self._has_match_analysis_data(match)
+        needs_damage_backfill = has_analysis_data and self._has_missing_life_event_damage(match_id)
+        if has_analysis_data and not needs_damage_backfill:
             return
 
-        cache_path = self._ensure_match_telemetry_cache(match)
+        cache_path = (
+            self._existing_match_telemetry_cache(match)
+            if needs_damage_backfill
+            else self._ensure_match_telemetry_cache(match)
+        )
+        if cache_path is None:
+            return
         try:
             parse_result = self._parse_cached_match_telemetry(
                 match_id,
@@ -313,6 +321,27 @@ class IngestService:
             self.connection.commit()
             raise
         _log_parse_warnings(match_id, parse_result.warnings)
+
+    def _has_missing_life_event_damage(self, match_id: str) -> bool:
+        row = self.repo.fetch_one(
+            """
+            SELECT 1
+            FROM player_life_events
+            WHERE match_id = ?
+                AND event_type = 'LogPlayerTakeDamage'
+                AND damage IS NULL
+            LIMIT 1
+            """,
+            (match_id,),
+        )
+        return row is not None
+
+    @staticmethod
+    def _existing_match_telemetry_cache(match: IngestMatchAsset) -> Path | None:
+        if not match.telemetry_cache_path:
+            return None
+        cache_path = Path(match.telemetry_cache_path)
+        return cache_path if cache_path.exists() else None
 
     def _ensure_match_telemetry_cache(self, match: IngestMatchAsset) -> Path:
         if match.telemetry_cache_path:

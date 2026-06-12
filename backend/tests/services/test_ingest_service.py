@@ -647,6 +647,135 @@ def test_get_match_analysis_downloads_and_parses_missing_telemetry_data(
     assert analysis.life_events[0].event_type == "LogPlayerKill"
 
 
+def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    repo = SQLiteRepository(migrated_connection)
+    cache_path = tmp_path / "match-damage.json"
+    cache_path.write_text(
+        json.dumps(
+            [
+                {
+                    "_T": "LogGameStatePeriodic",
+                    "common": {"isGame": 1},
+                    "gameState": {
+                        "elapsedTime": 60,
+                        "numAliveTeams": 16,
+                        "numAlivePlayers": 64,
+                        "poisonGasWarningPosition": {"x": 400000, "y": 410000},
+                        "poisonGasWarningRadius": 400000,
+                    },
+                },
+                {
+                    "_T": "LogPlayerTakeDamage",
+                    "common": {"isGame": 1, "elapsedTime": 120},
+                    "attacker": {
+                        "accountId": "account.1",
+                        "name": "PlayerOne",
+                        "teamId": 1,
+                        "location": {"x": 405000, "y": 412000},
+                    },
+                    "victim": {
+                        "accountId": "account.2",
+                        "name": "PlayerTwo",
+                        "teamId": 2,
+                        "location": {"x": 405000, "y": 412000},
+                    },
+                    "damage": 18.75,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    repo.execute(
+        """
+        INSERT INTO matches (
+            match_id,
+            map_name,
+            shard_id,
+            game_mode,
+            match_type,
+            created_at,
+            duration,
+            telemetry_url,
+            ingest_status
+        )
+        VALUES (
+            'match-damage',
+            'Erangel_Main',
+            'steam',
+            'squad',
+            'official',
+            '2026-06-05T00:00:00Z',
+            1800,
+            'https://telemetry.test/match-damage.json',
+            'completed'
+        )
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO telemetry_assets (
+            match_id,
+            telemetry_url,
+            cache_path,
+            parse_status,
+            parse_profile,
+            position_interval_seconds,
+            parsed_at
+        )
+        VALUES (
+            'match-damage',
+            'https://telemetry.test/match-damage.json',
+            ?,
+            'completed',
+            'full',
+            5,
+            '2026-06-05T00:02:00+00:00'
+        )
+        """,
+        (str(cache_path),),
+    )
+    repo.execute(
+        """
+        INSERT INTO circle_phases (
+            match_id,
+            phase,
+            elapsed_time,
+            center_x,
+            center_y,
+            radius,
+            num_alive_teams,
+            num_alive_players
+        )
+        VALUES ('match-damage', 1, 60, 400000, 410000, 400000, 16, 64)
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO player_life_events (
+            match_id,
+            elapsed_time,
+            phase,
+            event_type,
+            actor_player_id,
+            victim_player_id,
+            x,
+            y,
+            damage
+        )
+        VALUES ('match-damage', 120, NULL, 'LogPlayerTakeDamage', 'account.1', 'account.2', 405000, 412000, NULL)
+        """
+    )
+    migrated_connection.commit()
+
+    analysis = service.get_match_analysis("match-damage")
+
+    assert analysis.life_events[0].damage == 18.75
+
+
 def test_retry_job_starts_new_job_with_incremented_retry_count(
     migrated_connection: sqlite3.Connection,
     tmp_path: Path,
