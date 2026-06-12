@@ -167,7 +167,8 @@ function isOutsideMap(position: MatchAnalysisPosition, worldSize: number) {
 function isStillDescendingFromAir(position: MatchAnalysisPosition, nextPosition: MatchAnalysisPosition | undefined) {
   return (
     position.z !== null &&
-    nextPosition?.z !== null &&
+    nextPosition !== undefined &&
+    nextPosition.z !== null &&
     position.z - nextPosition.z > AIRBORNE_DESCENT_Z_DELTA
   );
 }
@@ -1183,7 +1184,12 @@ export function PlayerMatchAnalysis() {
                     variant="outline"
                     size="icon"
                     className="h-8 w-8 shrink-0"
-                    onClick={() => setIsPlaying(!isPlaying)}
+                    onClick={() => {
+                      if (!isPlaying && playbackTime >= maxPlaybackTime) {
+                        setPlaybackTime(0);
+                      }
+                      setIsPlaying(!isPlaying);
+                    }}
                   >
                     {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
                   </Button>
