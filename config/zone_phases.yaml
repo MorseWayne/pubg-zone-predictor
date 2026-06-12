@@ -4,6 +4,18 @@ zone_phase_config:
     final_phase: 8
     supported_prediction_phases: [1, 2, 3, 4, 5, 6, 7]
   maps:
+    deston:
+      game_modes:
+        default:
+          phases:
+            1: { radius: 400000, label: "Zone 1", enabled: true }
+            2: { radius: 230000, label: "Zone 2", enabled: true }
+            3: { radius: 120000, label: "Zone 3", enabled: true }
+            4: { radius: 67000, label: "Zone 4", enabled: true }
+            5: { radius: 40000, label: "Zone 5", enabled: true }
+            6: { radius: 23000, label: "Zone 6", enabled: true }
+            7: { radius: 12000, label: "Zone 7", enabled: true }
+            8: { radius: 7700, label: "Final", enabled: true, is_final_candidate: true }
     erangel:
       game_modes:
         default:
@@ -29,6 +41,66 @@ zone_phase_config:
             7: { radius: 3078.65, label: "Zone 7", enabled: true }
             8: { radius: 1539.32, label: "Final", enabled: true, is_final_candidate: true }
     miramar:
+      game_modes:
+        default:
+          phases:
+            1: { radius: 400000, label: "Zone 1", enabled: true }
+            2: { radius: 230000, label: "Zone 2", enabled: true }
+            3: { radius: 120000, label: "Zone 3", enabled: true }
+            4: { radius: 67000, label: "Zone 4", enabled: true }
+            5: { radius: 40000, label: "Zone 5", enabled: true }
+            6: { radius: 23000, label: "Zone 6", enabled: true }
+            7: { radius: 12000, label: "Zone 7", enabled: true }
+            8: { radius: 7700, label: "Final", enabled: true, is_final_candidate: true }
+    paramo:
+      game_modes:
+        default:
+          phases:
+            1: { radius: 150000, label: "Zone 1", enabled: true }
+            2: { radius: 86250, label: "Zone 2", enabled: true }
+            3: { radius: 45000, label: "Zone 3", enabled: true }
+            4: { radius: 25125, label: "Zone 4", enabled: true }
+            5: { radius: 15000, label: "Zone 5", enabled: true }
+            6: { radius: 8625, label: "Zone 6", enabled: true }
+            7: { radius: 4500, label: "Zone 7", enabled: true }
+            8: { radius: 2887.5, label: "Final", enabled: true, is_final_candidate: true }
+    rondo:
+      game_modes:
+        default:
+          phases:
+            1: { radius: 400000, label: "Zone 1", enabled: true }
+            2: { radius: 230000, label: "Zone 2", enabled: true }
+            3: { radius: 120000, label: "Zone 3", enabled: true }
+            4: { radius: 67000, label: "Zone 4", enabled: true }
+            5: { radius: 40000, label: "Zone 5", enabled: true }
+            6: { radius: 23000, label: "Zone 6", enabled: true }
+            7: { radius: 12000, label: "Zone 7", enabled: true }
+            8: { radius: 7700, label: "Final", enabled: true, is_final_candidate: true }
+    sanhok:
+      game_modes:
+        default:
+          phases:
+            1: { radius: 200000, label: "Zone 1", enabled: true }
+            2: { radius: 115000, label: "Zone 2", enabled: true }
+            3: { radius: 60000, label: "Zone 3", enabled: true }
+            4: { radius: 33500, label: "Zone 4", enabled: true }
+            5: { radius: 20000, label: "Zone 5", enabled: true }
+            6: { radius: 11500, label: "Zone 6", enabled: true }
+            7: { radius: 6000, label: "Zone 7", enabled: true }
+            8: { radius: 3850, label: "Final", enabled: true, is_final_candidate: true }
+    taego:
+      game_modes:
+        default:
+          phases:
+            1: { radius: 400000, label: "Zone 1", enabled: true }
+            2: { radius: 230000, label: "Zone 2", enabled: true }
+            3: { radius: 120000, label: "Zone 3", enabled: true }
+            4: { radius: 67000, label: "Zone 4", enabled: true }
+            5: { radius: 40000, label: "Zone 5", enabled: true }
+            6: { radius: 23000, label: "Zone 6", enabled: true }
+            7: { radius: 12000, label: "Zone 7", enabled: true }
+            8: { radius: 7700, label: "Final", enabled: true, is_final_candidate: true }
+    vikendi:
       game_modes:
         default:
           phases:

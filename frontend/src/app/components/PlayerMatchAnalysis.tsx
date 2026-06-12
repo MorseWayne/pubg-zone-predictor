@@ -53,8 +53,14 @@ const MAP_VIEW_SIZE = 1000;
 const MAP_NAME_ALIASES: Record<string, string> = {
   Baltic_Main: "erangel",
   Erangel_Main: "erangel",
+  Chimera_Main: "paramo",
   Desert_Main: "miramar",
+  DihorOtok_Main: "vikendi",
+  Kiki_Main: "deston",
+  Neon_Main: "rondo",
+  Savage_Main: "sanhok",
   Summerland_Main: "karakin",
+  Tiger_Main: "taego",
 };
 const PLAYER_COLORS = [
   "#f97316",
@@ -447,15 +453,13 @@ function StatCard({
   value: string;
 }) {
   return (
-    <Card className="min-w-0 flex-1 border-border bg-card shadow-sm">
-      <CardContent className="flex items-center gap-1.5 p-2.5">
-        <div className="rounded border border-border bg-muted p-1 text-muted-foreground">
+    <Card className="min-w-0 border-border bg-card shadow-sm">
+      <CardContent className="flex flex-col gap-1 p-2.5">
+        <div className="flex items-center gap-1.5 text-muted-foreground">
           <Icon className="size-3.5" />
+          <span className="text-[11px] font-medium leading-none">{label}</span>
         </div>
-        <div className="min-w-0">
-          <div className="mb-0.5 text-[10px] leading-none text-muted-foreground">{label}</div>
-          <div className="truncate text-sm font-semibold leading-none text-foreground">{value}</div>
-        </div>
+        <div className="truncate text-base font-bold tracking-tight text-foreground">{value}</div>
       </CardContent>
     </Card>
   );
@@ -526,6 +530,7 @@ export function PlayerMatchAnalysis() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isMapReady, setIsMapReady] = useState(false);
   const [decodedHighResUrl, setDecodedHighResUrl] = useState<string | null>(null);
 
   const [playbackTime, setPlaybackTime] = useState(0);
@@ -605,19 +610,38 @@ export function PlayerMatchAnalysis() {
 
   useEffect(() => {
     if (!activeMap) {
+      setIsMapReady(false);
       setDecodedHighResUrl(null);
       return;
     }
+    setIsMapReady(false);
     setDecodedHighResUrl(null);
     let isMounted = true;
-    const url = api.mapImageUrl(activeMap.map_id, "high");
-    const img = new Image();
-    img.src = url;
-    img.decode().then(() => {
-      if (isMounted) setDecodedHighResUrl(url);
-    }).catch(() => {
-      if (isMounted) setDecodedHighResUrl(url); // fallback
-    });
+    
+    const loadAssets = async () => {
+      try {
+        await Promise.all([
+          api.ensureMapAsset(activeMap.map_id, "low"),
+          api.ensureMapAsset(activeMap.map_id, "high")
+        ]);
+        if (!isMounted) return;
+        setIsMapReady(true);
+        
+        const url = api.mapImageUrl(activeMap.map_id, "high");
+        const img = new Image();
+        img.src = url;
+        img.decode().then(() => {
+          if (isMounted) setDecodedHighResUrl(url);
+        }).catch(() => {
+          if (isMounted) setDecodedHighResUrl(url); // fallback
+        });
+      } catch (err) {
+        console.error("Failed to ensure map assets", err);
+      }
+    };
+    
+    loadAssets();
+    
     return () => { isMounted = false; };
   }, [activeMap]);
 
@@ -1001,12 +1025,12 @@ export function PlayerMatchAnalysis() {
         </Alert>
       )}
 
-      <div className="flex shrink-0 flex-col gap-3 lg:flex-row">
+      <div className="flex shrink-0 flex-col gap-2 lg:flex-row">
         <Card className="flex-[2] border-border bg-card shadow-sm">
-          <CardContent className="flex h-full flex-col justify-center gap-3 p-4">
+          <CardContent className="flex h-full flex-col justify-center gap-2.5 p-3">
             <div className="flex flex-wrap items-center gap-3">
               <Select value={selectedTeamId} onValueChange={setSelectedTeamId} disabled={!analysis || teams.length === 0}>
-                <SelectTrigger className="w-full sm:w-[300px]">
+                <SelectTrigger className="h-8 w-full sm:w-[300px]">
                   <SelectValue placeholder="选择战队" />
                 </SelectTrigger>
                 <SelectContent className="max-w-[calc(100vw-3rem)] md:w-[420px]">
@@ -1021,25 +1045,38 @@ export function PlayerMatchAnalysis() {
               </Select>
             </div>
             {selectedTeam && (
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">队伍 {selectedTeam.teamId}</Badge>
-                  <Badge variant="outline">排名 {teamRankLabel(selectedTeam)}</Badge>
-                  <Badge variant="outline">{selectedTeam.players.length} 人</Badge>
+                  <Badge variant="outline" className="px-2 py-0 text-[10px]">队伍 {selectedTeam.teamId}</Badge>
+                  <Badge variant="outline" className="px-2 py-0 text-[10px]">排名 {teamRankLabel(selectedTeam)}</Badge>
+                  <Badge variant="outline" className="px-2 py-0 text-[10px]">{selectedTeam.players.length} 人</Badge>
                 </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {selectedTeam.players.map((player) => {
                     const stats = playerStats[player.player_id] || { kills: 0, damage: 0 };
                     return (
-                      <Badge key={player.player_id} variant="secondary" className="flex max-w-full justify-start py-1.5">
-                        <span
-                          className="mr-2 size-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
-                        />
-                        <span className="truncate">
-                          {playerDisplayName(player)} - 击杀: {stats.kills} | 伤害: {Math.round(stats.damage)}
-                        </span>
-                      </Badge>
+                      <div
+                        key={player.player_id}
+                        className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-xs"
+                      >
+                        <div className="flex min-w-0 items-center pr-2">
+                          <span
+                            className="mr-1.5 size-1.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
+                          />
+                          <span className="truncate font-medium">{playerDisplayName(player)}</span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2.5 text-muted-foreground">
+                          <div className="flex items-center gap-1" title="击杀">
+                            <Skull className="size-3" />
+                            <span className="font-medium tabular-nums text-foreground">{stats.kills}</span>
+                          </div>
+                          <div className="flex items-center gap-1" title="伤害">
+                            <Swords className="size-3" />
+                            <span className="font-medium tabular-nums text-foreground">{Math.round(stats.damage)}</span>
+                          </div>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -1048,7 +1085,7 @@ export function PlayerMatchAnalysis() {
           </CardContent>
         </Card>
 
-        <div className="grid flex-1 grid-cols-2 content-start gap-3">
+        <div className="grid flex-1 grid-cols-2 content-start gap-2">
           <StatCard icon={Route} label="转移距离" value={`${totalDistanceKm.toFixed(1)} km`} />
           <StatCard icon={Crosshair} label="交战事件" value={`${combatEvents.length}`} />
           <StatCard icon={Skull} label="淘汰" value={`${killCount}`} />
@@ -1074,7 +1111,7 @@ export function PlayerMatchAnalysis() {
                   transform: `translate(${mapTransform.x}px, ${mapTransform.y}px) scale(${mapTransform.scale})`,
                 }}
               >
-                {activeMap && (
+                {activeMap && isMapReady && (
                   <>
                     <img
                       src={api.mapImageUrl(activeMap.map_id, "low")}

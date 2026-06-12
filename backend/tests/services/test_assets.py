@@ -65,6 +65,32 @@ def test_miramar_high_res_metadata_uses_desert_asset_path(tmp_path: Path) -> Non
     assert metadata.image_url == "/api/assets/maps/miramar/image?asset_key=high"
 
 
+@pytest.mark.parametrize(
+    ("map_id", "relative_path"),
+    [
+        ("deston", "Assets/Maps/Deston_Main_High_Res.png"),
+        ("paramo", "Assets/Maps/Paramo_Main_High_Res.png"),
+        ("rondo", "Assets/Maps/Rondo_Main_High_Res.png"),
+        ("sanhok", "Assets/Maps/Sanhok_Main_High_Res.png"),
+        ("taego", "Assets/Maps/Taego_Main_High_Res.png"),
+        ("vikendi", "Assets/Maps/Vikendi_Main_High_Res.png"),
+    ],
+)
+def test_added_official_map_high_res_metadata_uses_configured_asset_path(
+    tmp_path: Path,
+    map_id: str,
+    relative_path: str,
+) -> None:
+    manager = AssetManager(ConfigService(Path("config")), tmp_path, "https://example.test/assets")
+
+    metadata = manager.get_map_asset_metadata(map_id)
+
+    assert metadata.map_id == map_id
+    assert metadata.asset_key == "high"
+    assert metadata.relative_path == relative_path
+    assert metadata.image_url == f"/api/assets/maps/{map_id}/image?asset_key=high"
+
+
 def test_explicit_low_res_request_can_use_low_res_cache(tmp_path: Path) -> None:
     manager = AssetManager(ConfigService(Path("config")), tmp_path, "https://example.test/assets")
     cached_low = tmp_path / "Assets/Maps/Erangel_Main_Low_Res.png"

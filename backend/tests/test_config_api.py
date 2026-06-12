@@ -10,13 +10,20 @@ def test_list_maps_api_returns_configured_maps() -> None:
     assert response.status_code == 200
     body = response.json()
     map_ids = [map_config["map_id"] for map_config in body["maps"]]
+    maps_by_id = {map_config["map_id"]: map_config for map_config in body["maps"]}
 
-    assert map_ids == ["erangel", "karakin", "miramar"]
-    assert body["maps"][1]["display_name"] == "Karakin"
-    assert body["maps"][1]["telemetry_names"] == ["Summerland_Main"]
-    assert body["maps"][1]["assets"]["high"] == "Assets/Maps/Karakin_Main_High_Res.png"
-    assert body["maps"][2]["display_name"] == "Miramar"
-    assert body["maps"][2]["assets"]["high"] == "Assets/Maps/Miramar_Main_High_Res.png"
+    assert map_ids == ["deston", "erangel", "karakin", "miramar", "paramo", "rondo", "sanhok", "taego", "vikendi"]
+    assert maps_by_id["karakin"]["display_name"] == "Karakin"
+    assert maps_by_id["karakin"]["telemetry_names"] == ["Summerland_Main"]
+    assert maps_by_id["karakin"]["assets"]["high"] == "Assets/Maps/Karakin_Main_High_Res.png"
+    assert maps_by_id["miramar"]["display_name"] == "Miramar"
+    assert maps_by_id["miramar"]["assets"]["high"] == "Assets/Maps/Miramar_Main_High_Res.png"
+    assert maps_by_id["deston"]["telemetry_names"] == ["Kiki_Main"]
+    assert maps_by_id["paramo"]["telemetry_names"] == ["Chimera_Main"]
+    assert maps_by_id["rondo"]["telemetry_names"] == ["Neon_Main"]
+    assert maps_by_id["sanhok"]["telemetry_names"] == ["Savage_Main"]
+    assert maps_by_id["taego"]["telemetry_names"] == ["Tiger_Main"]
+    assert maps_by_id["vikendi"]["telemetry_names"] == ["DihorOtok_Main"]
 
 
 def test_zone_phases_api_returns_mvp_config() -> None:
@@ -53,6 +60,19 @@ def test_zone_phases_api_supports_karakin() -> None:
     assert body["final_phase"] == 8
     assert body["phases"][0]["radius"] == 81445.68
     assert body["phases"][-1]["is_final_candidate"] is True
+
+
+def test_zone_phases_api_supports_added_official_maps() -> None:
+    client = TestClient(app)
+
+    for map_id in ["deston", "paramo", "rondo", "sanhok", "taego", "vikendi"]:
+        response = client.get("/api/config/zone-phases", params={"map_id": map_id})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["map_id"] == map_id
+        assert body["final_phase"] == 8
+        assert body["phases"][-1]["is_final_candidate"] is True
 
 
 def test_unknown_map_uses_uniform_error_shape() -> None:

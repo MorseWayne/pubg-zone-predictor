@@ -1,4 +1,20 @@
 maps:
+  deston:
+    display_name: Deston
+    telemetry_names:
+      - Kiki_Main
+    world_size: 816000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 816000
+      max_y: 816000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Deston_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Deston_Main_Low_Res.png
+      no_text_high: Assets/Maps/Deston_Main_No_Text_High_Res.png
+      high: Assets/Maps/Deston_Main_High_Res.png
   erangel:
     display_name: Erangel
     telemetry_names:
@@ -48,3 +64,83 @@ maps:
       low: Assets/Maps/Miramar_Main_Low_Res.png
       no_text_high: Assets/Maps/Miramar_Main_No_Text_High_Res.png
       high: Assets/Maps/Miramar_Main_High_Res.png
+  paramo:
+    display_name: Paramo
+    telemetry_names:
+      - Chimera_Main
+    world_size: 306000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 306000
+      max_y: 306000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Paramo_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Paramo_Main_Low_Res.png
+      no_text_high: Assets/Maps/Paramo_Main_No_Text_High_Res.png
+      high: Assets/Maps/Paramo_Main_High_Res.png
+  rondo:
+    display_name: Rondo
+    telemetry_names:
+      - Neon_Main
+    world_size: 816000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 816000
+      max_y: 816000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Rondo_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Rondo_Main_Low_Res.png
+      no_text_high: Assets/Maps/Rondo_Main_No_Text_High_Res.png
+      high: Assets/Maps/Rondo_Main_High_Res.png
+  sanhok:
+    display_name: Sanhok
+    telemetry_names:
+      - Savage_Main
+    world_size: 408000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 408000
+      max_y: 408000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Sanhok_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Sanhok_Main_Low_Res.png
+      no_text_high: Assets/Maps/Sanhok_Main_No_Text_High_Res.png
+      high: Assets/Maps/Sanhok_Main_High_Res.png
+  taego:
+    display_name: Taego
+    telemetry_names:
+      - Tiger_Main
+    world_size: 816000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 816000
+      max_y: 816000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Taego_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Taego_Main_Low_Res.png
+      no_text_high: Assets/Maps/Taego_Main_No_Text_High_Res.png
+      high: Assets/Maps/Taego_Main_High_Res.png
+  vikendi:
+    display_name: Vikendi
+    telemetry_names:
+      - DihorOtok_Main
+    world_size: 816000
+    coordinate:
+      min_x: 0
+      min_y: 0
+      max_x: 816000
+      max_y: 816000
+      y_axis: down
+    assets:
+      no_text_low: Assets/Maps/Vikendi_Main_No_Text_Low_Res.png
+      low: Assets/Maps/Vikendi_Main_Low_Res.png
+      no_text_high: Assets/Maps/Vikendi_Main_No_Text_High_Res.png
+      high: Assets/Maps/Vikendi_Main_High_Res.png
