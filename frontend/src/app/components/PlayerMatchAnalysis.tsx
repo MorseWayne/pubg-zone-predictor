@@ -447,14 +447,14 @@ function StatCard({
   value: string;
 }) {
   return (
-    <Card className="min-w-[132px] flex-1 border-border bg-card shadow-sm">
-      <CardContent className="flex items-center gap-2 p-3">
-        <div className="rounded border border-border bg-muted p-1.5 text-muted-foreground">
-          <Icon className="size-4" />
+    <Card className="min-w-0 flex-1 border-border bg-card shadow-sm">
+      <CardContent className="flex items-center gap-1.5 p-2.5">
+        <div className="rounded border border-border bg-muted p-1 text-muted-foreground">
+          <Icon className="size-3.5" />
         </div>
         <div className="min-w-0">
-          <div className="text-xs text-muted-foreground">{label}</div>
-          <div className="truncate text-base font-semibold text-foreground">{value}</div>
+          <div className="mb-0.5 text-[10px] leading-none text-muted-foreground">{label}</div>
+          <div className="truncate text-sm font-semibold leading-none text-foreground">{value}</div>
         </div>
       </CardContent>
     </Card>
@@ -1002,7 +1002,7 @@ export function PlayerMatchAnalysis() {
       )}
 
       <div className="flex shrink-0 flex-col gap-3 lg:flex-row">
-        <Card className="flex-1 border-border bg-card shadow-sm">
+        <Card className="flex-[2] border-border bg-card shadow-sm">
           <CardContent className="flex h-full flex-col justify-center gap-3 p-4">
             <div className="flex flex-wrap items-center gap-3">
               <Select value={selectedTeamId} onValueChange={setSelectedTeamId} disabled={!analysis || teams.length === 0}>
@@ -1021,30 +1021,34 @@ export function PlayerMatchAnalysis() {
               </Select>
             </div>
             {selectedTeam && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">队伍 {selectedTeam.teamId}</Badge>
-                <Badge variant="outline">排名 {teamRankLabel(selectedTeam)}</Badge>
-                <Badge variant="outline">{selectedTeam.players.length} 人</Badge>
-                {selectedTeam.players.map((player) => {
-                  const stats = playerStats[player.player_id] || { kills: 0, damage: 0 };
-                  return (
-                    <Badge key={player.player_id} variant="secondary" className="max-w-[250px]">
-                      <span
-                        className="mr-1.5 size-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
-                      />
-                      <span className="truncate">
-                        {playerDisplayName(player)} - 击杀: {stats.kills} | 伤害: {Math.round(stats.damage)}
-                      </span>
-                    </Badge>
-                  );
-                })}
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">队伍 {selectedTeam.teamId}</Badge>
+                  <Badge variant="outline">排名 {teamRankLabel(selectedTeam)}</Badge>
+                  <Badge variant="outline">{selectedTeam.players.length} 人</Badge>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {selectedTeam.players.map((player) => {
+                    const stats = playerStats[player.player_id] || { kills: 0, damage: 0 };
+                    return (
+                      <Badge key={player.player_id} variant="secondary" className="flex max-w-full justify-start py-1.5">
+                        <span
+                          className="mr-2 size-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
+                        />
+                        <span className="truncate">
+                          {playerDisplayName(player)} - 击杀: {stats.kills} | 伤害: {Math.round(stats.damage)}
+                        </span>
+                      </Badge>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </CardContent>
         </Card>
 
-        <div className="flex flex-1 flex-wrap gap-3">
+        <div className="grid flex-1 grid-cols-2 content-start gap-3">
           <StatCard icon={Route} label="转移距离" value={`${totalDistanceKm.toFixed(1)} km`} />
           <StatCard icon={Crosshair} label="交战事件" value={`${combatEvents.length}`} />
           <StatCard icon={Skull} label="淘汰" value={`${killCount}`} />

@@ -254,20 +254,50 @@ class TelemetryParser:
 
         location = _location(victim or {}) or _location(actor or {}) or _location(event)
         damage = _number(event.get("damage"))
-        counts["life_event_count"] += self.repo.insert_or_ignore(
+        values = {
+            "match_id": match_id,
+            "elapsed_time": elapsed_time,
+            "phase": _phase(event),
+            "event_type": _event_type(event),
+            "actor_player_id": _player_id(actor or {}),
+            "victim_player_id": _player_id(victim or {}),
+            "x": location.get("x") if location else None,
+            "y": location.get("y") if location else None,
+            "damage": damage,
+        }
+        result = self.repo.insert_or_ignore(
             "player_life_events",
-            {
-                "match_id": match_id,
-                "elapsed_time": elapsed_time,
-                "phase": _phase(event),
-                "event_type": _event_type(event),
-                "actor_player_id": _player_id(actor or {}),
-                "victim_player_id": _player_id(victim or {}),
-                "x": location.get("x") if location else None,
-                "y": location.get("y") if location else None,
-                "damage": damage,
-            },
-        ).rowcount
+            values,
+        )
+        counts["life_event_count"] += result.rowcount
+        if result.rowcount == 0 and damage is not None:
+            self._update_life_event_damage(values)
+
+    def _update_life_event_damage(self, values: dict[str, Any]) -> None:
+        self.repo.execute(
+            """
+            UPDATE player_life_events
+            SET damage = ?
+            WHERE match_id = ?
+                AND elapsed_time = ?
+                AND event_type = ?
+                AND IFNULL(actor_player_id, '') = IFNULL(?, '')
+                AND IFNULL(victim_player_id, '') = IFNULL(?, '')
+                AND IFNULL(x, -1) = IFNULL(?, -1)
+                AND IFNULL(y, -1) = IFNULL(?, -1)
+                AND damage IS NULL
+            """,
+            (
+                values["damage"],
+                values["match_id"],
+                values["elapsed_time"],
+                values["event_type"],
+                values["actor_player_id"],
+                values["victim_player_id"],
+                values["x"],
+                values["y"],
+            ),
+        )
 
     def _ensure_team(self, match_id: str, team_id: str, is_unknown: bool) -> int:
         return self.repo.insert_or_ignore(

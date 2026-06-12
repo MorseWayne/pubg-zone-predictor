@@ -76,10 +76,10 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
             },
         },
         {
-            "_T": "LogPlayerKill",
+            "_T": "LogPlayerTakeDamage",
             "_D": "2026-06-05T00:04:30Z",
             "common": {"isGame": 2},
-            "killer": {
+            "attacker": {
                 "accountId": "account-1",
                 "name": "PlayerOne",
                 "teamId": 101,
@@ -91,6 +91,7 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
                 "teamId": 102,
                 "location": {"x": 2100, "y": 3100},
             },
+            "damage": 18.75,
         },
     ]
 
@@ -104,7 +105,7 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
     position = repo.fetch_one("SELECT elapsed_time FROM player_position_samples")
     life_event = repo.fetch_one(
         """
-        SELECT elapsed_time, actor_player_id, victim_player_id, x, y
+        SELECT elapsed_time, actor_player_id, victim_player_id, x, y, damage
         FROM player_life_events
         """
     )
@@ -115,6 +116,55 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
     assert life_event["victim_player_id"] == "account-2"
     assert life_event["x"] == 2100
     assert life_event["y"] == 3100
+    assert life_event["damage"] == 18.75
+
+
+def test_telemetry_parser_backfills_existing_life_event_damage(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    _seed_match(migrated_connection)
+    events = [
+        {"_T": "LogMatchStart", "_D": "2026-06-05T00:00:00Z", "common": {"isGame": 0}},
+        {
+            "_T": "LogPlayerTakeDamage",
+            "_D": "2026-06-05T00:04:30Z",
+            "common": {"isGame": 2},
+            "attacker": {
+                "accountId": "account-1",
+                "name": "PlayerOne",
+                "teamId": 101,
+                "location": {"x": 2050, "y": 3050},
+            },
+            "victim": {
+                "accountId": "account-2",
+                "name": "PlayerTwo",
+                "teamId": 102,
+                "location": {"x": 2100, "y": 3100},
+            },
+            "damage": 18.75,
+        },
+    ]
+    repo = SQLiteRepository(migrated_connection)
+    repo.insert_or_ignore(
+        "player_life_events",
+        {
+            "match_id": "match-1",
+            "elapsed_time": 270,
+            "phase": None,
+            "event_type": "LogPlayerTakeDamage",
+            "actor_player_id": "account-1",
+            "victim_player_id": "account-2",
+            "x": 2100,
+            "y": 3100,
+            "damage": None,
+        },
+    )
+
+    result = TelemetryParser(migrated_connection).parse_match("match-1", events)
+
+    life_event = repo.fetch_one("SELECT damage FROM player_life_events")
+    assert result.life_event_count == 0
+    assert life_event["damage"] == 18.75
 
 
 def test_telemetry_parser_is_idempotent(migrated_connection: sqlite3.Connection) -> None:
