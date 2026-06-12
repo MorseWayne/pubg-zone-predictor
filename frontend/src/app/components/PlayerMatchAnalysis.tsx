@@ -13,6 +13,7 @@ import {
   Target,
   ZoomIn,
   ZoomOut,
+  GripVertical,
 } from "lucide-react";
 import {
   api,
@@ -239,6 +240,42 @@ export function PlayerMatchAnalysis() {
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [layersPanelPos, setLayersPanelPos] = useState({ x: 12, y: 12 });
+  const [isLayersDragging, setIsLayersDragging] = useState(false);
+  const layersDragStart = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
+
+  const handleLayersMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    setIsLayersDragging(true);
+    layersDragStart.current = {
+      mouseX: event.clientX,
+      mouseY: event.clientY,
+      startX: layersPanelPos.x,
+      startY: layersPanelPos.y,
+    };
+  };
+
+  useEffect(() => {
+    if (!isLayersDragging) return;
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!layersDragStart.current) return;
+      setLayersPanelPos({
+        x: layersDragStart.current.startX + event.clientX - layersDragStart.current.mouseX,
+        y: layersDragStart.current.startY + event.clientY - layersDragStart.current.mouseY,
+      });
+    };
+    const handleMouseUp = () => {
+      setIsLayersDragging(false);
+      layersDragStart.current = null;
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isLayersDragging]);
+
   const squadMatches = useMemo(() => matches.filter(isSquadMatch), [matches]);
   const parsedMatches = useMemo(
     () =>
@@ -453,75 +490,51 @@ export function PlayerMatchAnalysis() {
         </Alert>
       )}
 
-      <Card className="shrink-0 border-border bg-card shadow-sm">
-        <CardContent className="flex flex-wrap items-center gap-3 p-3">
-          <Select value={selectedTeamId} onValueChange={setSelectedTeamId} disabled={!analysis || teams.length === 0}>
-            <SelectTrigger className="w-full sm:w-[300px]">
-              <SelectValue placeholder="选择战队" />
-            </SelectTrigger>
-            <SelectContent className="max-w-[calc(100vw-3rem)] md:w-[420px]">
-              <SelectGroup>
-                {teams.map((team) => (
-                  <SelectItem key={team.teamId} value={team.teamId} textValue={teamOptionText(team)}>
-                    {teamOptionText(team)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-
-          {selectedTeam && (
-            <div className="flex min-w-[260px] flex-1 flex-wrap items-center gap-2">
-              <Badge variant="outline">队伍 {selectedTeam.teamId}</Badge>
-              <Badge variant="outline">排名 {teamRankLabel(selectedTeam)}</Badge>
-              <Badge variant="outline">{selectedTeam.players.length} 人</Badge>
-              {selectedTeam.players.map((player) => (
-                <Badge key={player.player_id} variant="secondary" className="max-w-[150px]">
-                  <span
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
-                  />
-                  <span className="truncate">{playerDisplayName(player)}</span>
-                </Badge>
-              ))}
+      <div className="flex shrink-0 flex-col gap-3 lg:flex-row">
+        <Card className="flex-1 border-border bg-card shadow-sm">
+          <CardContent className="flex h-full flex-col justify-center gap-3 p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Select value={selectedTeamId} onValueChange={setSelectedTeamId} disabled={!analysis || teams.length === 0}>
+                <SelectTrigger className="w-full sm:w-[300px]">
+                  <SelectValue placeholder="选择战队" />
+                </SelectTrigger>
+                <SelectContent className="max-w-[calc(100vw-3rem)] md:w-[420px]">
+                  <SelectGroup>
+                    {teams.map((team) => (
+                      <SelectItem key={team.teamId} value={team.teamId} textValue={teamOptionText(team)}>
+                        {teamOptionText(team)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </div>
-          )}
+            {selectedTeam && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">队伍 {selectedTeam.teamId}</Badge>
+                <Badge variant="outline">排名 {teamRankLabel(selectedTeam)}</Badge>
+                <Badge variant="outline">{selectedTeam.players.length} 人</Badge>
+                {selectedTeam.players.map((player) => (
+                  <Badge key={player.player_id} variant="secondary" className="max-w-[150px]">
+                    <span
+                      className="mr-1.5 size-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: playerColor(player.player_id, selectedTeam) }}
+                    />
+                    <span className="truncate">{playerDisplayName(player)}</span>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-          <Separator orientation="vertical" className="hidden h-8 lg:block" />
-
-          <ToggleGroup
-            type="multiple"
-            value={layers}
-            onValueChange={(value) => setLayers(value as LayerId[])}
-            className="flex flex-wrap gap-1"
-            variant="outline"
-          >
-            <ToggleGroupItem value="route" aria-label="路线">
-              <Route className="size-4" />
-              路线
-            </ToggleGroupItem>
-            <ToggleGroupItem value="combat" aria-label="交战">
-              <Swords className="size-4" />
-              交战
-            </ToggleGroupItem>
-            <ToggleGroupItem value="eliminations" aria-label="淘汰">
-              <Skull className="size-4" />
-              淘汰
-            </ToggleGroupItem>
-            <ToggleGroupItem value="zones" aria-label="圈型">
-              <Shield className="size-4" />
-              圈型
-            </ToggleGroupItem>
-          </ToggleGroup>
-
-          <div className="flex min-w-[280px] flex-1 flex-wrap gap-2">
-            <StatCard icon={Route} label="转移距离" value={`${totalDistanceKm.toFixed(1)} km`} />
-            <StatCard icon={Crosshair} label="参与交战" value={`${selectedEvents.length}`} />
-            <StatCard icon={Skull} label="淘汰" value={`${killCount}`} />
-            <StatCard icon={Target} label="阵亡" value={`${deathCount}`} />
-          </div>
-        </CardContent>
-      </Card>
+        <div className="flex flex-1 flex-wrap gap-3">
+          <StatCard icon={Route} label="转移距离" value={`${totalDistanceKm.toFixed(1)} km`} />
+          <StatCard icon={Crosshair} label="参与交战" value={`${selectedEvents.length}`} />
+          <StatCard icon={Skull} label="淘汰" value={`${killCount}`} />
+          <StatCard icon={Target} label="阵亡" value={`${deathCount}`} />
+        </div>
+      </div>
 
       <Card className="min-h-0 flex-1 overflow-hidden border-border bg-card shadow-sm">
         <CardContent className="h-full p-0">
@@ -659,33 +672,75 @@ export function PlayerMatchAnalysis() {
                 </svg>
               </div>
 
-              <div className="absolute right-3 top-3 flex items-center gap-2 rounded border border-border bg-card/90 p-1 shadow-sm backdrop-blur-sm">
+              <div
+                className="absolute z-10 flex items-center rounded border border-border bg-card/90 p-1 shadow-sm backdrop-blur-sm"
+                style={{
+                  left: layersPanelPos.x,
+                  top: layersPanelPos.y,
+                }}
+              >
+                <div
+                  className="mr-1 flex cursor-grab items-center justify-center rounded px-0.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:cursor-grabbing"
+                  onMouseDown={handleLayersMouseDown}
+                  aria-label="拖动面板"
+                >
+                  <GripVertical className="size-4" />
+                </div>
+                <ToggleGroup
+                  type="multiple"
+                  value={layers}
+                  onValueChange={(value) => setLayers(value as LayerId[])}
+                  className="flex gap-1"
+                >
+                  <ToggleGroupItem value="route" aria-label="路线" className="h-8 px-2 text-xs">
+                    <Route className="mr-1.5 size-3.5" />
+                    路线
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="combat" aria-label="交战" className="h-8 px-2 text-xs">
+                    <Swords className="mr-1.5 size-3.5" />
+                    交战
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="eliminations" aria-label="淘汰" className="h-8 px-2 text-xs">
+                    <Skull className="mr-1.5 size-3.5" />
+                    淘汰
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="zones" aria-label="圈型" className="h-8 px-2 text-xs">
+                    <Shield className="mr-1.5 size-3.5" />
+                    圈型
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+
+              <div className="absolute right-3 top-3 flex items-center gap-1 rounded border border-border bg-card/90 p-1 shadow-sm backdrop-blur-sm">
                 <Button
                   variant="ghost"
                   size="icon"
+                  className="size-8"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={() => zoomMap(mapTransform.scale * 1.25)}
                   aria-label="放大地图"
                 >
-                  <ZoomIn />
+                  <ZoomIn className="size-4" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
+                  className="size-8"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={() => zoomMap(mapTransform.scale / 1.25)}
                   aria-label="缩小地图"
                 >
-                  <ZoomOut />
+                  <ZoomOut className="size-4" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
+                  className="size-8"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={() => setMapTransform({ x: 0, y: 0, scale: 1 })}
                   aria-label="重置地图视图"
                 >
-                  <RotateCcw />
+                  <RotateCcw className="size-4" />
                 </Button>
               </div>
 
