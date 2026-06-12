@@ -51,7 +51,7 @@ def test_zone_phases_api_supports_karakin() -> None:
     body = response.json()
     assert body["map_id"] == "karakin"
     assert body["final_phase"] == 8
-    assert body["phases"][0]["radius"] == 100000
+    assert body["phases"][0]["radius"] == 81445.68
     assert body["phases"][-1]["is_final_candidate"] is True
 
 

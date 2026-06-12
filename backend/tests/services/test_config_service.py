@@ -56,5 +56,5 @@ def test_get_zone_phases_supports_karakin() -> None:
     assert config["map_id"] == "karakin"
     assert config["final_phase"] == 8
     assert config["supported_prediction_phases"] == [1, 2, 3, 4, 5, 6, 7]
-    assert config["phases"][0]["radius"] == 100000
-    assert config["phases"][-1]["radius"] == 1925
+    assert config["phases"][0]["radius"] == 81445.68
+    assert config["phases"][-1]["radius"] == 1539.32
