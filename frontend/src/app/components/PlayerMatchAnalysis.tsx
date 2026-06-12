@@ -58,7 +58,8 @@ const PLAYER_COLORS = [
   "#14b8a6",
   "#fb7185",
 ];
-const LANDING_Z_MAX = 1500;
+const AIRBORNE_Z_MIN = 10000;
+const AIRBORNE_DESCENT_Z_DELTA = 1000;
 
 type LayerId = "route" | "combat" | "eliminations" | "zones";
 type TeamSummary = {
@@ -76,6 +77,14 @@ type MapDragStart = {
   mouseY: number;
   startX: number;
   startY: number;
+};
+type PlayerGroundSegment = {
+  id: string;
+  playerId: string;
+  positions: MatchAnalysisPosition[];
+};
+type PlayerRouteSegment = PlayerGroundSegment & {
+  path: string;
 };
 
 function matchTitle(match: IngestMatch) {
@@ -144,17 +153,54 @@ function groupedPositions(positions: MatchAnalysisPosition[]) {
   }, {});
 }
 
-function positionsFromLanding(positions: MatchAnalysisPosition[]) {
-  const phaseStartIndex = positions.findIndex((position) => position.phase !== null);
-  if (phaseStartIndex < 0) return positions;
+function isOutsideMap(position: MatchAnalysisPosition, worldSize: number) {
+  const { x, y } = position.point;
+  return x < 0 || y < 0 || x > worldSize || y > worldSize;
+}
 
-  const landingIndex = positions.findIndex(
-    (position, index) =>
-      index >= phaseStartIndex &&
-      position.z !== null &&
-      position.z <= LANDING_Z_MAX,
+function isStillDescendingFromAir(position: MatchAnalysisPosition, nextPosition: MatchAnalysisPosition | undefined) {
+  return (
+    position.z !== null &&
+    nextPosition?.z !== null &&
+    position.z - nextPosition.z > AIRBORNE_DESCENT_Z_DELTA
   );
-  return positions.slice(landingIndex >= 0 ? landingIndex : phaseStartIndex);
+}
+
+function groundedPositionSegments(positions: MatchAnalysisPosition[], worldSize: number) {
+  const phaseStartIndex = positions.findIndex((position) => position.phase !== null);
+  const candidates = phaseStartIndex >= 0 ? positions.slice(phaseStartIndex) : positions;
+
+  const segments: MatchAnalysisPosition[][] = [];
+  let currentSegment: MatchAnalysisPosition[] = [];
+  let skippedAirborne = false;
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const position = candidates[index];
+    const nextPosition = candidates[index + 1];
+    const isClearlyAirborne =
+      (position.z !== null && position.z >= AIRBORNE_Z_MIN) ||
+      (position.z !== null && isOutsideMap(position, worldSize));
+    const isAirborneDescent =
+      skippedAirborne && isStillDescendingFromAir(position, nextPosition);
+
+    if (isClearlyAirborne || isAirborneDescent) {
+      skippedAirborne = true;
+      if (currentSegment.length > 0) {
+        segments.push(currentSegment);
+        currentSegment = [];
+      }
+      continue;
+    }
+
+    skippedAirborne = false;
+    currentSegment.push(position);
+  }
+
+  if (currentSegment.length > 0) {
+    segments.push(currentSegment);
+  }
+
+  return segments;
 }
 
 function isSquadMatch(match: IngestMatch) {
@@ -321,11 +367,8 @@ export function PlayerMatchAnalysis() {
   const selectedTeam = teams.find((team) => team.teamId === selectedTeamId);
   const selectedPositions = useMemo(() => {
     if (!analysis || !selectedTeamId) return [];
-    const teamPositions = analysis.positions
+    return analysis.positions
       .filter((position) => position.team_id === selectedTeamId)
-      .sort((left, right) => left.elapsed_time - right.elapsed_time);
-    return Object.values(groupedPositions(teamPositions))
-      .flatMap(positionsFromLanding)
       .sort((left, right) => left.elapsed_time - right.elapsed_time);
   }, [analysis, selectedTeamId]);
   const selectedEvents = useMemo(
@@ -333,15 +376,25 @@ export function PlayerMatchAnalysis() {
     [analysis, selectedTeamId],
   );
   const positionGroups = groupedPositions(selectedPositions);
-  const routeSegments = Object.entries(positionGroups)
-    .map(([playerId, positions]) => ({
+  const groundSegments = Object.entries(positionGroups).flatMap<PlayerGroundSegment>(([playerId, positions]) =>
+    groundedPositionSegments(positions, worldSize).map((segmentPositions, index) => ({
+      id: `${playerId}-${index}-${segmentPositions[0].elapsed_time}`,
       playerId,
-      path: routePath(positions, worldSize),
+      positions: segmentPositions,
+    })),
+  );
+  const routeSegments = groundSegments
+    .map((segment) => ({
+      ...segment,
+      path: routePath(segment.positions, worldSize),
     }))
-    .filter((segment): segment is { playerId: string; path: string } => Boolean(segment.path));
+    .filter((segment): segment is PlayerRouteSegment => Boolean(segment.path));
+  const routePositions = groundSegments
+    .flatMap((segment) => segment.positions)
+    .sort((left, right) => left.elapsed_time - right.elapsed_time);
   const totalDistanceKm =
     pubgUnitsToKilometers(
-      Object.values(positionGroups).reduce((total, positions) => total + traveledDistance(positions), 0),
+      groundSegments.reduce((total, segment) => total + traveledDistance(segment.positions), 0),
     );
   const combatEvents = selectedEvents.filter(isCombatEvent);
   const eliminationEvents = selectedEvents.filter(isEliminationEvent);
@@ -641,7 +694,7 @@ export function PlayerMatchAnalysis() {
                     layers.includes("route") &&
                     routeSegments.map((segment) => (
                       <path
-                        key={segment.playerId}
+                        key={segment.id}
                         d={segment.path}
                         fill="none"
                         stroke={playerColor(segment.playerId, selectedTeam)}
@@ -655,12 +708,14 @@ export function PlayerMatchAnalysis() {
 
                   {analysis &&
                     layers.includes("route") &&
-                    selectedPositions.map((position) => {
+                    routePositions.map((position) => {
                       const point = pointToView(position.point, worldSize);
                       const color = playerColor(position.player_id, selectedTeam);
-                      const playerPositions = positionGroups[position.player_id] ?? [];
-                      const playerIndex = playerPositions.indexOf(position);
-                      const isEndpoint = playerIndex === 0 || playerIndex === playerPositions.length - 1;
+                      const routeSegment = groundSegments.find((segment) => segment.positions.includes(position));
+                      const routeIndex = routeSegment?.positions.indexOf(position) ?? -1;
+                      const isEndpoint =
+                        routeSegment !== undefined &&
+                        (routeIndex === 0 || routeIndex === routeSegment.positions.length - 1);
                       return (
                         <circle
                           key={`${position.player_id}-${position.elapsed_time}-${position.point.x}-${position.point.y}`}
