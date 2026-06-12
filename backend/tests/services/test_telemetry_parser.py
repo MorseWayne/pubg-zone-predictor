@@ -46,6 +46,77 @@ def test_telemetry_parser_extracts_circles_positions_rosters_and_life_events(
     ] == 1
 
 
+def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    _seed_match(migrated_connection)
+    events = [
+        {"_T": "LogMatchStart", "_D": "2026-06-05T00:00:00Z", "common": {"isGame": 0}},
+        {
+            "_T": "LogGameStatePeriodic",
+            "_D": "2026-06-05T00:01:00Z",
+            "common": {"isGame": 1},
+            "gameState": {
+                "numAliveTeams": 16,
+                "numAlivePlayers": 64,
+                "poisonGasWarningPosition": {"x": 400000, "y": 410000},
+                "poisonGasWarningRadius": 400000,
+            },
+        },
+        {
+            "_T": "LogPlayerPosition",
+            "_D": "2026-06-05T00:01:01.200Z",
+            "common": {"isGame": 1},
+            "character": {
+                "accountId": "account-1",
+                "name": "PlayerOne",
+                "teamId": 101,
+                "health": 100,
+                "location": {"x": 1000, "y": 2000, "z": 300},
+            },
+        },
+        {
+            "_T": "LogPlayerKill",
+            "_D": "2026-06-05T00:04:30Z",
+            "common": {"isGame": 2},
+            "killer": {
+                "accountId": "account-1",
+                "name": "PlayerOne",
+                "teamId": 101,
+                "location": {"x": 2050, "y": 3050},
+            },
+            "victim": {
+                "accountId": "account-2",
+                "name": "PlayerTwo",
+                "teamId": 102,
+                "location": {"x": 2100, "y": 3100},
+            },
+        },
+    ]
+
+    result = TelemetryParser(migrated_connection).parse_match("match-1", events)
+
+    repo = SQLiteRepository(migrated_connection)
+    assert result.circle_phase_count == 1
+    assert result.position_sample_count == 1
+    assert result.life_event_count == 1
+    circle = repo.fetch_one("SELECT elapsed_time FROM circle_phases WHERE phase = 1")
+    position = repo.fetch_one("SELECT elapsed_time FROM player_position_samples")
+    life_event = repo.fetch_one(
+        """
+        SELECT elapsed_time, actor_player_id, victim_player_id, x, y
+        FROM player_life_events
+        """
+    )
+    assert circle["elapsed_time"] == 60
+    assert position["elapsed_time"] == 61.2
+    assert life_event["elapsed_time"] == 270
+    assert life_event["actor_player_id"] == "account-1"
+    assert life_event["victim_player_id"] == "account-2"
+    assert life_event["x"] == 2100
+    assert life_event["y"] == 3100
+
+
 def test_telemetry_parser_is_idempotent(migrated_connection: sqlite3.Connection) -> None:
     _seed_match(migrated_connection)
     events = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))

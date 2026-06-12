@@ -30,6 +30,7 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -252,8 +253,7 @@ function isEliminationEvent(event: MatchAnalysisLifeEvent) {
 function isCombatEvent(event: MatchAnalysisLifeEvent) {
   return (
     isEliminationEvent(event) ||
-    event.event_type === "LogPlayerMakeGroggy" ||
-    event.event_type === "LogPlayerTakeDamage"
+    event.event_type === "LogPlayerMakeGroggy"
   );
 }
 
@@ -487,8 +487,52 @@ export function PlayerMatchAnalysis() {
     pubgUnitsToKilometers(
       groundSegments.reduce((total, segment) => total + traveledDistance(segment.positions), 0),
     );
-  const combatEvents = selectedEvents.filter(isCombatEvent);
+  const rawCombatEvents = selectedEvents.filter(isCombatEvent);
   const eliminationEvents = selectedEvents.filter(isEliminationEvent);
+  const combatEvents = rawCombatEvents.filter(event => {
+    if (isEliminationEvent(event)) return true;
+    const matchingKill = eliminationEvents.find(kill => 
+      kill.victim_player_id === event.victim_player_id &&
+      kill.elapsed_time >= event.elapsed_time &&
+      kill.elapsed_time <= event.elapsed_time + 60
+    );
+    return !matchingKill;
+  });
+
+  const clusteredMapEvents = useMemo(() => {
+    if (!analysis) return [];
+    let activeEvents: MatchAnalysisLifeEvent[] = [];
+    if (layers.includes("combat")) {
+      activeEvents = activeEvents.concat(combatEvents.filter(e => e.point && !isEliminationEvent(e)));
+    }
+    if (layers.includes("eliminations")) {
+      activeEvents = activeEvents.concat(eliminationEvents.filter(e => e.point));
+    }
+    
+    // Cluster distance scales inversely with map zoom (keep screen-space distance constant)
+    const CLUSTER_DISTANCE = 25 / mapTransform.scale;
+    const clusters: { id: string; point: {x: number, y: number}; events: MatchAnalysisLifeEvent[] }[] = [];
+    
+    activeEvents.forEach(event => {
+      const pt = pointToView(event.point as { x: number; y: number }, worldSize);
+      let nearestCluster = null;
+      let minDistance = Infinity;
+      clusters.forEach(cluster => {
+        const d = Math.hypot(cluster.point.x - pt.x, cluster.point.y - pt.y);
+        if (d < minDistance) {
+          minDistance = d;
+          nearestCluster = cluster;
+        }
+      });
+      
+      if (nearestCluster && minDistance < CLUSTER_DISTANCE) {
+        nearestCluster.events.push(event);
+      } else {
+        clusters.push({ id: `cluster-${event.id}`, point: pt, events: [event] });
+      }
+    });
+    return clusters;
+  }, [analysis, layers, combatEvents, eliminationEvents, mapTransform.scale, worldSize]);
   const killCount = eliminationEvents.filter(
     (event) => event.actor_team_id === selectedTeamId,
   ).length;
@@ -720,6 +764,7 @@ export function PlayerMatchAnalysis() {
 
       <Card className="min-h-0 flex-1 overflow-hidden border-border bg-card shadow-sm">
         <CardContent className="h-full p-0">
+          <TooltipProvider delayDuration={100}>
             <div
               ref={mapContainerRef}
               className="relative flex h-full min-h-0 cursor-grab items-center justify-center overflow-hidden bg-muted active:cursor-grabbing"
@@ -835,36 +880,80 @@ export function PlayerMatchAnalysis() {
                       );
                     })}
 
-                  {analysis &&
-                    layers.includes("combat") &&
-                    selectedEvents
-                      .filter((event) => event.point && !event.event_type.includes("Kill"))
-                      .map((event) => {
-                        const point = pointToView(event.point as { x: number; y: number }, worldSize);
-                        const color = playerColor(eventTeamPlayerId(event, selectedTeamId), selectedTeam);
-                        const isKnockdown = event.event_type === "LogPlayerMakeGroggy";
+                  {clusteredMapEvents.map(cluster => {
+                    const invScale = 1 / mapTransform.scale;
+                    if (cluster.events.length === 1) {
+                      const event = cluster.events[0];
+                      const color = playerColor(eventTeamPlayerId(event, selectedTeamId), selectedTeam);
+                      const isKill = isEliminationEvent(event);
+                      const isKnockdown = event.event_type === "LogPlayerMakeGroggy";
+                      const action = isKill ? "淘汰" : (isKnockdown ? "击倒" : "攻击");
+                      const label = `${event.actor_player_name || "未知"} ${action}了 ${event.victim_player_name || "未知"}`;
+                      
+                      if (isKill) {
                         return (
-                          <g key={event.id} transform={`translate(${point.x - 8}, ${point.y - 8})`}>
-                            <circle cx="8" cy="8" r={isKnockdown ? "12" : "10"} fill="rgba(250,204,21,0.2)" stroke={color} strokeWidth="1.5" strokeDasharray={isKnockdown ? "" : "2 2"} />
-                            <Target width="16" height="16" color={color} strokeWidth={isKnockdown ? 2.5 : 2} />
-                          </g>
+                          <Tooltip key={cluster.id}>
+                            <TooltipTrigger asChild>
+                              <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
+                                <circle cx="0" cy="0" r="10" fill="rgba(244,63,94,0.3)" stroke={color} strokeWidth="1.5" />
+                                <Skull x="-7" y="-7" width="14" height="14" color="#fff" style={{ filter: `drop-shadow(0px 0px 3px ${color})` }} />
+                              </g>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="border-red-500/30 bg-black/90 text-red-50">
+                              <p className="font-medium">{label}</p>
+                            </TooltipContent>
+                          </Tooltip>
                         );
-                      })}
-
-                  {analysis &&
-                    layers.includes("eliminations") &&
-                    eliminationEvents
-                      .filter((event) => event.point)
-                      .map((event) => {
-                        const point = pointToView(event.point as { x: number; y: number }, worldSize);
-                        const color = playerColor(eventTeamPlayerId(event, selectedTeamId), selectedTeam);
+                      } else {
                         return (
-                          <g key={event.id} transform={`translate(${point.x - 10}, ${point.y - 10})`}>
-                            <circle cx="10" cy="10" r="14" fill="rgba(244,63,94,0.3)" stroke={color} strokeWidth="1.5" />
-                            <Skull width="20" height="20" color="#fff" style={{ filter: `drop-shadow(0px 0px 3px ${color})` }} />
-                          </g>
+                          <Tooltip key={cluster.id}>
+                            <TooltipTrigger asChild>
+                              <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
+                                <circle cx="0" cy="0" r="7" fill="rgba(250,204,21,0.2)" stroke={color} strokeWidth="1.5" strokeDasharray={isKnockdown ? "" : "2 2"} />
+                                <Target x="-6" y="-6" width="12" height="12" color={color} strokeWidth={isKnockdown ? 2.5 : 2} />
+                              </g>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="border-yellow-500/30 bg-black/90 text-yellow-50">
+                              <p className="font-medium">{label}</p>
+                            </TooltipContent>
+                          </Tooltip>
                         );
-                      })}
+                      }
+                    } else {
+                      const killCount = cluster.events.filter(isEliminationEvent).length;
+                      const hasKills = killCount > 0;
+                      const baseColor = hasKills ? "rgba(244,63,94,1)" : "rgba(250,204,21,1)";
+                      const bgColor = hasKills ? "rgba(244,63,94,0.4)" : "rgba(250,204,21,0.4)";
+                      
+                      return (
+                        <Tooltip key={cluster.id}>
+                          <TooltipTrigger asChild>
+                            <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
+                              <circle cx="0" cy="0" r="12" fill={bgColor} stroke={baseColor} strokeWidth="1.5" />
+                              <circle cx="0" cy="0" r="16" fill="none" stroke={baseColor} strokeWidth="1.5" strokeDasharray="3 3" className="animate-[spin_4s_linear_infinite]" opacity="0.8" />
+                              <text x="0" y="3.5" fontSize="10" fontWeight="bold" fill="#fff" textAnchor="middle">{cluster.events.length}</text>
+                            </g>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className={`bg-black/90 text-white ${hasKills ? 'border-red-500/30' : 'border-yellow-500/30'}`}>
+                            <div className="flex flex-col gap-1">
+                              {cluster.events.map((event, i) => {
+                                const isKill = isEliminationEvent(event);
+                                const isKnockdown = event.event_type === "LogPlayerMakeGroggy";
+                                const action = isKill ? "淘汰" : (isKnockdown ? "击倒" : "攻击");
+                                return (
+                                  <p key={i} className="text-xs">
+                                    <span className="opacity-80">{event.actor_player_name || "未知"}</span>
+                                    <span className={isKill ? "text-red-400 mx-1" : "text-yellow-400 mx-1"}>{action}了</span>
+                                    <span className="opacity-80">{event.victim_player_name || "未知"}</span>
+                                  </p>
+                                );
+                              })}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    }
+                  })}
                 </svg>
               </div>
 
@@ -959,8 +1048,9 @@ export function PlayerMatchAnalysis() {
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </TooltipProvider>
+        </CardContent>
+      </Card>
     </div>
   );
 }

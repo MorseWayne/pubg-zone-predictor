@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from math import floor
 from typing import Any
 
@@ -21,6 +22,7 @@ LIFE_EVENT_TYPES = {
     "LogPlayerRevive",
     "LogPlayerTakeDamage",
 }
+MATCH_START_EVENT_TYPES = {"LogMatchStart"}
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,42 @@ class TelemetryParseResult:
     position_sample_count: int
     life_event_count: int
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TelemetryTimeline:
+    origin_timestamp: float | None
+
+    @classmethod
+    def from_events(cls, events: list[dict[str, Any]]) -> TelemetryTimeline:
+        first_timestamp: float | None = None
+        match_start_timestamp: float | None = None
+
+        for event in events:
+            timestamp = _event_timestamp(event)
+            if timestamp is None:
+                continue
+            if first_timestamp is None:
+                first_timestamp = timestamp
+
+            explicit_elapsed_time = _explicit_elapsed_time(event)
+            if explicit_elapsed_time is not None:
+                return cls(origin_timestamp=timestamp - explicit_elapsed_time)
+
+            if match_start_timestamp is None and _event_type(event) in MATCH_START_EVENT_TYPES:
+                match_start_timestamp = timestamp
+
+        return cls(origin_timestamp=match_start_timestamp or first_timestamp)
+
+    def elapsed_time(self, event: dict[str, Any]) -> float | None:
+        explicit_elapsed_time = _explicit_elapsed_time(event)
+        if explicit_elapsed_time is not None:
+            return explicit_elapsed_time
+
+        timestamp = _event_timestamp(event)
+        if timestamp is None or self.origin_timestamp is None:
+            return None
+        return max(0.0, round(timestamp - self.origin_timestamp, 3))
 
 
 @dataclass
@@ -59,6 +97,7 @@ class TelemetryParser:
         events_to_parse = [event for event in events if isinstance(event, dict)]
         if len(events_to_parse) != len(events):
             warnings.append("skipped non-object telemetry events")
+        timeline = TelemetryTimeline.from_events(events_to_parse)
         counts = {
             "circle_phase_count": 0,
             "team_count": 0,
@@ -67,7 +106,7 @@ class TelemetryParser:
             "life_event_count": 0,
         }
 
-        circle_rows = self._circle_rows(match_id, events_to_parse, warnings)
+        circle_rows = self._circle_rows(match_id, events_to_parse, timeline, warnings)
         for row in circle_rows:
             counts["circle_phase_count"] += self.repo.insert_or_ignore(
                 "circle_phases",
@@ -81,9 +120,9 @@ class TelemetryParser:
         for event in events_to_parse:
             event_type = _event_type(event)
             if event_type in POSITION_EVENT_TYPES:
-                self._parse_position_event(match_id, event, counts, warnings)
+                self._parse_position_event(match_id, event, timeline, counts, warnings)
             elif event_type in LIFE_EVENT_TYPES:
-                self._parse_life_event(match_id, event, counts, warnings)
+                self._parse_life_event(match_id, event, timeline, counts, warnings)
 
         self.connection.commit()
         return TelemetryParseResult(event_count=len(events), warnings=warnings, **counts)
@@ -92,13 +131,14 @@ class TelemetryParser:
         self,
         match_id: str,
         events: list[dict[str, Any]],
+        timeline: TelemetryTimeline,
         warnings: list[str],
     ) -> list[dict[str, Any]]:
         by_phase: dict[int, dict[str, Any]] = {}
         for event in events:
             if _event_type(event) != "LogGameStatePeriodic":
                 continue
-            row = self._circle_row(match_id, event)
+            row = self._circle_row(match_id, event, timeline)
             if row is None:
                 phase = _phase(event)
                 warnings.append(f"skipped incomplete circle phase sample: phase={phase}")
@@ -106,7 +146,12 @@ class TelemetryParser:
             by_phase.setdefault(row["phase"], row)
         return [by_phase[phase] for phase in sorted(by_phase)]
 
-    def _circle_row(self, match_id: str, event: dict[str, Any]) -> dict[str, Any] | None:
+    def _circle_row(
+        self,
+        match_id: str,
+        event: dict[str, Any],
+        timeline: TelemetryTimeline,
+    ) -> dict[str, Any] | None:
         game_state = _dict(event.get("gameState"))
         phase = _phase(event)
         if phase is None:
@@ -116,7 +161,7 @@ class TelemetryParser:
         center_x = _number(position.get("x"), position.get("X"))
         center_y = _number(position.get("y"), position.get("Y"))
         radius = _number(game_state.get("poisonGasWarningRadius"))
-        elapsed_time = _number(game_state.get("elapsedTime"), _elapsed_time(event))
+        elapsed_time = timeline.elapsed_time(event)
         if center_x is None or center_y is None or radius is None or elapsed_time is None:
             return None
 
@@ -135,12 +180,13 @@ class TelemetryParser:
         self,
         match_id: str,
         event: dict[str, Any],
+        timeline: TelemetryTimeline,
         counts: dict[str, int],
         warnings: list[str],
     ) -> None:
         character = _character(event)
         player_id = _player_id(character)
-        elapsed_time = _elapsed_time(event)
+        elapsed_time = timeline.elapsed_time(event)
         location = _location(character) or _location(event)
         if player_id is None or elapsed_time is None or location is None:
             warnings.append("skipped incomplete player position sample")
@@ -178,10 +224,11 @@ class TelemetryParser:
         self,
         match_id: str,
         event: dict[str, Any],
+        timeline: TelemetryTimeline,
         counts: dict[str, int],
         warnings: list[str],
     ) -> None:
-        elapsed_time = _elapsed_time(event)
+        elapsed_time = timeline.elapsed_time(event)
         if elapsed_time is None:
             warnings.append(f"skipped life event without elapsed time: {_event_type(event)}")
             return
@@ -258,7 +305,7 @@ def _phase(event: dict[str, Any]) -> int | None:
     return None
 
 
-def _elapsed_time(event: dict[str, Any]) -> float | None:
+def _explicit_elapsed_time(event: dict[str, Any]) -> float | None:
     common = _dict(event.get("common"))
     game_state = _dict(event.get("gameState"))
     return _number(
@@ -266,6 +313,19 @@ def _elapsed_time(event: dict[str, Any]) -> float | None:
         common.get("elapsedTime"),
         game_state.get("elapsedTime"),
     )
+
+
+def _event_timestamp(event: dict[str, Any]) -> float | None:
+    value = event.get("_D")
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
 
 
 def _elapsed_time_bucket(elapsed_time: float, sample_interval_seconds: int) -> int:
