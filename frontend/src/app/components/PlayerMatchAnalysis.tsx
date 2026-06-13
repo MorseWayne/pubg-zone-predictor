@@ -136,19 +136,8 @@ function playerColor(playerId: string | null | undefined, team: TeamSummary | un
   return PLAYER_COLORS[index % PLAYER_COLORS.length];
 }
 
-const ENEMY_COLORS = [
-  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
-  "#22c55e", "#10b981", "#14b8a6", "#06b6d4", "#0ea5e9",
-  "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#f43f5e",
-];
-
-function enemyTeamColor(teamId: string | null | undefined) {
-  if (!teamId) return "#ef4444";
-  let hash = 0;
-  for (let i = 0; i < teamId.length; i++) {
-    hash = teamId.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return ENEMY_COLORS[Math.abs(hash) % ENEMY_COLORS.length];
+function enemyTeamColor(_teamId: string | null | undefined) {
+  return "#ef4444";
 }
 
 function pointToView(point: { x: number; y: number }, worldSize: number) {
