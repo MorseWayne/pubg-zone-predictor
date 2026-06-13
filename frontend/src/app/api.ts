@@ -174,9 +174,10 @@ export type ModelRun = {
   model_path: string | null;
   status: string;
   metrics: Array<{
+    split: "train" | "validation";
     map_id: string;
     current_phase: number;
-    target_type: string;
+    target_type: "next" | "final";
     sample_count: number;
     mean_center_error: number;
     median_center_error: number;

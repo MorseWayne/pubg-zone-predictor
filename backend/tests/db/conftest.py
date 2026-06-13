@@ -5,6 +5,8 @@ import pytest
 from app.db.connection import connect_database
 from app.db.migrations import initialize_database
 
+EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006"]
+
 
 @pytest.fixture
 def database_path(tmp_path: Path) -> Path:
@@ -14,7 +16,7 @@ def database_path(tmp_path: Path) -> Path:
 @pytest.fixture
 def migrated_connection(database_path: Path) -> sqlite3.Connection:
     applied = initialize_database(database_path)
-    assert [migration.version for migration in applied] == ["001", "002", "003", "004", "005"]
+    assert [migration.version for migration in applied] == EXPECTED_MIGRATIONS
 
     connection = connect_database(database_path)
     try:

@@ -36,7 +36,11 @@ function latestCompletedRun(runs: ModelRun[]) {
 
 function formatAccuracy(run: ModelRun | null) {
   if (!run || run.metrics.length === 0) return "暂无";
-  const meanError = run.metrics.reduce((sum, metric) => sum + metric.mean_center_error, 0) / run.metrics.length;
+  const validationMetrics = run.metrics.filter((metric) => metric.split === "validation");
+  const scoringMetrics = validationMetrics.length > 0 ? validationMetrics : run.metrics;
+  const meanError =
+    scoringMetrics.reduce((sum, metric) => sum + metric.mean_center_error, 0) /
+    scoringMetrics.length;
   const score = Math.max(0, Math.min(100, 100 - meanError / 8000));
   return `${score.toFixed(1)}%`;
 }
@@ -55,6 +59,12 @@ export function DataPreparation() {
   const activeRun = useMemo(() => latestCompletedRun(runs), [runs]);
   const hotspotReady = latestHotspot !== null;
   const modelReady = activeRun !== null;
+  const validationMetrics = activeRun?.metrics.filter((metric) => metric.split === "validation") ?? [];
+  const meanValidationError =
+    validationMetrics.length > 0
+      ? validationMetrics.reduce((sum, metric) => sum + metric.mean_center_error, 0) /
+        validationMetrics.length
+      : null;
   const sampleCount = matches.reduce(
     (sum, match) => sum + match.circle_phase_count + match.position_sample_count + match.life_event_count,
     0,
@@ -234,6 +244,11 @@ export function DataPreparation() {
             {activeRun
               ? `最近模型 ${activeRun.id.slice(0, 14)} 使用 ${activeRun.sample_count.toLocaleString()} 条圈样本。`
               : "还没有完成的模型训练，预测会使用规则回退。"}
+            {meanValidationError !== null && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                验证误差: {Math.round(meanValidationError).toLocaleString()} m
+              </div>
+            )}
           </CardContent>
           <CardFooter>
             <Button

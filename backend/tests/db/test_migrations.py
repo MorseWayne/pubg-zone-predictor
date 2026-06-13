@@ -6,11 +6,13 @@ import pytest
 from app.db.connection import connect_database
 from app.db.migrations import initialize_database
 
+EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006"]
+
 
 def test_initialize_database_applies_initial_schema(database_path: Path) -> None:
     applied = initialize_database(database_path)
 
-    assert [migration.version for migration in applied] == ["001", "002", "003", "004", "005"]
+    assert [migration.version for migration in applied] == EXPECTED_MIGRATIONS
 
     with connect_database(database_path) as connection:
         tables = {
@@ -27,6 +29,13 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
     assert "player_position_samples" in tables
     assert "hotspot_tiles" in tables
     assert "model_metrics" in tables
+
+    with connect_database(database_path) as connection:
+        model_metric_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(model_metrics)").fetchall()
+        }
+    assert "split" in model_metric_columns
 
     with connect_database(database_path) as connection:
         telemetry_columns = {
@@ -63,7 +72,7 @@ def test_initialize_database_is_idempotent(database_path: Path) -> None:
     first_run = initialize_database(database_path)
     second_run = initialize_database(database_path)
 
-    assert [migration.version for migration in first_run] == ["001", "002", "003", "004", "005"]
+    assert [migration.version for migration in first_run] == EXPECTED_MIGRATIONS
     assert second_run == []
 
 

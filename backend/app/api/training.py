@@ -91,6 +91,7 @@ def _model_run_response(run: ModelRun) -> dict[str, object]:
 
 def _metric_response(metric: ModelMetric) -> dict[str, object]:
     return {
+        "split": metric.split,
         "map_id": metric.map_id,
         "current_phase": metric.current_phase,
         "target_type": metric.target_type,

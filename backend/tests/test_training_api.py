@@ -16,6 +16,7 @@ def _run() -> ModelRun:
         status="completed",
         metrics=[
             ModelMetric(
+                split="validation",
                 map_id="erangel",
                 current_phase=1,
                 target_type="next",
@@ -59,6 +60,7 @@ def test_train_model_run_api_returns_run_metrics_and_warnings() -> None:
     body = response.json()
     assert body["id"] == "model-test"
     assert body["sample_count"] == 5
+    assert body["metrics"][0]["split"] == "validation"
     assert body["metrics"][0]["target_type"] == "next"
     assert body["warnings"] == []
 

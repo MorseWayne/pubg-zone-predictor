@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -72,7 +73,13 @@ def test_train_baseline_writes_model_run_metrics_and_artifact(
     assert run.warnings == []
     assert run.model_path is not None
     assert Path(run.model_path).exists()
-    assert len(run.metrics) == 2
+    payload = json.loads(Path(run.model_path).read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["algorithm"] == "statistical_median_offset_v1"
+    assert payload["training_data"]["sample_count"] == 5
+    assert payload["training_data"]["maps_included"] == ["erangel"]
+    assert len(run.metrics) == 4
+    assert {metric.split for metric in run.metrics} == {"train", "validation"}
     assert {metric.target_type for metric in run.metrics} == {"next", "final"}
     assert all(metric.mean_center_error == 0 for metric in run.metrics)
     stored_run = repo.fetch_one("SELECT status FROM model_runs WHERE id = ?", (run.id,))
@@ -81,7 +88,7 @@ def test_train_baseline_writes_model_run_metrics_and_artifact(
         (run.id,),
     )
     assert stored_run["status"] == "completed"
-    assert stored_metric_count["count"] == 2
+    assert stored_metric_count["count"] == 4
 
 
 def test_train_baseline_records_failed_run_when_samples_are_missing(
@@ -120,3 +127,47 @@ def test_train_baseline_returns_low_sample_warning(
     assert run.sample_count == 2
     assert "low training sample count: 2 < 5" in run.warnings
     assert "low sample metric groups: 2 groups have fewer than 3 samples" in run.warnings
+    assert "validation split unavailable: fewer than 5 matches" in run.warnings
+
+
+def test_train_baseline_records_train_and_validation_metrics(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    _seed_circle_training_samples(migrated_connection, match_count=10)
+    service = TrainingService(migrated_connection, ConfigService(Path("config")), tmp_path)
+
+    run = service.train_baseline("erangel")
+
+    metric_splits = {metric.split for metric in run.metrics}
+    assert metric_splits == {"train", "validation"}
+    assert all(metric.sample_count > 0 for metric in run.metrics)
+
+
+def test_train_baseline_uses_median_offset_to_reduce_outlier_impact(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    _seed_circle_training_samples(migrated_connection, match_count=5)
+    repo = SQLiteRepository(migrated_connection)
+    repo.execute(
+        """
+        UPDATE circle_phases
+        SET center_x = center_x + 500000
+        WHERE match_id = 'match-4' AND phase = 2
+        """
+    )
+    migrated_connection.commit()
+    service = TrainingService(migrated_connection, ConfigService(Path("config")), tmp_path)
+
+    run = service.train_baseline("erangel")
+
+    payload = json.loads(Path(run.model_path).read_text(encoding="utf-8"))
+    next_group = next(
+        group
+        for group in payload["groups"]
+        if group["map_id"] == "erangel"
+        and group["current_phase"] == 1
+        and group["target_type"] == "next"
+    )
+    assert next_group["offset_x"] == 100

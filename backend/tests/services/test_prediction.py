@@ -48,6 +48,10 @@ def _input(strategy: str = "center", *, use_llm: bool = False) -> PredictionInpu
     )
 
 
+def _distance(start: Point, end: Point) -> float:
+    return ((start.x - end.x) ** 2 + (start.y - end.y) ** 2) ** 0.5
+
+
 def _seed_model(
     connection: sqlite3.Connection,
     tmp_path: Path,
@@ -180,6 +184,76 @@ def test_predict_falls_back_when_model_group_is_missing(
     assert result.final_circle.source == "rule_baseline"
     assert "model_group_missing:final" in result.warnings
     assert "rule_baseline_used" in result.warnings
+
+
+def test_predict_falls_back_when_model_artifact_schema_is_invalid(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    artifact_path = tmp_path / "invalid-model.json"
+    artifact_path.write_text(
+        json.dumps({"algorithm": "unknown", "groups": []}),
+        encoding="utf-8",
+    )
+    repo = SQLiteRepository(migrated_connection)
+    repo.insert_or_ignore(
+        "model_runs",
+        {
+            "id": "model-invalid",
+            "created_at": "2026-06-05T00:00:00+00:00",
+            "maps_included": json.dumps(["erangel"]),
+            "phases_included": json.dumps([1]),
+            "sample_count": 5,
+            "algorithm": "unknown",
+            "model_path": str(artifact_path),
+            "status": "completed",
+        },
+    )
+    migrated_connection.commit()
+    service = _service(migrated_connection, tmp_path)
+
+    result = service.predict(_input())
+
+    assert result.model_run_id is None
+    assert result.next_circle.source == "rule_baseline"
+    assert "model_artifact_invalid" in result.warnings
+    assert "rule_baseline_used" in result.warnings
+
+
+def test_predict_clamps_model_circle_inside_current_circle(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    run_id = _seed_model(
+        migrated_connection,
+        tmp_path,
+        [
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "offset_x": 800000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "final",
+                "offset_x": 800000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+        ],
+    )
+    service = _service(migrated_connection, tmp_path)
+
+    result = service.predict(_input())
+
+    assert result.model_run_id == run_id
+    assert result.next_circle.source == "model_artifact"
+    assert _distance(result.next_circle.center, Point(x=100000, y=100000)) <= 170000
+    assert _distance(result.final_circle.center, Point(x=100000, y=100000)) <= 392300
 
 
 @pytest.mark.parametrize("strategy", ["edge", "center", "slow", "avoid_hotspots"])

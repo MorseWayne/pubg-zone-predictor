@@ -17,6 +17,8 @@ from app.services.coordinates import CoordinateTransformer, Point
 ROUTE_STRATEGIES = {"edge", "center", "slow", "avoid_hotspots"}
 DEFAULT_GRID_SIZE = 64
 TOP_HOTSPOT_TILE_COUNT = 5
+SUPPORTED_MODEL_SCHEMA_VERSION = 1
+SUPPORTED_MODEL_ALGORITHMS = {"statistical_mean_offset_v1", "statistical_median_offset_v1"}
 
 
 @dataclass(frozen=True)
@@ -197,6 +199,7 @@ class PredictionService:
 
         next_phase = prediction_input.current_phase + 1
         final_phase = int(zone_config["final_phase"])
+        current_radius = float(phases[prediction_input.current_phase]["radius"])
         warnings: list[str] = []
         loaded_model = self._load_latest_model(map_id, warnings)
         next_circle = self._predict_circle(
@@ -204,6 +207,7 @@ class PredictionService:
             current_phase=prediction_input.current_phase,
             target_type="next",
             target_phase=next_phase,
+            current_radius=current_radius,
             target_radius=float(phases[next_phase]["radius"]),
             current_center=current_center,
             transformer=transformer,
@@ -216,6 +220,7 @@ class PredictionService:
             current_phase=prediction_input.current_phase,
             target_type="final",
             target_phase=final_phase,
+            current_radius=current_radius,
             target_radius=float(phases[final_phase]["radius"]),
             current_center=current_center,
             transformer=transformer,
@@ -288,18 +293,33 @@ class PredictionService:
             warnings.extend(["model_artifact_unavailable", "rule_baseline_used"])
             return None
 
+        if payload.get("schema_version", 1) != SUPPORTED_MODEL_SCHEMA_VERSION:
+            warnings.extend(["model_artifact_invalid", "rule_baseline_used"])
+            return None
+        if payload.get("algorithm", "statistical_mean_offset_v1") not in SUPPORTED_MODEL_ALGORITHMS:
+            warnings.extend(["model_artifact_invalid", "rule_baseline_used"])
+            return None
+        groups_payload = payload.get("groups")
+        if not isinstance(groups_payload, list):
+            warnings.extend(["model_artifact_invalid", "rule_baseline_used"])
+            return None
+
         groups: dict[tuple[str, int, str], ModelGroup] = {}
-        for item in payload.get("groups", []):
+        for item in groups_payload:
             if not isinstance(item, dict):
                 continue
-            group = ModelGroup(
-                map_id=str(item["map_id"]),
-                current_phase=int(item["current_phase"]),
-                target_type=str(item["target_type"]),
-                offset_x=float(item["offset_x"]),
-                offset_y=float(item["offset_y"]),
-                sample_count=int(item.get("sample_count", 0)),
-            )
+            try:
+                group = ModelGroup(
+                    map_id=str(item["map_id"]),
+                    current_phase=int(item["current_phase"]),
+                    target_type=str(item["target_type"]),
+                    offset_x=float(item["offset_x"]),
+                    offset_y=float(item["offset_y"]),
+                    sample_count=int(item.get("sample_count", 0)),
+                )
+            except (KeyError, TypeError, ValueError):
+                warnings.append("model_group_invalid")
+                continue
             groups[(group.map_id, group.current_phase, group.target_type)] = group
         return LoadedModel(run_id=selected_row["id"], groups=groups)
 
@@ -310,6 +330,7 @@ class PredictionService:
         current_phase: int,
         target_type: str,
         target_phase: int,
+        current_radius: float,
         target_radius: float,
         current_center: Point,
         transformer: CoordinateTransformer,
@@ -323,9 +344,12 @@ class PredictionService:
             if group is None:
                 warnings.extend([f"model_group_missing:{target_type}", "rule_baseline_used"])
         if group is not None:
-            center = self._clamp_world_point(
+            center = self._constrain_target_circle_center(
                 transformer,
+                current_center,
+                current_radius,
                 Point(x=current_center.x + group.offset_x, y=current_center.y + group.offset_y),
+                target_radius,
             )
             return PredictedCircle(
                 phase=target_phase,
@@ -335,7 +359,13 @@ class PredictionService:
                 sample_count=group.sample_count,
             )
 
-        center = self._rule_baseline_center(transformer, current_center, fallback_shift)
+        center = self._constrain_target_circle_center(
+            transformer,
+            current_center,
+            current_radius,
+            self._rule_baseline_center(transformer, current_center, fallback_shift),
+            target_radius,
+        )
         return PredictedCircle(
             phase=target_phase,
             center=center,
@@ -696,6 +726,30 @@ class PredictionService:
     def _clamp_world_point(transformer: CoordinateTransformer, point: Point) -> Point:
         normalized = transformer.world_to_normalized(point, clamp=True)
         return transformer.normalized_to_world(normalized, clamp=True)
+
+    @staticmethod
+    def _constrain_target_circle_center(
+        transformer: CoordinateTransformer,
+        current_center: Point,
+        current_radius: float,
+        target_center: Point,
+        target_radius: float,
+    ) -> Point:
+        clamped_target = PredictionService._clamp_world_point(transformer, target_center)
+        max_distance = max(0.0, current_radius - target_radius)
+        dx = clamped_target.x - current_center.x
+        dy = clamped_target.y - current_center.y
+        distance = sqrt(dx * dx + dy * dy)
+        if distance <= max_distance or distance == 0:
+            return clamped_target
+        scale = max_distance / distance
+        return PredictionService._clamp_world_point(
+            transformer,
+            Point(
+                x=current_center.x + dx * scale,
+                y=current_center.y + dy * scale,
+            ),
+        )
 
     @staticmethod
     def _rule_baseline_center(

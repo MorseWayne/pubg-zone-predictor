@@ -15,7 +15,8 @@ from app.core.errors import AppError
 from app.db.repository import SQLiteRepository
 from app.services.config_service import ConfigService
 
-ALGORITHM = "statistical_mean_offset_v1"
+ARTIFACT_SCHEMA_VERSION = 1
+ALGORITHM = "statistical_median_offset_v1"
 MIN_TRAINING_SAMPLES = 5
 MIN_GROUP_SAMPLES = 3
 
@@ -35,6 +36,7 @@ class TrainingSample:
 
 @dataclass(frozen=True)
 class ModelMetric:
+    split: str
     map_id: str
     current_phase: int
     target_type: str
@@ -119,8 +121,13 @@ class TrainingService:
                 warnings=warnings,
             )
 
-        groups = self._fit_groups(samples)
-        metrics = self._evaluate(groups, samples)
+        train_samples, validation_samples = self._split_samples_by_match(samples)
+        groups = self._fit_groups(train_samples)
+        metrics = self._evaluate(groups, train_samples, split="train")
+        if validation_samples:
+            metrics.extend(self._evaluate(groups, validation_samples, split="validation"))
+        else:
+            warnings.append("validation split unavailable: fewer than 5 matches")
         artifact_path = self._write_artifact(
             run_id=run_id,
             created_at=created_at,
@@ -136,6 +143,7 @@ class TrainingService:
                 "model_metrics",
                 {
                     "model_run_id": run_id,
+                    "split": metric.split,
                     "map_id": metric.map_id,
                     "current_phase": metric.current_phase,
                     "target_type": metric.target_type,
@@ -187,11 +195,11 @@ class TrainingService:
     def get_metrics(self, run_id: str) -> list[ModelMetric]:
         rows = self.repo.fetch_all(
             """
-            SELECT map_id, current_phase, target_type, sample_count,
+            SELECT split, map_id, current_phase, target_type, sample_count,
                    mean_center_error, median_center_error, p90_center_error
             FROM model_metrics
             WHERE model_run_id = ?
-            ORDER BY map_id ASC, current_phase ASC, target_type ASC
+            ORDER BY split ASC, map_id ASC, current_phase ASC, target_type ASC
             """,
             (run_id,),
         )
@@ -279,8 +287,8 @@ class TrainingService:
                     map_id=map_id,
                     current_phase=current_phase,
                     target_type=target_type,
-                    offset_x=sum(offset[0] for offset in offsets) / len(offsets),
-                    offset_y=sum(offset[1] for offset in offsets) / len(offsets),
+                    offset_x=float(median(offset[0] for offset in offsets)),
+                    offset_y=float(median(offset[1] for offset in offsets)),
                     sample_count=len(offsets),
                 )
             )
@@ -290,6 +298,8 @@ class TrainingService:
         self,
         groups: list[BaselineGroup],
         samples: list[TrainingSample],
+        *,
+        split: str,
     ) -> list[ModelMetric]:
         group_lookup = {
             (group.map_id, group.current_phase, group.target_type): group for group in groups
@@ -297,7 +307,9 @@ class TrainingService:
         errors: dict[tuple[str, int, str], list[float]] = defaultdict(list)
         for sample in samples:
             for target_type, target in self._sample_targets(sample).items():
-                group = group_lookup[(sample.map_id, sample.current_phase, target_type)]
+                group = group_lookup.get((sample.map_id, sample.current_phase, target_type))
+                if group is None:
+                    continue
                 predicted = TargetPoint(
                     x=sample.current_center_x + group.offset_x,
                     y=sample.current_center_y + group.offset_y,
@@ -311,6 +323,7 @@ class TrainingService:
             sorted_errors = sorted(group_errors)
             metrics.append(
                 ModelMetric(
+                    split=split,
                     map_id=map_id,
                     current_phase=current_phase,
                     target_type=target_type,
@@ -333,9 +346,15 @@ class TrainingService:
         warnings: list[str],
     ) -> Path:
         payload = {
+            "schema_version": ARTIFACT_SCHEMA_VERSION,
             "id": run_id,
             "created_at": created_at,
             "algorithm": ALGORITHM,
+            "training_data": {
+                "maps_included": maps_included,
+                "phases_included": phases_included,
+                "sample_count": len(samples),
+            },
             "maps_included": maps_included,
             "phases_included": phases_included,
             "sample_count": len(samples),
@@ -411,6 +430,20 @@ class TrainingService:
             )
         return warnings
 
+    @staticmethod
+    def _split_samples_by_match(
+        samples: list[TrainingSample],
+        validation_ratio: float = 0.2,
+    ) -> tuple[list[TrainingSample], list[TrainingSample]]:
+        match_ids = sorted({sample.match_id for sample in samples})
+        if len(match_ids) < 5:
+            return samples, []
+        validation_count = max(1, round(len(match_ids) * validation_ratio))
+        validation_ids = set(match_ids[-validation_count:])
+        train_samples = [sample for sample in samples if sample.match_id not in validation_ids]
+        validation_samples = [sample for sample in samples if sample.match_id in validation_ids]
+        return train_samples, validation_samples
+
     def _selected_maps(self, map_id: str | None) -> list[dict[str, Any]]:
         if map_id is not None:
             return [self.config_service.get_map(map_id)]
@@ -440,6 +473,7 @@ class TrainingService:
     @staticmethod
     def _metric_from_row(row: sqlite3.Row) -> ModelMetric:
         return ModelMetric(
+            split=row["split"],
             map_id=row["map_id"],
             current_phase=row["current_phase"],
             target_type=row["target_type"],
