@@ -41,6 +41,45 @@ def _seed_circle_training_samples(connection: sqlite3.Connection, match_count: i
     connection.commit()
 
 
+def _seed_feature_training_samples(connection: sqlite3.Connection) -> None:
+    repo = SQLiteRepository(connection)
+    repo.insert_or_ignore("tournaments", {"id": "tournament-1", "type": "tournament"})
+    samples = [
+        ("feature-01", 100000, 100000, 1000, 0),
+        ("feature-02", 110000, 100000, 1000, 0),
+        ("feature-03", 120000, 100000, 1000, 0),
+        ("feature-04", 130000, 100000, 1000, 0),
+        ("feature-05", 600000, 600000, -2000, 0),
+        ("feature-06", 610000, 600000, -2000, 0),
+    ]
+    for match_id, center_x, center_y, next_offset_x, next_offset_y in samples:
+        repo.insert_or_ignore(
+            "matches",
+            {
+                "match_id": match_id,
+                "tournament_id": "tournament-1",
+                "map_name": "Erangel_Main",
+            },
+        )
+        for phase, x, y, radius in (
+            (1, center_x, center_y, 400000),
+            (2, center_x + next_offset_x, center_y + next_offset_y, 230000),
+            (8, center_x + next_offset_x * 2, center_y + next_offset_y, 7700),
+        ):
+            repo.insert_or_ignore(
+                "circle_phases",
+                {
+                    "match_id": match_id,
+                    "phase": phase,
+                    "elapsed_time": phase * 60,
+                    "center_x": x,
+                    "center_y": y,
+                    "radius": radius,
+                },
+            )
+    connection.commit()
+
+
 def test_build_samples_pairs_current_next_and_final_circles(
     migrated_connection: sqlite3.Connection,
     tmp_path: Path,
@@ -75,7 +114,7 @@ def test_train_baseline_writes_model_run_metrics_and_artifact(
     assert Path(run.model_path).exists()
     payload = json.loads(Path(run.model_path).read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
-    assert payload["algorithm"] == "statistical_median_offset_v1"
+    assert payload["algorithm"] == "weighted_feature_offset_v1"
     assert payload["training_data"]["sample_count"] == 5
     assert payload["training_data"]["maps_included"] == ["erangel"]
     assert len(run.metrics) == 4
@@ -171,3 +210,30 @@ def test_train_baseline_uses_median_offset_to_reduce_outlier_impact(
         and group["target_type"] == "next"
     )
     assert next_group["offset_x"] == 100
+
+
+def test_train_baseline_writes_feature_model_groups(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    _seed_feature_training_samples(migrated_connection)
+    service = TrainingService(migrated_connection, ConfigService(Path("config")), tmp_path)
+
+    run = service.train_baseline("erangel")
+
+    payload = json.loads(Path(run.model_path).read_text(encoding="utf-8"))
+    feature_model = payload["feature_model"]
+    feature_groups = {
+        (
+            group["map_id"],
+            group["current_phase"],
+            group["target_type"],
+            group["cell_x"],
+            group["cell_y"],
+        ): group
+        for group in feature_model["groups"]
+    }
+    assert payload["algorithm"] == "weighted_feature_offset_v1"
+    assert feature_model["grid_size"] == 2
+    assert feature_groups[("erangel", 1, "next", 0, 0)]["offset_x"] == 1000
+    assert feature_groups[("erangel", 1, "next", 1, 1)]["offset_x"] == -2000

@@ -146,21 +146,6 @@ export function DataPreparation() {
           </SelectContent>
         </Select>
 
-        <Select value={String(phase)} onValueChange={(val) => setPhase(Number(val))}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="选择阶段" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
-                <SelectItem key={item} value={String(item)}>
-                  阶段 {item}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-
         <Button variant="outline" onClick={refreshOverview} className="sm:ml-auto">
           <RefreshCw data-icon="inline-start" />
           刷新状态
@@ -197,9 +182,31 @@ export function DataPreparation() {
               </Badge>
             )}
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground mt-2 flex-1">
-            基于已采集对局生成高危区域。当前可用样本约 {sampleCount.toLocaleString()} 条。
-            {latestHotspot && ` 本次生成 ${latestHotspot.tiles.length} 个热点网格。`}
+          <CardContent className="mt-2 flex flex-1 flex-col gap-4 text-sm text-muted-foreground">
+            <p>
+              基于已采集对局生成高危区域。当前可用样本约 {sampleCount.toLocaleString()} 条。
+              {latestHotspot && ` 本次生成 ${latestHotspot.tiles.length} 个热点网格。`}
+            </p>
+            <div className="flex flex-col gap-2 rounded-lg border border-border/80 bg-background/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-medium text-foreground">热力图阶段</p>
+                <p className="text-xs text-muted-foreground">只影响本卡片生成的历史热点数据。</p>
+              </div>
+              <Select value={String(phase)} onValueChange={(val) => setPhase(Number(val))}>
+                <SelectTrigger className="w-full sm:w-[160px]">
+                  <SelectValue placeholder="选择阶段" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((item) => (
+                      <SelectItem key={item} value={String(item)}>
+                        阶段 {item}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
           </CardContent>
           <CardFooter>
             <Button
@@ -244,6 +251,11 @@ export function DataPreparation() {
             {activeRun
               ? `最近模型 ${activeRun.id.slice(0, 14)} 使用 ${activeRun.sample_count.toLocaleString()} 条圈样本。`
               : "还没有完成的模型训练，预测会使用规则回退。"}
+            {activeRun && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                算法: {activeRun.algorithm}
+              </div>
+            )}
             {meanValidationError !== null && (
               <div className="mt-2 text-xs text-muted-foreground">
                 验证误差: {Math.round(meanValidationError).toLocaleString()} m

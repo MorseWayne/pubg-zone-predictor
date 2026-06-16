@@ -56,27 +56,61 @@ def _seed_model(
     connection: sqlite3.Connection,
     tmp_path: Path,
     groups: list[dict[str, object]],
+    *,
+    feature_groups: list[dict[str, object]] | None = None,
+    run_id: str = "model-test",
+    created_at: str = "2026-06-05T00:00:00+00:00",
+    validation_error: float | None = None,
 ) -> str:
-    run_id = "model-test"
-    artifact_path = tmp_path / f"{run_id}.json"
-    artifact_path.write_text(
-        json.dumps({"groups": groups}, ensure_ascii=False),
-        encoding="utf-8",
+    algorithm = (
+        "weighted_feature_offset_v1"
+        if feature_groups is not None
+        else "statistical_mean_offset_v1"
     )
+    artifact_path = tmp_path / f"{run_id}.json"
+    payload: dict[str, object] = {"groups": groups}
+    if feature_groups is not None:
+        payload.update(
+            {
+                "schema_version": 1,
+                "algorithm": "weighted_feature_offset_v1",
+                "feature_model": {
+                    "grid_size": 2,
+                    "groups": feature_groups,
+                },
+            }
+        )
+    artifact_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     repo = SQLiteRepository(connection)
     repo.insert_or_ignore(
         "model_runs",
         {
             "id": run_id,
-            "created_at": "2026-06-05T00:00:00+00:00",
+            "created_at": created_at,
             "maps_included": json.dumps(["erangel"]),
             "phases_included": json.dumps([1]),
             "sample_count": 5,
-            "algorithm": "statistical_mean_offset_v1",
+            "algorithm": algorithm,
             "model_path": str(artifact_path),
             "status": "completed",
         },
     )
+    if validation_error is not None:
+        for target_type in ("next", "final"):
+            repo.insert_or_ignore(
+                "model_metrics",
+                {
+                    "model_run_id": run_id,
+                    "split": "validation",
+                    "map_id": "erangel",
+                    "current_phase": 1,
+                    "target_type": target_type,
+                    "sample_count": 2,
+                    "mean_center_error": validation_error,
+                    "median_center_error": validation_error,
+                    "p90_center_error": validation_error,
+                },
+            )
     connection.commit()
     return run_id
 
@@ -254,6 +288,246 @@ def test_predict_clamps_model_circle_inside_current_circle(
     assert result.next_circle.source == "model_artifact"
     assert _distance(result.next_circle.center, Point(x=100000, y=100000)) <= 170000
     assert _distance(result.final_circle.center, Point(x=100000, y=100000)) <= 392300
+
+
+def test_predict_prefers_feature_model_group_over_baseline_group(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    run_id = _seed_model(
+        migrated_connection,
+        tmp_path,
+        [
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "offset_x": 1000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "final",
+                "offset_x": 3000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+        ],
+        feature_groups=[
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "cell_x": 0,
+                "cell_y": 0,
+                "offset_x": 5000,
+                "offset_y": 0,
+                "sample_count": 4,
+            }
+        ],
+    )
+    service = _service(migrated_connection, tmp_path)
+
+    result = service.predict(_input())
+
+    assert result.model_run_id == run_id
+    assert result.next_circle.source == "feature_model"
+    assert result.next_circle.center.x == pytest.approx(105000)
+    assert result.next_circle.center.y == pytest.approx(100000)
+    assert result.final_circle.source == "model_artifact"
+
+
+def test_predict_rule_explanation_treats_feature_model_as_model_source(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    _seed_model(
+        migrated_connection,
+        tmp_path,
+        [
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "offset_x": 1000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "final",
+                "offset_x": 3000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+        ],
+        feature_groups=[
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "cell_x": 0,
+                "cell_y": 0,
+                "offset_x": 5000,
+                "offset_y": 0,
+                "sample_count": 4,
+            },
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "final",
+                "cell_x": 0,
+                "cell_y": 0,
+                "offset_x": 7000,
+                "offset_y": 0,
+                "sample_count": 4,
+            },
+        ],
+    )
+    service = _service(migrated_connection, tmp_path)
+
+    result = service.predict(_input())
+
+    assert result.next_circle.source == "feature_model"
+    assert result.final_circle.source == "feature_model"
+    assert "使用训练模型 artifact" in result.explanation.text
+
+
+def test_predict_selects_completed_model_with_best_validation_error(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    better_run_id = _seed_model(
+        migrated_connection,
+        tmp_path,
+        [
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "offset_x": 1000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "final",
+                "offset_x": 3000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+        ],
+        run_id="model-better",
+        created_at="2026-06-05T00:00:00+00:00",
+        validation_error=100,
+    )
+    _seed_model(
+        migrated_connection,
+        tmp_path,
+        [
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "offset_x": 9000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "final",
+                "offset_x": 12000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+        ],
+        run_id="model-newer-worse",
+        created_at="2026-06-06T00:00:00+00:00",
+        validation_error=1000,
+    )
+    service = _service(migrated_connection, tmp_path)
+
+    result = service.predict(_input())
+
+    assert result.model_run_id == better_run_id
+    assert result.next_circle.center.x == pytest.approx(101000)
+
+
+def test_predict_skips_invalid_best_model_and_uses_next_valid_candidate(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    invalid_artifact_path = tmp_path / "model-invalid.json"
+    invalid_artifact_path.write_text(
+        json.dumps({"schema_version": 1, "algorithm": "unknown", "groups": []}),
+        encoding="utf-8",
+    )
+    repo = SQLiteRepository(migrated_connection)
+    repo.insert_or_ignore(
+        "model_runs",
+        {
+            "id": "model-invalid-best",
+            "created_at": "2026-06-07T00:00:00+00:00",
+            "maps_included": json.dumps(["erangel"]),
+            "phases_included": json.dumps([1]),
+            "sample_count": 5,
+            "algorithm": "unknown",
+            "model_path": str(invalid_artifact_path),
+            "status": "completed",
+        },
+    )
+    for target_type in ("next", "final"):
+        repo.insert_or_ignore(
+            "model_metrics",
+            {
+                "model_run_id": "model-invalid-best",
+                "split": "validation",
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": target_type,
+                "sample_count": 2,
+                "mean_center_error": 1,
+                "median_center_error": 1,
+                "p90_center_error": 1,
+            },
+        )
+    migrated_connection.commit()
+    valid_run_id = _seed_model(
+        migrated_connection,
+        tmp_path,
+        [
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "next",
+                "offset_x": 1000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+            {
+                "map_id": "erangel",
+                "current_phase": 1,
+                "target_type": "final",
+                "offset_x": 3000,
+                "offset_y": 0,
+                "sample_count": 5,
+            },
+        ],
+        run_id="model-valid-next-best",
+        created_at="2026-06-06T00:00:00+00:00",
+        validation_error=100,
+    )
+    service = _service(migrated_connection, tmp_path)
+
+    result = service.predict(_input())
+
+    assert result.model_run_id == valid_run_id
+    assert result.next_circle.source == "model_artifact"
 
 
 @pytest.mark.parametrize("strategy", ["edge", "center", "slow", "avoid_hotspots"])

@@ -16,7 +16,8 @@ from app.db.repository import SQLiteRepository
 from app.services.config_service import ConfigService
 
 ARTIFACT_SCHEMA_VERSION = 1
-ALGORITHM = "statistical_median_offset_v1"
+ALGORITHM = "weighted_feature_offset_v1"
+FEATURE_GRID_SIZE = 2
 MIN_TRAINING_SAMPLES = 5
 MIN_GROUP_SAMPLES = 3
 
@@ -76,6 +77,18 @@ class BaselineGroup:
     sample_count: int
 
 
+@dataclass(frozen=True)
+class FeatureGroup:
+    map_id: str
+    current_phase: int
+    target_type: str
+    cell_x: int
+    cell_y: int
+    offset_x: float
+    offset_y: float
+    sample_count: int
+
+
 @dataclass
 class TrainingService:
     connection: sqlite3.Connection
@@ -123,6 +136,7 @@ class TrainingService:
 
         train_samples, validation_samples = self._split_samples_by_match(samples)
         groups = self._fit_groups(train_samples)
+        feature_groups = self._fit_feature_groups(train_samples, selected_maps)
         metrics = self._evaluate(groups, train_samples, split="train")
         if validation_samples:
             metrics.extend(self._evaluate(groups, validation_samples, split="validation"))
@@ -135,6 +149,7 @@ class TrainingService:
             phases_included=phases_included,
             samples=samples,
             groups=groups,
+            feature_groups=feature_groups,
             warnings=warnings,
         )
 
@@ -294,6 +309,49 @@ class TrainingService:
             )
         return groups
 
+    def _fit_feature_groups(
+        self,
+        samples: list[TrainingSample],
+        selected_maps: list[dict[str, Any]],
+    ) -> list[FeatureGroup]:
+        map_configs = {str(map_config["map_id"]): map_config for map_config in selected_maps}
+        targets: dict[tuple[str, int, str, int, int], list[tuple[float, float]]] = defaultdict(list)
+        for sample in samples:
+            map_config = map_configs.get(sample.map_id)
+            if map_config is None:
+                continue
+            cell_x, cell_y = self._feature_cell(sample, map_config)
+            targets[(sample.map_id, sample.current_phase, "next", cell_x, cell_y)].append(
+                (
+                    sample.next_center_x - sample.current_center_x,
+                    sample.next_center_y - sample.current_center_y,
+                )
+            )
+            targets[(sample.map_id, sample.current_phase, "final", cell_x, cell_y)].append(
+                (
+                    sample.final_center_x - sample.current_center_x,
+                    sample.final_center_y - sample.current_center_y,
+                )
+            )
+
+        feature_groups: list[FeatureGroup] = []
+        for (map_id, current_phase, target_type, cell_x, cell_y), offsets in sorted(
+            targets.items()
+        ):
+            feature_groups.append(
+                FeatureGroup(
+                    map_id=map_id,
+                    current_phase=current_phase,
+                    target_type=target_type,
+                    cell_x=cell_x,
+                    cell_y=cell_y,
+                    offset_x=float(median(offset[0] for offset in offsets)),
+                    offset_y=float(median(offset[1] for offset in offsets)),
+                    sample_count=len(offsets),
+                )
+            )
+        return feature_groups
+
     def _evaluate(
         self,
         groups: list[BaselineGroup],
@@ -343,6 +401,7 @@ class TrainingService:
         phases_included: list[int],
         samples: list[TrainingSample],
         groups: list[BaselineGroup],
+        feature_groups: list[FeatureGroup],
         warnings: list[str],
     ) -> Path:
         payload = {
@@ -359,6 +418,22 @@ class TrainingService:
             "phases_included": phases_included,
             "sample_count": len(samples),
             "warnings": warnings,
+            "feature_model": {
+                "grid_size": FEATURE_GRID_SIZE,
+                "groups": [
+                    {
+                        "map_id": group.map_id,
+                        "current_phase": group.current_phase,
+                        "target_type": group.target_type,
+                        "cell_x": group.cell_x,
+                        "cell_y": group.cell_y,
+                        "offset_x": _round(group.offset_x),
+                        "offset_y": _round(group.offset_y),
+                        "sample_count": group.sample_count,
+                    }
+                    for group in feature_groups
+                ],
+            },
             "groups": [
                 {
                     "map_id": group.map_id,
@@ -448,6 +523,19 @@ class TrainingService:
         if map_id is not None:
             return [self.config_service.get_map(map_id)]
         return self.config_service.list_maps()
+
+    @staticmethod
+    def _feature_cell(sample: TrainingSample, map_config: dict[str, Any]) -> tuple[int, int]:
+        coordinate = map_config.get("coordinate", {})
+        min_x = float(coordinate.get("min_x", 0))
+        min_y = float(coordinate.get("min_y", 0))
+        max_x = float(coordinate.get("max_x", map_config.get("world_size", 1)))
+        max_y = float(coordinate.get("max_y", map_config.get("world_size", 1)))
+        normalized_x = (sample.current_center_x - min_x) / max(max_x - min_x, 1)
+        normalized_y = (sample.current_center_y - min_y) / max(max_y - min_y, 1)
+        cell_x = min(FEATURE_GRID_SIZE - 1, max(0, int(normalized_x * FEATURE_GRID_SIZE)))
+        cell_y = min(FEATURE_GRID_SIZE - 1, max(0, int(normalized_y * FEATURE_GRID_SIZE)))
+        return cell_x, cell_y
 
     @staticmethod
     def _sample_targets(sample: TrainingSample) -> dict[str, TargetPoint]:

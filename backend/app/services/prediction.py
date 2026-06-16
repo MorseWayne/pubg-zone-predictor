@@ -18,7 +18,11 @@ ROUTE_STRATEGIES = {"edge", "center", "slow", "avoid_hotspots"}
 DEFAULT_GRID_SIZE = 64
 TOP_HOTSPOT_TILE_COUNT = 5
 SUPPORTED_MODEL_SCHEMA_VERSION = 1
-SUPPORTED_MODEL_ALGORITHMS = {"statistical_mean_offset_v1", "statistical_median_offset_v1"}
+SUPPORTED_MODEL_ALGORITHMS = {
+    "statistical_mean_offset_v1",
+    "statistical_median_offset_v1",
+    "weighted_feature_offset_v1",
+}
 
 
 @dataclass(frozen=True)
@@ -120,9 +124,23 @@ class ModelGroup:
 
 
 @dataclass(frozen=True)
+class FeatureModelGroup:
+    map_id: str
+    current_phase: int
+    target_type: str
+    cell_x: int
+    cell_y: int
+    offset_x: float
+    offset_y: float
+    sample_count: int
+
+
+@dataclass(frozen=True)
 class LoadedModel:
     run_id: str
     groups: dict[tuple[str, int, str], ModelGroup]
+    feature_grid_size: int | None
+    feature_groups: dict[tuple[str, int, str, int, int], FeatureModelGroup]
 
 
 class ExplanationClient(Protocol):
@@ -268,22 +286,46 @@ class PredictionService:
     def _load_latest_model(self, map_id: str, warnings: list[str]) -> LoadedModel | None:
         rows = self.repo.fetch_all(
             """
-            SELECT id, maps_included, model_path
-            FROM model_runs
-            WHERE status = 'completed' AND model_path IS NOT NULL
-            ORDER BY created_at DESC, id DESC
+            SELECT mr.id, mr.maps_included, mr.model_path,
+                   AVG(mm.mean_center_error) AS validation_error
+            FROM model_runs mr
+            LEFT JOIN model_metrics mm
+              ON mm.model_run_id = mr.id
+             AND mm.split = 'validation'
+            WHERE mr.status = 'completed' AND mr.model_path IS NOT NULL
+            GROUP BY mr.id
+            ORDER BY
+                CASE WHEN validation_error IS NULL THEN 1 ELSE 0 END ASC,
+                validation_error ASC,
+                mr.created_at DESC,
+                mr.id DESC
             """
         )
-        selected_row = None
+        candidate_warnings: list[str] = []
+        found_candidate = False
         for row in rows:
             maps_included = _loads_list(row["maps_included"])
-            if map_id in maps_included:
-                selected_row = row
-                break
-        if selected_row is None:
+            if map_id not in maps_included:
+                continue
+            found_candidate = True
+            row_warnings: list[str] = []
+            loaded_model = self._load_model_from_row(row, row_warnings)
+            if loaded_model is not None:
+                return loaded_model
+            candidate_warnings.extend(row_warnings)
+        if not found_candidate:
             warnings.extend(["model_not_ready", "rule_baseline_used"])
             return None
+        warnings.extend(
+            _dedupe(candidate_warnings or ["model_artifact_unavailable", "rule_baseline_used"])
+        )
+        return None
 
+    def _load_model_from_row(
+        self,
+        selected_row: sqlite3.Row,
+        warnings: list[str],
+    ) -> LoadedModel | None:
         model_path = Path(selected_row["model_path"])
         if not model_path.is_absolute():
             model_path = self.model_dir / model_path
@@ -321,7 +363,49 @@ class PredictionService:
                 warnings.append("model_group_invalid")
                 continue
             groups[(group.map_id, group.current_phase, group.target_type)] = group
-        return LoadedModel(run_id=selected_row["id"], groups=groups)
+
+        feature_grid_size = None
+        feature_groups: dict[tuple[str, int, str, int, int], FeatureModelGroup] = {}
+        feature_model = payload.get("feature_model")
+        if isinstance(feature_model, dict):
+            try:
+                feature_grid_size = int(feature_model.get("grid_size", 0))
+            except (TypeError, ValueError):
+                feature_grid_size = None
+            feature_groups_payload = feature_model.get("groups")
+            if feature_grid_size and isinstance(feature_groups_payload, list):
+                for item in feature_groups_payload:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        feature_group = FeatureModelGroup(
+                            map_id=str(item["map_id"]),
+                            current_phase=int(item["current_phase"]),
+                            target_type=str(item["target_type"]),
+                            cell_x=int(item["cell_x"]),
+                            cell_y=int(item["cell_y"]),
+                            offset_x=float(item["offset_x"]),
+                            offset_y=float(item["offset_y"]),
+                            sample_count=int(item.get("sample_count", 0)),
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        warnings.append("feature_model_group_invalid")
+                        continue
+                    feature_groups[
+                        (
+                            feature_group.map_id,
+                            feature_group.current_phase,
+                            feature_group.target_type,
+                            feature_group.cell_x,
+                            feature_group.cell_y,
+                        )
+                    ] = feature_group
+        return LoadedModel(
+            run_id=selected_row["id"],
+            groups=groups,
+            feature_grid_size=feature_grid_size,
+            feature_groups=feature_groups,
+        )
 
     def _predict_circle(
         self,
@@ -339,10 +423,37 @@ class PredictionService:
         warnings: list[str],
     ) -> PredictedCircle:
         group = None
+        feature_group = None
         if loaded_model is not None:
+            feature_group = self._feature_group_for_point(
+                transformer=transformer,
+                loaded_model=loaded_model,
+                map_id=map_id,
+                current_phase=current_phase,
+                target_type=target_type,
+                point=current_center,
+            )
             group = loaded_model.groups.get((map_id, current_phase, target_type))
-            if group is None:
+            if feature_group is None and group is None:
                 warnings.extend([f"model_group_missing:{target_type}", "rule_baseline_used"])
+        if feature_group is not None:
+            center = self._constrain_target_circle_center(
+                transformer,
+                current_center,
+                current_radius,
+                Point(
+                    x=current_center.x + feature_group.offset_x,
+                    y=current_center.y + feature_group.offset_y,
+                ),
+                target_radius,
+            )
+            return PredictedCircle(
+                phase=target_phase,
+                center=center,
+                radius=target_radius,
+                source="feature_model",
+                sample_count=feature_group.sample_count,
+            )
         if group is not None:
             center = self._constrain_target_circle_center(
                 transformer,
@@ -637,7 +748,8 @@ class PredictionService:
         )
         source_text = (
             "使用训练模型 artifact 的历史偏移。"
-            if next_circle.source == "model_artifact" or final_circle.source == "model_artifact"
+            if next_circle.source in {"feature_model", "model_artifact"}
+            or final_circle.source in {"feature_model", "model_artifact"}
             else "未找到可用模型，使用规则基线兜底。"
         )
         strategy_text = {
@@ -726,6 +838,31 @@ class PredictionService:
     def _clamp_world_point(transformer: CoordinateTransformer, point: Point) -> Point:
         normalized = transformer.world_to_normalized(point, clamp=True)
         return transformer.normalized_to_world(normalized, clamp=True)
+
+    @staticmethod
+    def _feature_group_for_point(
+        *,
+        transformer: CoordinateTransformer,
+        loaded_model: LoadedModel,
+        map_id: str,
+        current_phase: int,
+        target_type: str,
+        point: Point,
+    ) -> FeatureModelGroup | None:
+        if not loaded_model.feature_grid_size:
+            return None
+        normalized = transformer.world_to_normalized(point, clamp=True)
+        cell_x = min(
+            loaded_model.feature_grid_size - 1,
+            max(0, int(normalized.x * loaded_model.feature_grid_size)),
+        )
+        cell_y = min(
+            loaded_model.feature_grid_size - 1,
+            max(0, int(normalized.y * loaded_model.feature_grid_size)),
+        )
+        return loaded_model.feature_groups.get(
+            (map_id, current_phase, target_type, cell_x, cell_y)
+        )
 
     @staticmethod
     def _constrain_target_circle_center(
