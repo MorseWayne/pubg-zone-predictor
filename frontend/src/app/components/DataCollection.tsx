@@ -206,7 +206,9 @@ function matchSortValue(match: IngestMatch, sortKey: MatchSortKey): string | num
 
 export function DataCollection() {
   const [initialCollectionState] = useState(readPersistedCollectionState);
-  const [limit, setLimit] = useState(initialCollectionState.limit ?? 20);
+  const [limit, setLimit] = useState(
+    initialCollectionState.limit ?? (initialCollectionState.sourceMode === "player" ? 50 : 20),
+  );
   const [sourceMode, setSourceMode] = useState<SourceMode>(initialCollectionState.sourceMode ?? "sample");
   const [playerQuery, setPlayerQuery] = useState(initialCollectionState.playerQuery ?? "");
   const [selectedPlayerNames, setSelectedPlayerNames] = useState<string[]>(
@@ -713,7 +715,9 @@ export function DataCollection() {
                 type="single"
                 value={sourceMode}
                 onValueChange={(value) => {
-                  if (value) setSourceMode(value as SourceMode);
+                  if (!value) return;
+                  setSourceMode(value as SourceMode);
+                  if (value === "player") setLimit((current) => Math.max(current, 50));
                 }}
                 className="grid grid-cols-2 gap-2"
                 variant="outline"
@@ -820,6 +824,9 @@ export function DataCollection() {
                 value={limit}
                 onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
               />
+              {sourceMode === "player" && (
+                <div className="text-xs text-muted-foreground">团队看板会从玩家最近 50 场四排里筛队友；这里建议采集 50 场。</div>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">

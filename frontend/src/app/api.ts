@@ -142,6 +142,46 @@ export type PlayerSearchResult = {
   recent_match_count: number;
 };
 
+export type LocalPlayer = {
+  player_id: string;
+  player_name: string | null;
+  match_count: number;
+  latest_match_at: string | null;
+};
+
+export type TeamDashboardPlayer = {
+  player_id: string;
+  player_name: string | null;
+  match_count: number;
+  wins: number;
+  top3: number;
+  avg_rank: number | null;
+  kills: number;
+  knocks: number;
+  deaths: number;
+  damage: number;
+};
+
+export type TeamDashboardMatch = {
+  match_id: string;
+  map_name: string;
+  game_mode: string | null;
+  created_at: string | null;
+  duration: number | null;
+  team_id: string;
+  team_rank: number | null;
+  players: TeamDashboardPlayer[];
+  kills: number;
+  damage: number;
+};
+
+export type TeamDashboard = {
+  primary_player: LocalPlayer;
+  teammates: TeamDashboardPlayer[];
+  selected_players: TeamDashboardPlayer[];
+  matches: TeamDashboardMatch[];
+};
+
 export type HotspotResult = {
   map_id: string;
   phase: number;
@@ -342,6 +382,18 @@ export const api = {
         query: params.query,
       })}`,
     ),
+  listLocalPlayers: async (limit = 50) =>
+    apiRequest<{ players: LocalPlayer[] }>(`/api/ingest/players/local${toQuery({ limit })}`),
+  getTeamDashboard: async (payload: {
+    player_id: string;
+    teammate_ids: string[];
+    match_limit: number;
+    teammate_candidate_limit: number;
+  }) =>
+    apiRequest<TeamDashboard>("/api/ingest/players/team-dashboard", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   listMatches: async (limit = 50) =>
     apiRequest<{ matches: IngestMatch[] }>(`/api/ingest/matches${toQuery({ limit })}`),
   getMatchAnalysis: async (matchId: string) =>

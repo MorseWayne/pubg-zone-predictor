@@ -28,6 +28,12 @@ DEFAULT_SAMPLE_PARSE_PROFILE = PARSE_PROFILE_HOTSPOT_LIGHT
 DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS = 30
 ANALYSIS_PARSE_PROFILE = PARSE_PROFILE_FULL
 ANALYSIS_POSITION_INTERVAL_SECONDS = 5
+MAX_TEAM_DASHBOARD_TEAMMATES = 3
+TEAMMATE_CANDIDATE_LIMIT = 50
+TEAM_DASHBOARD_MATCH_LIMIT = 20
+ELIMINATION_EVENT_TYPES = {"LogPlayerKill", "LogPlayerKillV2"}
+KNOCKDOWN_EVENT_TYPE = "LogPlayerMakeGroggy"
+DAMAGE_EVENT_TYPE = "LogPlayerTakeDamage"
 EXCLUDED_SAMPLE_MATCH_TYPES = {"custom", "competitive"}
 logger = logging.getLogger(__name__)
 
@@ -131,6 +137,50 @@ class MatchAnalysis:
 
 
 @dataclass(frozen=True)
+class LocalPlayer:
+    player_id: str
+    player_name: str | None
+    match_count: int
+    latest_match_at: str | None
+
+
+@dataclass(frozen=True)
+class TeamDashboardPlayer:
+    player_id: str
+    player_name: str | None
+    match_count: int
+    wins: int
+    top3: int
+    avg_rank: float | None
+    kills: int
+    knocks: int
+    deaths: int
+    damage: float
+
+
+@dataclass(frozen=True)
+class TeamDashboardMatch:
+    match_id: str
+    map_name: str
+    game_mode: str | None
+    created_at: str | None
+    duration: int | None
+    team_id: str
+    team_rank: int | None
+    players: list[TeamDashboardPlayer]
+    kills: int
+    damage: float
+
+
+@dataclass(frozen=True)
+class TeamDashboard:
+    primary_player: LocalPlayer
+    teammates: list[TeamDashboardPlayer]
+    selected_players: list[TeamDashboardPlayer]
+    matches: list[TeamDashboardMatch]
+
+
+@dataclass(frozen=True)
 class DeleteMatchResult:
     match_id: str
     deleted: bool
@@ -197,6 +247,473 @@ class IngestService:
             (limit,),
         )
         return [self._match_asset(row) for row in rows]
+
+    def list_local_players(self, *, limit: int = 50) -> list[LocalPlayer]:
+        rows = self.repo.fetch_all(
+            """
+            SELECT
+                mr.player_id,
+                COALESCE(
+                    (
+                        SELECT mr2.player_name
+                        FROM match_rosters mr2
+                        JOIN matches m2 ON m2.match_id = mr2.match_id
+                        WHERE mr2.player_id = mr.player_id
+                            AND mr2.player_name IS NOT NULL
+                        ORDER BY COALESCE(m2.created_at, '') DESC, mr2.match_id DESC
+                        LIMIT 1
+                    ),
+                    mr.player_id
+                ) AS player_name,
+                COUNT(DISTINCT mr.match_id) AS match_count,
+                MAX(m.created_at) AS latest_match_at
+            FROM match_rosters mr
+            JOIN matches m ON m.match_id = mr.match_id
+            WHERE mr.player_id != ''
+            GROUP BY mr.player_id
+            ORDER BY COALESCE(latest_match_at, '') DESC, match_count DESC, mr.player_id
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [self._local_player(row) for row in rows]
+
+    def get_team_dashboard(
+        self,
+        player_id: str,
+        *,
+        teammate_ids: list[str] | None = None,
+        match_limit: int = TEAM_DASHBOARD_MATCH_LIMIT,
+        teammate_candidate_limit: int = TEAMMATE_CANDIDATE_LIMIT,
+    ) -> TeamDashboard:
+        primary_player = self._get_local_player(player_id)
+        teammates = self._team_dashboard_teammates(
+            player_id,
+            match_limit=teammate_candidate_limit,
+        )
+        selected_teammate_ids = self._normalize_team_dashboard_teammates(
+            teammate_ids,
+            player_id,
+        )
+        if not selected_teammate_ids:
+            selected_teammate_ids = [
+                teammate.player_id
+                for teammate in teammates[:MAX_TEAM_DASHBOARD_TEAMMATES]
+            ]
+        selected_ids = [player_id, *selected_teammate_ids[:MAX_TEAM_DASHBOARD_TEAMMATES]]
+        selected_players = self._team_dashboard_player_stats(
+            player_id,
+            selected_ids,
+            match_limit=match_limit,
+            teammate_ids=selected_teammate_ids,
+            candidate_limit=teammate_candidate_limit,
+        )
+        matches = self._team_dashboard_matches(
+            player_id,
+            selected_ids,
+            match_limit=match_limit,
+            teammate_ids=selected_teammate_ids,
+            candidate_limit=teammate_candidate_limit,
+        )
+        return TeamDashboard(
+            primary_player=primary_player,
+            teammates=teammates,
+            selected_players=selected_players,
+            matches=matches,
+        )
+
+    def _team_dashboard_teammates(
+        self,
+        player_id: str,
+        *,
+        match_limit: int,
+    ) -> list[TeamDashboardPlayer]:
+        rows = self.repo.fetch_all(
+            """
+            WITH primary_matches AS (
+                SELECT m.match_id, mr.team_id, m.created_at
+                FROM match_rosters mr
+                JOIN matches m ON m.match_id = mr.match_id
+                WHERE mr.player_id = ?
+                    AND m.game_mode IN ('squad', 'squad-fpp')
+                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                LIMIT ?
+            )
+            SELECT tr.player_id
+            FROM primary_matches pm
+            JOIN match_rosters tr
+                ON tr.match_id = pm.match_id
+                AND tr.team_id = pm.team_id
+            WHERE tr.player_id != ?
+            GROUP BY tr.player_id
+            ORDER BY COUNT(*) DESC, COALESCE(MAX(pm.created_at), '') DESC, tr.player_id
+            LIMIT ?
+            """,
+            (
+                player_id,
+                match_limit,
+                player_id,
+                match_limit,
+            ),
+        )
+        teammate_ids = [row["player_id"] for row in rows]
+        stats = self._team_dashboard_player_stats(
+            player_id,
+            teammate_ids,
+            match_limit=match_limit,
+            teammate_ids=[],
+            candidate_limit=match_limit,
+        )
+        by_id = {player.player_id: player for player in stats}
+        return [by_id[player_id] for player_id in teammate_ids if player_id in by_id]
+
+    def _team_dashboard_player_stats(
+        self,
+        player_id: str,
+        player_ids: list[str],
+        *,
+        match_limit: int,
+        teammate_ids: list[str],
+        candidate_limit: int,
+    ) -> list[TeamDashboardPlayer]:
+        if not player_ids:
+            return []
+        placeholders = ", ".join("?" for _ in player_ids)
+        teammate_placeholders = ", ".join("?" for _ in teammate_ids)
+        teammate_filter = (
+            f"""
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM match_rosters selected_teammate
+                    WHERE selected_teammate.match_id = primary_matches.match_id
+                        AND selected_teammate.team_id = primary_matches.team_id
+                        AND selected_teammate.player_id IN ({teammate_placeholders})
+                )
+            """
+            if teammate_ids
+            else ""
+        )
+        rows = self.repo.fetch_all(
+            f"""
+            WITH primary_matches AS (
+                SELECT m.match_id, mr.team_id, m.created_at
+                FROM match_rosters mr
+                JOIN matches m ON m.match_id = mr.match_id
+                WHERE mr.player_id = ?
+                    AND m.game_mode IN ('squad', 'squad-fpp')
+                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                LIMIT ?
+            ),
+            stat_matches AS (
+                SELECT primary_matches.match_id, primary_matches.team_id
+                FROM primary_matches
+                {teammate_filter}
+                ORDER BY
+                    COALESCE(primary_matches.created_at, '') DESC,
+                    primary_matches.match_id DESC
+                LIMIT ?
+            ),
+            kills AS (
+                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS kills
+                FROM player_life_events
+                WHERE event_type IN (?, ?)
+                GROUP BY match_id, actor_player_id
+            ),
+            knocks AS (
+                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS knocks
+                FROM player_life_events
+                WHERE event_type = ?
+                GROUP BY match_id, actor_player_id
+            ),
+            deaths AS (
+                SELECT match_id, victim_player_id AS player_id, COUNT(*) AS deaths
+                FROM player_life_events
+                WHERE event_type IN (?, ?)
+                GROUP BY match_id, victim_player_id
+            ),
+            damage AS (
+                SELECT match_id, actor_player_id AS player_id, SUM(damage) AS damage
+                FROM player_life_events
+                WHERE event_type = ?
+                    AND damage IS NOT NULL
+                GROUP BY match_id, actor_player_id
+            )
+            SELECT
+                tr.player_id,
+                COALESCE(MAX(tr.player_name), tr.player_id) AS player_name,
+                COUNT(DISTINCT tr.match_id) AS match_count,
+                SUM(CASE WHEN mt.team_rank = 1 THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN mt.team_rank <= 3 THEN 1 ELSE 0 END) AS top3,
+                AVG(mt.team_rank) AS avg_rank,
+                COALESCE(SUM(kills.kills), 0) AS kills,
+                COALESCE(SUM(knocks.knocks), 0) AS knocks,
+                COALESCE(SUM(deaths.deaths), 0) AS deaths,
+                COALESCE(SUM(damage.damage), 0) AS damage
+            FROM stat_matches pm
+            JOIN match_rosters tr
+                ON tr.match_id = pm.match_id
+                AND tr.team_id = pm.team_id
+            LEFT JOIN match_teams mt
+                ON mt.match_id = pm.match_id
+                AND mt.team_id = pm.team_id
+            LEFT JOIN kills
+                ON kills.match_id = tr.match_id
+                AND kills.player_id = tr.player_id
+            LEFT JOIN knocks
+                ON knocks.match_id = tr.match_id
+                AND knocks.player_id = tr.player_id
+            LEFT JOIN deaths
+                ON deaths.match_id = tr.match_id
+                AND deaths.player_id = tr.player_id
+            LEFT JOIN damage
+                ON damage.match_id = tr.match_id
+                AND damage.player_id = tr.player_id
+            WHERE tr.player_id IN ({placeholders})
+            GROUP BY tr.player_id
+            """,
+            (
+                player_id,
+                candidate_limit,
+                *teammate_ids,
+                match_limit,
+                *sorted(ELIMINATION_EVENT_TYPES),
+                KNOCKDOWN_EVENT_TYPE,
+                *sorted(ELIMINATION_EVENT_TYPES),
+                DAMAGE_EVENT_TYPE,
+                *player_ids,
+            ),
+        )
+        by_id = {row["player_id"]: self._dashboard_player(row) for row in rows}
+        return [
+            by_id.get(next_player_id) or self._empty_dashboard_player(next_player_id)
+            for next_player_id in player_ids
+        ]
+
+    def _team_dashboard_matches(
+        self,
+        player_id: str,
+        player_ids: list[str],
+        *,
+        match_limit: int,
+        teammate_ids: list[str],
+        candidate_limit: int,
+    ) -> list[TeamDashboardMatch]:
+        if not player_ids:
+            return []
+        placeholders = ", ".join("?" for _ in player_ids)
+        teammate_placeholders = ", ".join("?" for _ in teammate_ids)
+        teammate_filter = (
+            f"""
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM match_rosters selected_teammate
+                    WHERE selected_teammate.match_id = primary_matches.match_id
+                        AND selected_teammate.team_id = primary_matches.team_id
+                        AND selected_teammate.player_id IN ({teammate_placeholders})
+                )
+            """
+            if teammate_ids
+            else ""
+        )
+        rows = self.repo.fetch_all(
+            f"""
+            WITH primary_matches AS (
+                SELECT m.match_id, mr.team_id, m.created_at
+                FROM match_rosters mr
+                JOIN matches m ON m.match_id = mr.match_id
+                WHERE mr.player_id = ?
+                    AND m.game_mode IN ('squad', 'squad-fpp')
+                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                LIMIT ?
+            ),
+            stat_matches AS (
+                SELECT primary_matches.match_id, primary_matches.team_id
+                FROM primary_matches
+                {teammate_filter}
+                ORDER BY
+                    COALESCE(primary_matches.created_at, '') DESC,
+                    primary_matches.match_id DESC
+                LIMIT ?
+            ),
+            kills AS (
+                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS kills
+                FROM player_life_events
+                WHERE event_type IN (?, ?)
+                GROUP BY match_id, actor_player_id
+            ),
+            knocks AS (
+                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS knocks
+                FROM player_life_events
+                WHERE event_type = ?
+                GROUP BY match_id, actor_player_id
+            ),
+            deaths AS (
+                SELECT match_id, victim_player_id AS player_id, COUNT(*) AS deaths
+                FROM player_life_events
+                WHERE event_type IN (?, ?)
+                GROUP BY match_id, victim_player_id
+            ),
+            damage AS (
+                SELECT match_id, actor_player_id AS player_id, SUM(damage) AS damage
+                FROM player_life_events
+                WHERE event_type = ?
+                    AND damage IS NOT NULL
+                GROUP BY match_id, actor_player_id
+            )
+            SELECT
+                m.match_id,
+                m.map_name,
+                m.game_mode,
+                m.created_at,
+                m.duration,
+                pm.team_id,
+                mt.team_rank,
+                tr.player_id,
+                tr.player_name,
+                COALESCE(kills.kills, 0) AS kills,
+                COALESCE(knocks.knocks, 0) AS knocks,
+                COALESCE(deaths.deaths, 0) AS deaths,
+                COALESCE(damage.damage, 0) AS damage
+            FROM stat_matches pm
+            JOIN matches m ON m.match_id = pm.match_id
+            LEFT JOIN match_teams mt
+                ON mt.match_id = pm.match_id
+                AND mt.team_id = pm.team_id
+            JOIN match_rosters tr
+                ON tr.match_id = pm.match_id
+                AND tr.team_id = pm.team_id
+            LEFT JOIN kills
+                ON kills.match_id = tr.match_id
+                AND kills.player_id = tr.player_id
+            LEFT JOIN knocks
+                ON knocks.match_id = tr.match_id
+                AND knocks.player_id = tr.player_id
+            LEFT JOIN deaths
+                ON deaths.match_id = tr.match_id
+                AND deaths.player_id = tr.player_id
+            LEFT JOIN damage
+                ON damage.match_id = tr.match_id
+                AND damage.player_id = tr.player_id
+            WHERE tr.player_id IN ({placeholders})
+            ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC, tr.player_id
+            """,
+            (
+                player_id,
+                candidate_limit,
+                *teammate_ids,
+                match_limit,
+                *sorted(ELIMINATION_EVENT_TYPES),
+                KNOCKDOWN_EVENT_TYPE,
+                *sorted(ELIMINATION_EVENT_TYPES),
+                DAMAGE_EVENT_TYPE,
+                *player_ids,
+            ),
+        )
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            match_id = row["match_id"]
+            if match_id not in grouped:
+                grouped[match_id] = {
+                    "map_name": row["map_name"],
+                    "game_mode": row["game_mode"],
+                    "created_at": row["created_at"],
+                    "duration": row["duration"],
+                    "team_id": row["team_id"],
+                    "team_rank": row["team_rank"],
+                    "players": [],
+                }
+            team_rank = row["team_rank"]
+            grouped[match_id]["players"].append(
+                TeamDashboardPlayer(
+                    player_id=row["player_id"],
+                    player_name=row["player_name"] or row["player_id"],
+                    match_count=1,
+                    wins=1 if team_rank == 1 else 0,
+                    top3=1 if team_rank is not None and team_rank <= 3 else 0,
+                    avg_rank=float(team_rank) if team_rank is not None else None,
+                    kills=int(row["kills"]),
+                    knocks=int(row["knocks"]),
+                    deaths=int(row["deaths"]),
+                    damage=float(row["damage"]),
+                )
+            )
+        matches = []
+        for match_id, data in grouped.items():
+            players = data["players"]
+            matches.append(
+                TeamDashboardMatch(
+                    match_id=match_id,
+                    map_name=data["map_name"],
+                    game_mode=data["game_mode"],
+                    created_at=data["created_at"],
+                    duration=data["duration"],
+                    team_id=data["team_id"],
+                    team_rank=data["team_rank"],
+                    players=players,
+                    kills=sum(player.kills for player in players),
+                    damage=sum(player.damage for player in players),
+                )
+            )
+        return matches
+
+    def _get_local_player(self, player_id: str) -> LocalPlayer:
+        row = self.repo.fetch_one(
+            """
+            SELECT
+                mr.player_id,
+                COALESCE(MAX(mr.player_name), mr.player_id) AS player_name,
+                COUNT(DISTINCT mr.match_id) AS match_count,
+                MAX(m.created_at) AS latest_match_at
+            FROM match_rosters mr
+            JOIN matches m ON m.match_id = mr.match_id
+            WHERE mr.player_id = ?
+            GROUP BY mr.player_id
+            """,
+            (player_id,),
+        )
+        if row is None:
+            raise AppError(
+                code="INGEST_PLAYER_NOT_FOUND",
+                message=f"player '{player_id}' was not found in local match data",
+                status_code=404,
+                details={"player_id": player_id},
+            )
+        return self._local_player(row)
+
+    def _empty_dashboard_player(self, player_id: str) -> TeamDashboardPlayer:
+        row = self.repo.fetch_one(
+            """
+            SELECT COALESCE(MAX(player_name), ?) AS player_name
+            FROM match_rosters
+            WHERE player_id = ?
+            """,
+            (player_id, player_id),
+        )
+        return TeamDashboardPlayer(
+            player_id=player_id,
+            player_name=row["player_name"] if row else player_id,
+            match_count=0,
+            wins=0,
+            top3=0,
+            avg_rank=None,
+            kills=0,
+            knocks=0,
+            deaths=0,
+            damage=0.0,
+        )
+
+    @staticmethod
+    def _normalize_team_dashboard_teammates(
+        teammate_ids: list[str] | None,
+        primary_player_id: str,
+    ) -> list[str]:
+        selected: list[str] = []
+        for player_id in teammate_ids or []:
+            value = player_id.strip()
+            if not value or value == primary_player_id or value in selected:
+                continue
+            selected.append(value)
+        return selected[:MAX_TEAM_DASHBOARD_TEAMMATES]
 
     def get_match_analysis(self, match_id: str) -> MatchAnalysis:
         self._ensure_match_analysis_data(match_id)
@@ -1277,6 +1794,31 @@ class IngestService:
             if isinstance(attributes, dict) and attributes.get("URL"):
                 return attributes["URL"]
         return None
+
+    @staticmethod
+    def _local_player(row: sqlite3.Row) -> LocalPlayer:
+        return LocalPlayer(
+            player_id=row["player_id"],
+            player_name=row["player_name"],
+            match_count=int(row["match_count"]),
+            latest_match_at=row["latest_match_at"],
+        )
+
+    @staticmethod
+    def _dashboard_player(row: sqlite3.Row) -> TeamDashboardPlayer:
+        avg_rank = row["avg_rank"]
+        return TeamDashboardPlayer(
+            player_id=row["player_id"],
+            player_name=row["player_name"],
+            match_count=int(row["match_count"]),
+            wins=int(row["wins"]),
+            top3=int(row["top3"]),
+            avg_rank=float(avg_rank) if avg_rank is not None else None,
+            kills=int(row["kills"]),
+            knocks=int(row["knocks"]),
+            deaths=int(row["deaths"]),
+            damage=float(row["damage"]),
+        )
 
     @staticmethod
     def _match_asset(row: sqlite3.Row) -> IngestMatchAsset:

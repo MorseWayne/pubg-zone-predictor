@@ -11,11 +11,15 @@ from app.services.ingest import (
     DeleteMatchResult,
     IngestJobResult,
     IngestMatchAsset,
+    LocalPlayer,
     MatchAnalysis,
     MatchAnalysisCircle,
     MatchAnalysisLifeEvent,
     MatchAnalysisPlayer,
     MatchAnalysisPosition,
+    TeamDashboard,
+    TeamDashboardMatch,
+    TeamDashboardPlayer,
 )
 from fastapi.testclient import TestClient
 
@@ -240,6 +244,78 @@ class FakeIngestService:
             )
         ]
 
+    def list_local_players(self, *, limit: int) -> list[LocalPlayer]:
+        assert limit == 10
+        return [
+            LocalPlayer(
+                player_id="account.1",
+                player_name="PlayerOne",
+                match_count=3,
+                latest_match_at="2026-06-05T00:00:00+00:00",
+            )
+        ]
+
+    def get_team_dashboard(
+        self,
+        player_id: str,
+        *,
+        teammate_ids: list[str],
+        match_limit: int,
+        teammate_candidate_limit: int,
+    ) -> TeamDashboard:
+        assert player_id == "account.1"
+        assert teammate_ids == ["account.2"]
+        assert match_limit == 12
+        assert teammate_candidate_limit == 50
+        primary = TeamDashboardPlayer(
+            player_id="account.1",
+            player_name="PlayerOne",
+            match_count=2,
+            wins=1,
+            top3=1,
+            avg_rank=2.5,
+            kills=4,
+            knocks=3,
+            deaths=1,
+            damage=512.5,
+        )
+        teammate = TeamDashboardPlayer(
+            player_id="account.2",
+            player_name="PlayerTwo",
+            match_count=2,
+            wins=1,
+            top3=1,
+            avg_rank=2.5,
+            kills=2,
+            knocks=1,
+            deaths=1,
+            damage=320.0,
+        )
+        return TeamDashboard(
+            primary_player=LocalPlayer(
+                player_id="account.1",
+                player_name="PlayerOne",
+                match_count=3,
+                latest_match_at="2026-06-05T00:00:00+00:00",
+            ),
+            teammates=[teammate],
+            selected_players=[primary, teammate],
+            matches=[
+                TeamDashboardMatch(
+                    match_id="match-1",
+                    map_name="Erangel",
+                    game_mode="squad",
+                    created_at="2026-06-05T00:00:00+00:00",
+                    duration=1800,
+                    team_id="team-1",
+                    team_rank=1,
+                    players=[primary, teammate],
+                    kills=6,
+                    damage=832.5,
+                )
+            ],
+        )
+
     def get_match_analysis(self, match_id: str) -> MatchAnalysis:
         assert match_id == "match-1"
         return MatchAnalysis(
@@ -432,6 +508,54 @@ def test_ingest_player_matches_api_returns_job_status() -> None:
         "players:steam:squad:names=PlayerOne,PlayerTwo:max=8:"
         "profile=hotspot_light:interval=30"
     )
+
+
+def test_list_local_players_api_returns_local_candidates() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.get("/api/ingest/players/local?limit=10")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["players"] == [
+        {
+            "player_id": "account.1",
+            "player_name": "PlayerOne",
+            "match_count": 3,
+            "latest_match_at": "2026-06-05T00:00:00+00:00",
+        }
+    ]
+
+
+def test_team_dashboard_api_returns_selected_teammate_analysis() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/ingest/players/team-dashboard",
+            json={
+                "player_id": "account.1",
+                "teammate_ids": ["account.2"],
+                "match_limit": 12,
+                "teammate_candidate_limit": 50,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["primary_player"]["player_name"] == "PlayerOne"
+    assert [player["player_name"] for player in body["selected_players"]] == [
+        "PlayerOne",
+        "PlayerTwo",
+    ]
+    assert body["selected_players"][0]["kills"] == 4
+    assert body["matches"][0]["kills"] == 6
+    assert body["matches"][0]["damage"] == 832.5
 
 
 def test_search_players_api_returns_match_candidates() -> None:

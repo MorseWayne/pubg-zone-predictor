@@ -18,7 +18,11 @@ from app.services.ingest import (
     IngestJobResult,
     IngestMatchAsset,
     IngestService,
+    LocalPlayer,
     MatchAnalysis,
+    TeamDashboard,
+    TeamDashboardMatch,
+    TeamDashboardPlayer,
 )
 from app.services.pubg_api import PubgApiClient
 
@@ -75,7 +79,7 @@ class PlayerIngestRequest(BaseModel):
     platform: str = Field(default="steam", pattern=r"^[a-z0-9-]+$")
     player_names: list[str] = Field(min_length=1, max_length=10)
     game_mode: str = Field(default="squad", pattern=r"^[a-z0-9-]+$")
-    max_matches_per_player: int = Field(default=20, ge=1, le=100)
+    max_matches_per_player: int = Field(default=50, ge=1, le=100)
     parse_profile: str = Field(
         default=DEFAULT_SAMPLE_PARSE_PROFILE,
         pattern=r"^(full|hotspot_light|zone_only)$",
@@ -89,6 +93,13 @@ class PlayerIngestRequest(BaseModel):
 
 class DeleteMatchesRequest(BaseModel):
     match_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class TeamDashboardRequest(BaseModel):
+    player_id: str = Field(min_length=1, max_length=80)
+    teammate_ids: list[str] = Field(default_factory=list, max_length=3)
+    match_limit: int = Field(default=20, ge=1, le=100)
+    teammate_candidate_limit: int = Field(default=50, ge=1, le=100)
 
 
 class BatchJobsRequest(BaseModel):
@@ -250,6 +261,34 @@ def ingest_player_matches(
     return _job_response(job)
 
 
+@router.get("/players/local")
+def list_local_players(
+    ingest_service: IngestServiceDep,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, object]:
+    return {
+        "players": [
+            _local_player_response(player)
+            for player in ingest_service.list_local_players(limit=limit)
+        ]
+    }
+
+
+@router.post("/players/team-dashboard")
+def get_team_dashboard(
+    request: TeamDashboardRequest,
+    ingest_service: IngestServiceDep,
+) -> dict[str, object]:
+    return _team_dashboard_response(
+        ingest_service.get_team_dashboard(
+            request.player_id,
+            teammate_ids=request.teammate_ids,
+            match_limit=request.match_limit,
+            teammate_candidate_limit=request.teammate_candidate_limit,
+        )
+    )
+
+
 @router.get("/players/search")
 def search_players(
     pubg_client: PubgClientDep,
@@ -377,6 +416,63 @@ def cancel_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, objec
 @router.delete("/jobs/{job_id}")
 def delete_job(job_id: str, ingest_service: IngestServiceDep) -> dict[str, object]:
     return _delete_job_response(ingest_service.delete_job(job_id))
+
+
+def _local_player_response(player: LocalPlayer) -> dict[str, object]:
+    return {
+        "player_id": player.player_id,
+        "player_name": player.player_name,
+        "match_count": player.match_count,
+        "latest_match_at": player.latest_match_at,
+    }
+
+
+def _team_dashboard_player_response(player: TeamDashboardPlayer) -> dict[str, object]:
+    return {
+        "player_id": player.player_id,
+        "player_name": player.player_name,
+        "match_count": player.match_count,
+        "wins": player.wins,
+        "top3": player.top3,
+        "avg_rank": player.avg_rank,
+        "kills": player.kills,
+        "knocks": player.knocks,
+        "deaths": player.deaths,
+        "damage": player.damage,
+    }
+
+
+def _team_dashboard_match_response(match: TeamDashboardMatch) -> dict[str, object]:
+    return {
+        "match_id": match.match_id,
+        "map_name": match.map_name,
+        "game_mode": match.game_mode,
+        "created_at": match.created_at,
+        "duration": match.duration,
+        "team_id": match.team_id,
+        "team_rank": match.team_rank,
+        "players": [_team_dashboard_player_response(player) for player in match.players],
+        "kills": match.kills,
+        "damage": match.damage,
+    }
+
+
+def _team_dashboard_response(dashboard: TeamDashboard) -> dict[str, object]:
+    return {
+        "primary_player": _local_player_response(dashboard.primary_player),
+        "teammates": [
+            _team_dashboard_player_response(player)
+            for player in dashboard.teammates
+        ],
+        "selected_players": [
+            _team_dashboard_player_response(player)
+            for player in dashboard.selected_players
+        ],
+        "matches": [
+            _team_dashboard_match_response(match)
+            for match in dashboard.matches
+        ],
+    }
 
 
 def _match_response(match: IngestMatchAsset) -> dict[str, object]:

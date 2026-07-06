@@ -4,6 +4,7 @@ import { TacticalPrediction } from "./components/TacticalPrediction";
 import { DataCollection } from "./components/DataCollection";
 import { DataPreparation } from "./components/DataPreparation";
 import { PlayerMatchAnalysis } from "./components/PlayerMatchAnalysis";
+import { TeamDashboard } from "./components/TeamDashboard";
 
 export const router = createBrowserRouter([
   {
@@ -14,6 +15,7 @@ export const router = createBrowserRouter([
       { path: "collection", Component: DataCollection },
       { path: "preparation", Component: DataPreparation },
       { path: "analysis", Component: PlayerMatchAnalysis },
+      { path: "team-dashboard", Component: TeamDashboard },
     ],
   },
 ]);

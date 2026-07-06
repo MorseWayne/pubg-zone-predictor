@@ -591,6 +591,106 @@ def test_get_match_analysis_returns_players_route_and_events(
     assert analysis.life_events[0].x == 405000
 
 
+def test_team_dashboard_uses_recent_squad_teammates_and_selected_stats(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    repo = SQLiteRepository(migrated_connection)
+    repo.executemany(
+        """
+        INSERT INTO matches (
+            match_id,
+            map_name,
+            shard_id,
+            game_mode,
+            match_type,
+            created_at,
+            duration,
+            telemetry_url,
+            ingest_status
+        )
+        VALUES (?, 'Erangel_Main', 'steam', 'squad', 'official', ?, 1800, ?, 'completed')
+        """,
+        [
+            ("match-new", "2026-06-06T00:00:00Z", "https://telemetry.test/match-new.json"),
+            ("match-old", "2026-06-05T00:00:00Z", "https://telemetry.test/match-old.json"),
+        ],
+    )
+    repo.executemany(
+        """
+        INSERT INTO match_teams (match_id, team_id, team_rank)
+        VALUES (?, 'team-1', ?)
+        """,
+        [("match-new", 1), ("match-old", 5)],
+    )
+    repo.executemany(
+        """
+        INSERT INTO match_rosters (match_id, team_id, player_id, player_name)
+        VALUES (?, 'team-1', ?, ?)
+        """,
+        [
+            ("match-new", "account.1", "PlayerOne"),
+            ("match-new", "account.3", "PlayerThree"),
+            ("match-old", "account.1", "PlayerOne"),
+            ("match-old", "account.2", "PlayerTwo"),
+        ],
+    )
+    repo.executemany(
+        """
+        INSERT INTO player_life_events (
+            match_id,
+            elapsed_time,
+            phase,
+            event_type,
+            actor_player_id,
+            victim_player_id,
+            x,
+            y,
+            damage
+        )
+        VALUES (?, ?, 1, ?, ?, ?, 405000, 412000, ?)
+        """,
+        [
+            ("match-new", 120, "LogPlayerKill", "account.1", "enemy.1", None),
+            ("match-new", 122, "LogPlayerTakeDamage", "account.3", "enemy.2", 40.0),
+            ("match-old", 120, "LogPlayerTakeDamage", "account.1", "enemy.4", 80.0),
+            ("match-old", 122, "LogPlayerTakeDamage", "account.2", "enemy.5", 55.5),
+            ("match-old", 130, "LogPlayerKill", "enemy.3", "account.2", None),
+        ],
+    )
+    migrated_connection.commit()
+
+    players = service.list_local_players(limit=10)
+    dashboard = service.get_team_dashboard(
+        "account.1",
+        teammate_ids=["account.2"],
+        match_limit=1,
+        teammate_candidate_limit=2,
+    )
+
+    assert [player.player_name for player in players[:3]] == [
+        "PlayerOne",
+        "PlayerThree",
+        "PlayerTwo",
+    ]
+    assert dashboard.primary_player.player_name == "PlayerOne"
+    assert [player.player_id for player in dashboard.teammates[:2]] == ["account.3", "account.2"]
+    assert [player.player_id for player in dashboard.selected_players] == ["account.1", "account.2"]
+    primary, teammate = dashboard.selected_players
+    assert primary.match_count == 1
+    assert primary.wins == 0
+    assert primary.avg_rank == 5
+    assert primary.kills == 0
+    assert primary.damage == 80
+    assert teammate.knocks == 0
+    assert teammate.deaths == 1
+    assert teammate.damage == 55.5
+    assert dashboard.matches[0].match_id == "match-old"
+    assert dashboard.matches[0].kills == 0
+    assert dashboard.matches[0].damage == 135.5
+
+
 def test_get_match_analysis_downloads_and_parses_missing_telemetry_data(
     migrated_connection: sqlite3.Connection,
     tmp_path: Path,
@@ -766,7 +866,17 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
             y,
             damage
         )
-        VALUES ('match-damage', 120, NULL, 'LogPlayerTakeDamage', 'account.1', 'account.2', 405000, 412000, NULL)
+        VALUES (
+            'match-damage',
+            120,
+            NULL,
+            'LogPlayerTakeDamage',
+            'account.1',
+            'account.2',
+            405000,
+            412000,
+            NULL
+        )
         """
     )
     migrated_connection.commit()

@@ -15,6 +15,63 @@ Claude Code 开发工作的轻量级可恢复台账。
 
 ## Completed
 
+### WF-2026-07-06-002 — 团队看板 50/20 统计口径
+Completed: 2026-07-06
+Level: 2
+
+Close summary:
+- Outcome: 团队看板已拆分为“最近 50 场四排筛队友”和“所选队伍最近 20 场统计”；指定玩家采集默认提升到 50 场。
+- Validation: Ruff 通过；相关后端测试 41 passed；前端 build 通过；GitNexus detect_changes 已执行，风险为 HIGH。
+- Gaps: 未做真实 PUBG API 采集 smoke；未提交。
+
+Archived execution:
+- Intent: 团队看板从玩家最近 50 场中筛选四排队友，再用 20 场做统计。
+- Plan:
+  - [done] P1 — 后端 API 支持 teammate 候选范围 50 场、统计 20 场。
+  - [done] P2 — 前端固定传入 50/20 口径并更新提示文案。
+  - [done] P3 — 补充测试并验证构建。
+- Key changes:
+  - `TeamDashboardRequest`/前端请求新增 `teammate_candidate_limit`，默认 50；`match_limit` 保持 20。
+  - 后端统计先在候选范围内过滤所选 teammate，再取最近统计场次，避免只看主玩家最新 20 场。
+  - `DataCollection` 指定玩家采集默认 50 场，并提示团队看板建议采集 50 场。
+- Validation:
+  - `.venv/bin/ruff check backend/app/api/ingest.py backend/app/services/ingest.py backend/tests/test_ingest_api.py backend/tests/services/test_ingest_service.py` 通过。
+  - `.venv/bin/pytest backend/tests/test_ingest_api.py backend/tests/services/test_ingest_service.py -q`：41 passed，1 个 Starlette/httpx deprecation warning。
+  - `npm --prefix frontend run build` 通过。
+  - `detect_changes(scope=all)` 已执行，显示 HIGH，影响集中在团队看板聚合/API/前端采集与导航相关执行流。
+- Deferred / gaps:
+  - 未用真实 PUBG API 新采集 50 场做端到端验证。
+  - 未提交。
+
+### WF-2026-07-06-001 — 团队数据看板
+Completed: 2026-07-06
+Level: 2
+
+Close summary:
+- Outcome: 已实现本地玩家列表、团队看板聚合 API，以及前端 `/team-dashboard` 团队数据看板入口；支持选择个人和最多 3 个最近四排队友，展示胜率/前三率、淘汰、击倒、伤害、均名次和最近同队对局。
+- Validation: Ruff 通过；后端测试 `129 passed, 1 warning`；前端 build 通过；用临时 SQLite 数据库启动 FastAPI + Vite，API 与页面均能返回/展示团队看板数据。
+- Gaps: 未提交；`gitnexus detect-changes --scope all` 风险为 HIGH，主要因本轮同时包含 GitNexus 索引说明文件计数更新和新增团队看板执行流，提交前建议再复核 diff。
+
+Archived execution:
+- Intent: 实现可选择个人最近四排队友并展示团队数据分析的看板。
+- Plan:
+  - [done] P1 — 梳理现有数据模型、API 和前端入口。
+  - [done] P2 — 用现有 match/telemetry 数据实现最小后端团队分析 API。
+  - [done] P3 — 在前端新增团队看板入口和图表/表格展示。
+  - [done] P4 — 运行构建/测试并记录验证结果。
+- Key changes:
+  - 复用 `matches`、`match_rosters`、`match_teams`、`player_life_events.damage` 聚合最近 squad/squad-fpp 同队数据，不新增表。
+  - 新增 `/api/ingest/players/local` 与 `/api/ingest/players/team-dashboard`，前端新增 `TeamDashboard` 页面和侧栏入口。
+  - Dataviz 采用固定 4 色 categorical dark palette，并保留表格明细作为非颜色通道。
+- Validation:
+  - `.venv/bin/ruff check backend/app/api/ingest.py backend/app/services/ingest.py backend/tests/test_ingest_api.py backend/tests/services/test_ingest_service.py` 通过。
+  - `.venv/bin/pytest backend/tests -q`：129 passed，1 个 Starlette/httpx deprecation warning。
+  - `npm --prefix frontend run build` 通过。
+  - 运行 FastAPI + Vite 后请求本地玩家列表、团队看板 API、缺失玩家 404；Chrome headless 打开 `/team-dashboard` 并截图确认页面展示。
+- Deferred / gaps:
+  - 未做真实 PUBG 外部采集 smoke；本轮使用本地 SQLite 样本验证 UI/API。
+  - 未提交；如需提交，应确认是否保留 GitNexus 自动更新的 `AGENTS.md` / `CLAUDE.md` 计数变化。
+
 ### WF-2026-06-08-003 — 落地 Open Design 全新前端视觉
 Completed: 2026-06-08
 Level: 2
