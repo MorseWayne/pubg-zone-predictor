@@ -182,6 +182,46 @@ export type TeamDashboard = {
   matches: TeamDashboardMatch[];
 };
 
+export type PersonalTrendMatch = {
+  match_id: string;
+  map_name: string;
+  game_mode: string | null;
+  created_at: string | null;
+  team_rank: number | null;
+  kills: number;
+  knocks: number;
+  deaths: number;
+  damage: number;
+  score: number;
+};
+
+export type PersonalTrendWindow = {
+  label: string;
+  match_count: number;
+  wins: number;
+  top3: number;
+  avg_rank: number | null;
+  kills: number;
+  knocks: number;
+  deaths: number;
+  damage: number;
+  avg_kills: number;
+  avg_damage: number;
+  score: number;
+};
+
+export type PersonalTrend = {
+  primary_player: LocalPlayer;
+  trend: "improving" | "declining" | "stable" | "insufficient_data";
+  score_delta: number | null;
+  damage_delta: number | null;
+  kills_delta: number | null;
+  rank_delta: number | null;
+  early: PersonalTrendWindow;
+  recent: PersonalTrendWindow;
+  matches: PersonalTrendMatch[];
+};
+
 export type HotspotResult = {
   map_id: string;
   phase: number;
@@ -391,6 +431,11 @@ export const api = {
     teammate_candidate_limit: number;
   }) =>
     apiRequest<TeamDashboard>("/api/ingest/players/team-dashboard", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getPersonalTrend: async (payload: { player_id: string; match_limit: number }) =>
+    apiRequest<PersonalTrend>("/api/ingest/players/personal-trend", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

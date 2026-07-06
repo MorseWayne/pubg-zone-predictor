@@ -17,6 +17,9 @@ from app.services.ingest import (
     MatchAnalysisLifeEvent,
     MatchAnalysisPlayer,
     MatchAnalysisPosition,
+    PersonalTrend,
+    PersonalTrendMatch,
+    PersonalTrendWindow,
     TeamDashboard,
     TeamDashboardMatch,
     TeamDashboardPlayer,
@@ -316,6 +319,67 @@ class FakeIngestService:
             ],
         )
 
+    def get_personal_trend(self, player_id: str, *, match_limit: int) -> PersonalTrend:
+        assert player_id == "account.1"
+        assert match_limit == 20
+        early = PersonalTrendWindow(
+            label="早期样本",
+            match_count=2,
+            wins=0,
+            top3=0,
+            avg_rank=8.0,
+            kills=1,
+            knocks=1,
+            deaths=2,
+            damage=200.0,
+            avg_kills=0.5,
+            avg_damage=100.0,
+            score=160.0,
+        )
+        recent = PersonalTrendWindow(
+            label="最近样本",
+            match_count=2,
+            wins=1,
+            top3=2,
+            avg_rank=2.0,
+            kills=5,
+            knocks=3,
+            deaths=1,
+            damage=700.0,
+            avg_kills=2.5,
+            avg_damage=350.0,
+            score=600.0,
+        )
+        return PersonalTrend(
+            primary_player=LocalPlayer(
+                player_id="account.1",
+                player_name="PlayerOne",
+                match_count=4,
+                latest_match_at="2026-06-08T00:00:00+00:00",
+            ),
+            trend="improving",
+            score_delta=440.0,
+            damage_delta=250.0,
+            kills_delta=2.0,
+            rank_delta=-6.0,
+            early=early,
+            recent=recent,
+            matches=[
+                PersonalTrendMatch(
+                    match_id="match-new",
+                    map_name="Erangel_Main",
+                    game_mode="squad",
+                    created_at="2026-06-08T00:00:00+00:00",
+                    team_rank=1,
+                    kills=3,
+                    knocks=2,
+                    deaths=0,
+                    damage=420.0,
+                    score=837.0,
+                )
+            ],
+        )
+
     def get_match_analysis(self, match_id: str) -> MatchAnalysis:
         assert match_id == "match-1"
         return MatchAnalysis(
@@ -556,6 +620,27 @@ def test_team_dashboard_api_returns_selected_teammate_analysis() -> None:
     assert body["selected_players"][0]["kills"] == 4
     assert body["matches"][0]["kills"] == 6
     assert body["matches"][0]["damage"] == 832.5
+
+
+def test_personal_trend_api_returns_player_change_analysis() -> None:
+    app.dependency_overrides[get_ingest_service] = lambda: FakeIngestService()
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/ingest/players/personal-trend",
+            json={"player_id": "account.1", "match_limit": 20},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["primary_player"]["player_name"] == "PlayerOne"
+    assert body["trend"] == "improving"
+    assert body["damage_delta"] == 250.0
+    assert body["rank_delta"] == -6.0
+    assert body["recent"]["avg_damage"] == 350.0
+    assert body["matches"][0]["match_id"] == "match-new"
 
 
 def test_search_players_api_returns_match_candidates() -> None:

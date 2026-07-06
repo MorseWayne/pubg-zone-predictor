@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from "react-router";
-import { Map as MapIcon, Database, Activity, Target, Route, Users } from "lucide-react";
+import { Map as MapIcon, Database, Activity, Target, Route, Users, TrendingUp } from "lucide-react";
 
 export function Root() {
   const navClass = ({ isActive }: { isActive: boolean }) =>
@@ -29,6 +29,9 @@ export function Root() {
           </NavLink>
           <NavLink to="/analysis" className={navClass}>
             <Route className="mr-3 size-4" /> 对局分析
+          </NavLink>
+          <NavLink to="/personal-trend" className={navClass}>
+            <TrendingUp className="mr-3 size-4" /> 个人历史
           </NavLink>
           <NavLink to="/team-dashboard" className={navClass}>
             <Users className="mr-3 size-4" /> 团队看板

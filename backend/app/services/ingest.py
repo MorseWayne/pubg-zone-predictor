@@ -181,6 +181,49 @@ class TeamDashboard:
 
 
 @dataclass(frozen=True)
+class PersonalTrendMatch:
+    match_id: str
+    map_name: str
+    game_mode: str | None
+    created_at: str | None
+    team_rank: int | None
+    kills: int
+    knocks: int
+    deaths: int
+    damage: float
+    score: float
+
+
+@dataclass(frozen=True)
+class PersonalTrendWindow:
+    label: str
+    match_count: int
+    wins: int
+    top3: int
+    avg_rank: float | None
+    kills: int
+    knocks: int
+    deaths: int
+    damage: float
+    avg_kills: float
+    avg_damage: float
+    score: float
+
+
+@dataclass(frozen=True)
+class PersonalTrend:
+    primary_player: LocalPlayer
+    trend: str
+    score_delta: float | None
+    damage_delta: float | None
+    kills_delta: float | None
+    rank_delta: float | None
+    early: PersonalTrendWindow
+    recent: PersonalTrendWindow
+    matches: list[PersonalTrendMatch]
+
+
+@dataclass(frozen=True)
 class DeleteMatchResult:
     match_id: str
     deleted: bool
@@ -319,6 +362,120 @@ class IngestService:
             primary_player=primary_player,
             teammates=teammates,
             selected_players=selected_players,
+            matches=matches,
+        )
+
+    def get_personal_trend(
+        self,
+        player_id: str,
+        *,
+        match_limit: int = TEAM_DASHBOARD_MATCH_LIMIT,
+    ) -> PersonalTrend:
+        primary_player = self._get_local_player(player_id)
+        rows = self.repo.fetch_all(
+            """
+            WITH player_matches AS (
+                SELECT m.match_id, m.map_name, m.game_mode, m.created_at, mr.team_id, mt.team_rank
+                FROM match_rosters mr
+                JOIN matches m ON m.match_id = mr.match_id
+                LEFT JOIN match_teams mt
+                    ON mt.match_id = mr.match_id
+                    AND mt.team_id = mr.team_id
+                WHERE mr.player_id = ?
+                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                LIMIT ?
+            ),
+            kills AS (
+                SELECT match_id, COUNT(*) AS kills
+                FROM player_life_events
+                WHERE actor_player_id = ?
+                    AND event_type IN (?, ?)
+                GROUP BY match_id
+            ),
+            knocks AS (
+                SELECT match_id, COUNT(*) AS knocks
+                FROM player_life_events
+                WHERE actor_player_id = ?
+                    AND event_type = ?
+                GROUP BY match_id
+            ),
+            deaths AS (
+                SELECT match_id, COUNT(*) AS deaths
+                FROM player_life_events
+                WHERE victim_player_id = ?
+                    AND event_type IN (?, ?)
+                GROUP BY match_id
+            ),
+            damage AS (
+                SELECT match_id, SUM(damage) AS damage
+                FROM player_life_events
+                WHERE actor_player_id = ?
+                    AND event_type = ?
+                    AND damage IS NOT NULL
+                GROUP BY match_id
+            )
+            SELECT
+                pm.match_id,
+                pm.map_name,
+                pm.game_mode,
+                pm.created_at,
+                pm.team_rank,
+                COALESCE(kills.kills, 0) AS kills,
+                COALESCE(knocks.knocks, 0) AS knocks,
+                COALESCE(deaths.deaths, 0) AS deaths,
+                COALESCE(damage.damage, 0) AS damage
+            FROM player_matches pm
+            LEFT JOIN kills ON kills.match_id = pm.match_id
+            LEFT JOIN knocks ON knocks.match_id = pm.match_id
+            LEFT JOIN deaths ON deaths.match_id = pm.match_id
+            LEFT JOIN damage ON damage.match_id = pm.match_id
+            ORDER BY COALESCE(pm.created_at, '') DESC, pm.match_id DESC
+            """,
+            (
+                player_id,
+                match_limit,
+                player_id,
+                *sorted(ELIMINATION_EVENT_TYPES),
+                player_id,
+                KNOCKDOWN_EVENT_TYPE,
+                player_id,
+                *sorted(ELIMINATION_EVENT_TYPES),
+                player_id,
+                DAMAGE_EVENT_TYPE,
+            ),
+        )
+        matches = [self._personal_trend_match(row) for row in rows]
+        chronological = list(reversed(matches))
+        split_at = len(chronological) // 2
+        early = self._personal_trend_window("早期样本", chronological[:split_at])
+        recent = self._personal_trend_window("最近样本", chronological[split_at:])
+        enough_data = early.match_count > 0 and recent.match_count > 0 and len(matches) >= 4
+        score_delta = recent.score - early.score if enough_data else None
+        damage_delta = recent.avg_damage - early.avg_damage if enough_data else None
+        kills_delta = recent.avg_kills - early.avg_kills if enough_data else None
+        rank_delta = (
+            recent.avg_rank - early.avg_rank
+            if enough_data and recent.avg_rank is not None and early.avg_rank is not None
+            else None
+        )
+        threshold = max(25.0, abs(early.score) * 0.1)
+        if not enough_data or score_delta is None:
+            trend = "insufficient_data"
+        elif score_delta >= threshold:
+            trend = "improving"
+        elif score_delta <= -threshold:
+            trend = "declining"
+        else:
+            trend = "stable"
+        return PersonalTrend(
+            primary_player=primary_player,
+            trend=trend,
+            score_delta=score_delta,
+            damage_delta=damage_delta,
+            kills_delta=kills_delta,
+            rank_delta=rank_delta,
+            early=early,
+            recent=recent,
             matches=matches,
         )
 
@@ -1818,6 +1975,57 @@ class IngestService:
             knocks=int(row["knocks"]),
             deaths=int(row["deaths"]),
             damage=float(row["damage"]),
+        )
+
+    @staticmethod
+    def _personal_trend_match(row: sqlite3.Row) -> PersonalTrendMatch:
+        kills = int(row["kills"])
+        damage = float(row["damage"])
+        team_rank = row["team_rank"]
+        deaths = int(row["deaths"])
+        score = damage + kills * 75 - deaths * 25
+        # ponytail: simple trend score; tune weights or replace with a model when labels exist.
+        if team_rank is not None:
+            score += max(0, 25 - int(team_rank)) * 8
+        return PersonalTrendMatch(
+            match_id=row["match_id"],
+            map_name=row["map_name"],
+            game_mode=row["game_mode"],
+            created_at=row["created_at"],
+            team_rank=team_rank,
+            kills=kills,
+            knocks=int(row["knocks"]),
+            deaths=deaths,
+            damage=damage,
+            score=score,
+        )
+
+    @staticmethod
+    def _personal_trend_window(
+        label: str,
+        matches: list[PersonalTrendMatch],
+    ) -> PersonalTrendWindow:
+        match_count = len(matches)
+        wins = sum(1 for match in matches if match.team_rank == 1)
+        top3 = sum(1 for match in matches if match.team_rank is not None and match.team_rank <= 3)
+        kills = sum(match.kills for match in matches)
+        knocks = sum(match.knocks for match in matches)
+        deaths = sum(match.deaths for match in matches)
+        damage = sum(match.damage for match in matches)
+        ranked = [match.team_rank for match in matches if match.team_rank is not None]
+        return PersonalTrendWindow(
+            label=label,
+            match_count=match_count,
+            wins=wins,
+            top3=top3,
+            avg_rank=sum(ranked) / len(ranked) if ranked else None,
+            kills=kills,
+            knocks=knocks,
+            deaths=deaths,
+            damage=damage,
+            avg_kills=kills / match_count if match_count else 0.0,
+            avg_damage=damage / match_count if match_count else 0.0,
+            score=sum(match.score for match in matches) / match_count if match_count else 0.0,
         )
 
     @staticmethod

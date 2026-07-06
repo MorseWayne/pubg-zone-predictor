@@ -20,6 +20,9 @@ from app.services.ingest import (
     IngestService,
     LocalPlayer,
     MatchAnalysis,
+    PersonalTrend,
+    PersonalTrendMatch,
+    PersonalTrendWindow,
     TeamDashboard,
     TeamDashboardMatch,
     TeamDashboardPlayer,
@@ -100,6 +103,11 @@ class TeamDashboardRequest(BaseModel):
     teammate_ids: list[str] = Field(default_factory=list, max_length=3)
     match_limit: int = Field(default=20, ge=1, le=100)
     teammate_candidate_limit: int = Field(default=50, ge=1, le=100)
+
+
+class PersonalTrendRequest(BaseModel):
+    player_id: str = Field(min_length=1, max_length=80)
+    match_limit: int = Field(default=20, ge=4, le=100)
 
 
 class BatchJobsRequest(BaseModel):
@@ -289,6 +297,19 @@ def get_team_dashboard(
     )
 
 
+@router.post("/players/personal-trend")
+def get_personal_trend(
+    request: PersonalTrendRequest,
+    ingest_service: IngestServiceDep,
+) -> dict[str, object]:
+    return _personal_trend_response(
+        ingest_service.get_personal_trend(
+            request.player_id,
+            match_limit=request.match_limit,
+        )
+    )
+
+
 @router.get("/players/search")
 def search_players(
     pubg_client: PubgClientDep,
@@ -472,6 +493,52 @@ def _team_dashboard_response(dashboard: TeamDashboard) -> dict[str, object]:
             _team_dashboard_match_response(match)
             for match in dashboard.matches
         ],
+    }
+
+
+def _personal_trend_window_response(window: PersonalTrendWindow) -> dict[str, object]:
+    return {
+        "label": window.label,
+        "match_count": window.match_count,
+        "wins": window.wins,
+        "top3": window.top3,
+        "avg_rank": window.avg_rank,
+        "kills": window.kills,
+        "knocks": window.knocks,
+        "deaths": window.deaths,
+        "damage": window.damage,
+        "avg_kills": window.avg_kills,
+        "avg_damage": window.avg_damage,
+        "score": window.score,
+    }
+
+
+def _personal_trend_match_response(match: PersonalTrendMatch) -> dict[str, object]:
+    return {
+        "match_id": match.match_id,
+        "map_name": match.map_name,
+        "game_mode": match.game_mode,
+        "created_at": match.created_at,
+        "team_rank": match.team_rank,
+        "kills": match.kills,
+        "knocks": match.knocks,
+        "deaths": match.deaths,
+        "damage": match.damage,
+        "score": match.score,
+    }
+
+
+def _personal_trend_response(trend: PersonalTrend) -> dict[str, object]:
+    return {
+        "primary_player": _local_player_response(trend.primary_player),
+        "trend": trend.trend,
+        "score_delta": trend.score_delta,
+        "damage_delta": trend.damage_delta,
+        "kills_delta": trend.kills_delta,
+        "rank_delta": trend.rank_delta,
+        "early": _personal_trend_window_response(trend.early),
+        "recent": _personal_trend_window_response(trend.recent),
+        "matches": [_personal_trend_match_response(match) for match in trend.matches],
     }
 
 

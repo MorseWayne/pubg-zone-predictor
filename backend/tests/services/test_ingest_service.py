@@ -691,6 +691,93 @@ def test_team_dashboard_uses_recent_squad_teammates_and_selected_stats(
     assert dashboard.matches[0].damage == 135.5
 
 
+def test_personal_trend_compares_early_and_recent_match_stats(
+    migrated_connection: sqlite3.Connection,
+    tmp_path: Path,
+) -> None:
+    service = IngestService(migrated_connection, FakePubgClient(), tmp_path)
+    repo = SQLiteRepository(migrated_connection)
+    repo.executemany(
+        """
+        INSERT INTO matches (
+            match_id,
+            map_name,
+            shard_id,
+            game_mode,
+            match_type,
+            created_at,
+            duration,
+            telemetry_url,
+            ingest_status
+        )
+        VALUES (?, 'Erangel_Main', 'steam', 'squad', 'official', ?, 1800, ?, 'completed')
+        """,
+        [
+            ("match-1", "2026-06-01T00:00:00Z", "https://telemetry.test/match-1.json"),
+            ("match-2", "2026-06-02T00:00:00Z", "https://telemetry.test/match-2.json"),
+            ("match-3", "2026-06-03T00:00:00Z", "https://telemetry.test/match-3.json"),
+            ("match-4", "2026-06-04T00:00:00Z", "https://telemetry.test/match-4.json"),
+        ],
+    )
+    repo.executemany(
+        """
+        INSERT INTO match_teams (match_id, team_id, team_rank)
+        VALUES (?, 'team-1', ?)
+        """,
+        [("match-1", 10), ("match-2", 6), ("match-3", 2), ("match-4", 1)],
+    )
+    repo.executemany(
+        """
+        INSERT INTO match_rosters (match_id, team_id, player_id, player_name)
+        VALUES (?, 'team-1', 'account.1', 'PlayerOne')
+        """,
+        [("match-1",), ("match-2",), ("match-3",), ("match-4",)],
+    )
+    repo.executemany(
+        """
+        INSERT INTO player_life_events (
+            match_id,
+            elapsed_time,
+            phase,
+            event_type,
+            actor_player_id,
+            victim_player_id,
+            x,
+            y,
+            damage
+        )
+        VALUES (?, ?, 1, ?, ?, ?, 405000, 412000, ?)
+        """,
+        [
+            ("match-1", 100, "LogPlayerTakeDamage", "account.1", "enemy.1", 80.0),
+            ("match-1", 120, "LogPlayerKill", "enemy.2", "account.1", None),
+            ("match-2", 100, "LogPlayerTakeDamage", "account.1", "enemy.3", 120.0),
+            ("match-2", 120, "LogPlayerKill", "account.1", "enemy.4", None),
+            ("match-2", 140, "LogPlayerKill", "enemy.5", "account.1", None),
+            ("match-3", 100, "LogPlayerTakeDamage", "account.1", "enemy.6", 300.0),
+            ("match-3", 120, "LogPlayerKill", "account.1", "enemy.7", None),
+            ("match-3", 130, "LogPlayerKillV2", "account.1", "enemy.8", None),
+            ("match-3", 135, "LogPlayerMakeGroggy", "account.1", "enemy.8", None),
+            ("match-4", 100, "LogPlayerTakeDamage", "account.1", "enemy.9", 400.0),
+            ("match-4", 120, "LogPlayerKill", "account.1", "enemy.10", None),
+            ("match-4", 130, "LogPlayerKill", "account.1", "enemy.11", None),
+            ("match-4", 140, "LogPlayerKillV2", "account.1", "enemy.12", None),
+        ],
+    )
+    migrated_connection.commit()
+
+    trend = service.get_personal_trend("account.1", match_limit=20)
+
+    assert trend.trend == "improving"
+    assert trend.matches[0].match_id == "match-4"
+    assert trend.early.match_count == 2
+    assert trend.early.avg_damage == 100
+    assert trend.recent.avg_damage == 350
+    assert trend.damage_delta == 250
+    assert trend.kills_delta == 2
+    assert trend.rank_delta == -6.5
+
+
 def test_get_match_analysis_downloads_and_parses_missing_telemetry_data(
     migrated_connection: sqlite3.Connection,
     tmp_path: Path,

@@ -15,6 +15,35 @@ Claude Code 开发工作的轻量级可恢复台账。
 
 ## Completed
 
+### WF-2026-07-06-003 — 个人历史对局变化分析
+Completed: 2026-07-06
+Level: 3
+
+Close summary:
+- Outcome: 新增个人历史趋势 API 与前端“个人历史”页面，按早期/最近样本比较均伤、淘汰、名次和综合评分，输出进步/稳定/下滑/样本不足判断。
+- Validation: Ruff 通过；相关后端测试 43 passed；前端 build 通过；GitNexus detect_changes 已执行，风险为 CRITICAL。
+- Gaps: 未用真实 PUBG 新采集数据做浏览器端 smoke；评分权重为本地启发式，后续有标签后可校准。
+
+Archived execution:
+- Intent: 增加个人历史对局分析，用真实个人历史数据判断成长、进步或后退。
+- Plan:
+  - [done] P1 — 梳理现有个人对局分析、团队看板聚合与前端入口。
+  - [done] P2 — 后端新增最小个人趋势聚合 API，复用现有 match/telemetry 数据，不新增表。
+  - [done] P3 — 前端新增个人历史分析入口，展示趋势结论和关键指标变化。
+  - [done] P4 — 补充最小测试并运行后端/前端验证。
+- Key changes:
+  - 新增 `PersonalTrend` 数据结构、`IngestService.get_personal_trend()` 和 `/api/ingest/players/personal-trend`。
+  - 前端新增 `PersonalTrend` 页面和 `/personal-trend` 导航入口。
+  - 综合评分只用现有伤害、淘汰、死亡和名次，不新增表或依赖。
+- Validation:
+  - `.venv/bin/ruff check backend/app/services/ingest.py backend/app/api/ingest.py backend/tests/services/test_ingest_service.py backend/tests/test_ingest_api.py` 通过。
+  - `.venv/bin/pytest backend/tests/services/test_ingest_service.py backend/tests/test_ingest_api.py -q`：43 passed，1 个 Starlette/httpx deprecation warning。
+  - `npm --prefix frontend run build` 通过，Vite 仍提示 chunk > 500kB。
+  - `git diff --check` 通过；`detect_changes(scope=all)` 已执行，风险为 CRITICAL。
+- Deferred / gaps:
+  - 真实采集数据端到端浏览器 smoke。
+  - 趋势评分权重后续可基于真实回放标签校准。
+
 ### WF-2026-07-06-002 — 团队看板 50/20 统计口径
 Completed: 2026-07-06
 Level: 2
