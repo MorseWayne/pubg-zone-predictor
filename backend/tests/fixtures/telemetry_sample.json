@@ -41,7 +41,8 @@
       "teamId": 101,
       "health": 100,
       "location": {"x": 1000, "y": 2000, "z": 300}
-    }
+    },
+    "vehicle": null
   },
   {
     "_T": "LogPlayerPosition",
@@ -52,7 +53,8 @@
       "teamId": 101,
       "health": 100,
       "location": {"x": 1100, "y": 2100, "z": 300}
-    }
+    },
+    "vehicle": null
   },
   {
     "_T": "LogPlayerPosition",
@@ -61,6 +63,11 @@
       "name": "UnknownTeamPlayer",
       "health": 90,
       "location": {"x": 2000, "y": 3000}
+    },
+    "vehicle": {
+      "vehicleType": "WheeledVehicle",
+      "vehicleId": "Dacia_A_01_C",
+      "seatIndex": 0
     }
   },
   {

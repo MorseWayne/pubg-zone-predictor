@@ -204,21 +204,37 @@ class TelemetryParser:
             _player_name(character),
         )
         elapsed_time_bucket = _elapsed_time_bucket(elapsed_time, self.sample_interval_seconds)
-        counts["position_sample_count"] += self.repo.insert_or_ignore(
+        health = _number(character.get("health"))
+        movement_mode, vehicle_type, vehicle_id, vehicle_seat_index = (
+            _position_movement_state(event)
+        )
+        values = {
+            "match_id": match_id,
+            "player_id": player_id,
+            "team_id": team_id,
+            "phase": _phase(event),
+            "elapsed_time": elapsed_time,
+            "elapsed_time_bucket": elapsed_time_bucket,
+            "x": location["x"],
+            "y": location["y"],
+            "z": location.get("z"),
+            "alive": _alive(character),
+            "health": health,
+            "movement_mode": movement_mode,
+            "vehicle_type": vehicle_type,
+            "vehicle_id": vehicle_id,
+            "vehicle_seat_index": vehicle_seat_index,
+        }
+        result = self.repo.insert_or_ignore(
             "player_position_samples",
-            {
-                "match_id": match_id,
-                "player_id": player_id,
-                "team_id": team_id,
-                "phase": _phase(event),
-                "elapsed_time": elapsed_time,
-                "elapsed_time_bucket": elapsed_time_bucket,
-                "x": location["x"],
-                "y": location["y"],
-                "z": location.get("z"),
-                "alive": _alive(character),
-            },
-        ).rowcount
+            values,
+        )
+        counts["position_sample_count"] += result.rowcount
+        if result.rowcount == 0:
+            if health is not None:
+                self._update_position_health(values)
+            if movement_mode is not None:
+                self._update_position_movement(values)
 
     def _parse_life_event(
         self,
@@ -264,20 +280,69 @@ class TelemetryParser:
             "x": location.get("x") if location else None,
             "y": location.get("y") if location else None,
             "damage": damage,
+            "damage_causer_name": _damage_causer_name(event),
+            "damage_reason": _damage_reason(event),
         }
         result = self.repo.insert_or_ignore(
             "player_life_events",
             values,
         )
         counts["life_event_count"] += result.rowcount
-        if result.rowcount == 0 and damage is not None:
+        if result.rowcount == 0 and any(
+            values[field] is not None
+            for field in ("damage", "damage_causer_name", "damage_reason")
+        ):
             self._update_life_event_damage(values)
+
+    def _update_position_health(self, values: dict[str, Any]) -> None:
+        self.repo.execute(
+            """
+            UPDATE player_position_samples
+            SET health = ?
+            WHERE match_id = ?
+                AND player_id = ?
+                AND elapsed_time_bucket = ?
+                AND health IS NULL
+            """,
+            (
+                values["health"],
+                values["match_id"],
+                values["player_id"],
+                values["elapsed_time_bucket"],
+            ),
+        )
+
+    def _update_position_movement(self, values: dict[str, Any]) -> None:
+        self.repo.execute(
+            """
+            UPDATE player_position_samples
+            SET movement_mode = ?,
+                vehicle_type = ?,
+                vehicle_id = ?,
+                vehicle_seat_index = ?
+            WHERE match_id = ?
+                AND player_id = ?
+                AND elapsed_time_bucket = ?
+                AND movement_mode IS NULL
+            """,
+            (
+                values["movement_mode"],
+                values["vehicle_type"],
+                values["vehicle_id"],
+                values["vehicle_seat_index"],
+                values["match_id"],
+                values["player_id"],
+                values["elapsed_time_bucket"],
+            ),
+        )
 
     def _update_life_event_damage(self, values: dict[str, Any]) -> None:
         self.repo.execute(
             """
             UPDATE player_life_events
-            SET damage = ?
+            SET damage = COALESCE(damage, ?),
+                damage_causer_name = COALESCE(damage_causer_name, ?),
+                damage_reason = COALESCE(damage_reason, ?)
             WHERE match_id = ?
                 AND elapsed_time = ?
                 AND event_type = ?
@@ -285,10 +350,11 @@ class TelemetryParser:
                 AND IFNULL(victim_player_id, '') = IFNULL(?, '')
                 AND IFNULL(x, -1) = IFNULL(?, -1)
                 AND IFNULL(y, -1) = IFNULL(?, -1)
-                AND damage IS NULL
             """,
             (
                 values["damage"],
+                values["damage_causer_name"],
+                values["damage_reason"],
                 values["match_id"],
                 values["elapsed_time"],
                 values["event_type"],
@@ -408,6 +474,58 @@ def _alive(character: dict[str, Any]) -> int | None:
         return int(alive)
     health = _number(character.get("health"))
     return int(health > 0) if health is not None else None
+
+
+def _position_movement_state(
+    event: dict[str, Any],
+) -> tuple[str | None, str | None, str | None, int | None]:
+    if "vehicle" not in event:
+        return None, None, None, None
+
+    raw_vehicle = event.get("vehicle")
+    if raw_vehicle is None:
+        return "foot", None, None, None
+
+    vehicle = _dict(raw_vehicle)
+    if not vehicle:
+        return "foot", None, None, None
+
+    vehicle_type_value = vehicle.get("vehicleType") or vehicle.get("vehicle_type")
+    vehicle_id_value = vehicle.get("vehicleId") or vehicle.get("vehicle_id")
+    vehicle_type = str(vehicle_type_value).strip() if vehicle_type_value else None
+    vehicle_id = str(vehicle_id_value).strip() if vehicle_id_value else None
+    vehicle_seat_index = _int_or_none(
+        vehicle.get("seatIndex", vehicle.get("seat_index"))
+    )
+    if (
+        vehicle_type is not None
+        and vehicle_type.lower() in {"none", "unknown"}
+        and vehicle_id is None
+    ):
+        return "foot", None, None, None
+    return "vehicle", vehicle_type, vehicle_id, vehicle_seat_index
+
+
+def _damage_causer_name(event: dict[str, Any]) -> str | None:
+    value = event.get("damageCauserName")
+    if not value:
+        value = _damage_info(event).get("damageCauserName")
+    return str(value) if value else None
+
+
+def _damage_reason(event: dict[str, Any]) -> str | None:
+    value = event.get("damageReason")
+    if not value:
+        value = _damage_info(event).get("damageReason")
+    return str(value) if value else None
+
+
+def _damage_info(event: dict[str, Any]) -> dict[str, Any]:
+    for key in ("killerDamageInfo", "finishDamageInfo", "dBNODamageInfo"):
+        value = _dict(event.get(key))
+        if value:
+            return value
+    return {}
 
 
 def _dict(value: Any) -> dict[str, Any]:

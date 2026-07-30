@@ -414,6 +414,11 @@ class FakeIngestService:
                     y=411000.0,
                     z=100.0,
                     alive=True,
+                    health=87.5,
+                    movement_mode="vehicle",
+                    vehicle_type="WheeledVehicle",
+                    vehicle_id="Dacia_A_01_C",
+                    vehicle_seat_index=0,
                 )
             ],
             life_events=[
@@ -431,6 +436,8 @@ class FakeIngestService:
                     x=405000.0,
                     y=412000.0,
                     damage=12.5,
+                    damage_causer_name="WeapAK47_C",
+                    damage_reason="HeadShot",
                 )
             ],
         )
@@ -836,8 +843,15 @@ def test_get_match_analysis_api_returns_timeline_layers() -> None:
     assert body["players"][0]["player_name"] == "PlayerOne"
     assert body["circles"][0]["center"] == {"x": 400000.0, "y": 410000.0}
     assert body["positions"][0]["point"] == {"x": 401000.0, "y": 411000.0}
+    assert body["positions"][0]["health"] == 87.5
+    assert body["positions"][0]["movement_mode"] == "vehicle"
+    assert body["positions"][0]["vehicle_type"] == "WheeledVehicle"
+    assert body["positions"][0]["vehicle_id"] == "Dacia_A_01_C"
+    assert body["positions"][0]["vehicle_seat_index"] == 0
     assert body["life_events"][0]["victim_player_name"] == "PlayerTwo"
     assert body["life_events"][0]["damage"] == 12.5
+    assert body["life_events"][0]["damage_causer_name"] == "WeapAK47_C"
+    assert body["life_events"][0]["damage_reason"] == "HeadShot"
     assert "api_key" not in body
 
 

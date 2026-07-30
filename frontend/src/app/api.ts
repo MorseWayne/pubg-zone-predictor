@@ -96,6 +96,11 @@ export type MatchAnalysisPosition = {
   point: ApiPoint;
   z: number | null;
   alive: boolean | null;
+  health: number | null;
+  movement_mode: "foot" | "vehicle" | null;
+  vehicle_type: string | null;
+  vehicle_id: string | null;
+  vehicle_seat_index: number | null;
 };
 
 export type MatchAnalysisLifeEvent = {
@@ -111,6 +116,8 @@ export type MatchAnalysisLifeEvent = {
   victim_team_id: string | null;
   point: ApiPoint | null;
   damage: number | null;
+  damage_causer_name: string | null;
+  damage_reason: string | null;
 };
 
 export type MatchAnalysis = {

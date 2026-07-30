@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from "react-router";
-import { Map as MapIcon, Database, Activity, Target, Route, Users, TrendingUp } from "lucide-react";
+import { Database, RadioTower, Route, Users, TrendingUp } from "lucide-react";
 
 export function Root() {
   const navClass = ({ isActive }: { isActive: boolean }) =>
@@ -13,22 +13,16 @@ export function Root() {
       <nav className="w-64 border-r border-neutral-800 bg-neutral-900/50 flex flex-col backdrop-blur-sm z-10 shrink-0">
         <div className="p-6 flex items-center gap-3">
           <div className="w-8 h-8 rounded bg-orange-500/20 text-orange-500 flex items-center justify-center">
-            <Target className="w-5 h-5" />
+            <RadioTower className="w-5 h-5" />
           </div>
-          <h1 className="text-lg font-bold tracking-wider">战术<span className="text-orange-500">预测系统</span></h1>
+          <h1 className="text-lg font-bold tracking-wider">PUBG<span className="text-orange-500">回放中心</span></h1>
         </div>
         <div className="flex flex-col gap-2 px-4 mt-4">
-          <NavLink to="/" className={navClass}>
-            <MapIcon className="mr-3 size-4" /> 战术预测
+          <NavLink to="/analysis" className={navClass}>
+            <Route className="mr-3 size-4" /> 对局回放
           </NavLink>
           <NavLink to="/collection" className={navClass}>
             <Database className="mr-3 size-4" /> 数据采集
-          </NavLink>
-          <NavLink to="/preparation" className={navClass}>
-            <Activity className="mr-3 size-4" /> 数据准备
-          </NavLink>
-          <NavLink to="/analysis" className={navClass}>
-            <Route className="mr-3 size-4" /> 对局分析
           </NavLink>
           <NavLink to="/personal-trend" className={navClass}>
             <TrendingUp className="mr-3 size-4" /> 个人历史
@@ -40,7 +34,7 @@ export function Root() {
         <div className="mt-auto p-4 border-t border-neutral-800">
           <div className="flex items-center gap-3 px-2 py-2">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-xs text-neutral-500 font-medium">模型服务器：在线</span>
+            <span className="text-xs text-neutral-500 font-medium">遥测服务：在线</span>
           </div>
         </div>
       </nav>

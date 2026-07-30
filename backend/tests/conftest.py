@@ -5,7 +5,7 @@ import pytest
 from app.db.connection import connect_database
 from app.db.migrations import initialize_database
 
-EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006"]
+EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006", "007", "008"]
 
 
 @pytest.fixture

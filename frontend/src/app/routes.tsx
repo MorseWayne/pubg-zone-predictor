@@ -1,23 +1,36 @@
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter, Navigate } from "react-router";
 import { Root } from "./components/Root";
-import { TacticalPrediction } from "./components/TacticalPrediction";
-import { DataCollection } from "./components/DataCollection";
-import { DataPreparation } from "./components/DataPreparation";
 import { PlayerMatchAnalysis } from "./components/PlayerMatchAnalysis";
-import { PersonalTrend } from "./components/PersonalTrend";
-import { TeamDashboard } from "./components/TeamDashboard";
 
 export const router = createBrowserRouter([
   {
     path: "/",
     Component: Root,
     children: [
-      { index: true, Component: TacticalPrediction },
-      { path: "collection", Component: DataCollection },
-      { path: "preparation", Component: DataPreparation },
+      { index: true, element: <Navigate to="/analysis" replace /> },
+      {
+        path: "collection",
+        lazy: async () => {
+          const { DataCollection } = await import("./components/DataCollection");
+          return { Component: DataCollection };
+        },
+      },
       { path: "analysis", Component: PlayerMatchAnalysis },
-      { path: "personal-trend", Component: PersonalTrend },
-      { path: "team-dashboard", Component: TeamDashboard },
+      {
+        path: "personal-trend",
+        lazy: async () => {
+          const { PersonalTrend } = await import("./components/PersonalTrend");
+          return { Component: PersonalTrend };
+        },
+      },
+      {
+        path: "team-dashboard",
+        lazy: async () => {
+          const { TeamDashboard } = await import("./components/TeamDashboard");
+          return { Component: TeamDashboard };
+        },
+      },
+      { path: "preparation", element: <Navigate to="/analysis" replace /> },
     ],
   },
 ]);

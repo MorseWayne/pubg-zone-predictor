@@ -6,7 +6,7 @@ import pytest
 from app.db.connection import connect_database
 from app.db.migrations import initialize_database
 
-EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006"]
+EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006", "007", "008"]
 
 
 def test_initialize_database_applies_initial_schema(database_path: Path) -> None:
@@ -45,6 +45,20 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
     assert "parse_profile" in telemetry_columns
     assert "position_interval_seconds" in telemetry_columns
     assert "parsed_at" in telemetry_columns
+    assert "replay_schema_version" in telemetry_columns
+
+    with connect_database(database_path) as connection:
+        position_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(player_position_samples)"
+            ).fetchall()
+        }
+    assert "health" in position_columns
+    assert "movement_mode" in position_columns
+    assert "vehicle_type" in position_columns
+    assert "vehicle_id" in position_columns
+    assert "vehicle_seat_index" in position_columns
 
     with connect_database(database_path) as connection:
         life_event_columns = {
@@ -52,6 +66,8 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
             for row in connection.execute("PRAGMA table_info(player_life_events)").fetchall()
         }
     assert "damage" in life_event_columns
+    assert "damage_causer_name" in life_event_columns
+    assert "damage_reason" in life_event_columns
 
     with connect_database(database_path) as connection:
         connection.execute(

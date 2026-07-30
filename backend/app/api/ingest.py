@@ -598,6 +598,11 @@ def _match_analysis_response(analysis: MatchAnalysis) -> dict[str, object]:
                 "point": {"x": position.x, "y": position.y},
                 "z": position.z,
                 "alive": position.alive,
+                "health": position.health,
+                "movement_mode": position.movement_mode,
+                "vehicle_type": position.vehicle_type,
+                "vehicle_id": position.vehicle_id,
+                "vehicle_seat_index": position.vehicle_seat_index,
             }
             for position in analysis.positions
         ],
@@ -619,6 +624,8 @@ def _match_analysis_response(analysis: MatchAnalysis) -> dict[str, object]:
                     else None
                 ),
                 "damage": event.damage,
+                "damage_causer_name": event.damage_causer_name,
+                "damage_reason": event.damage_reason,
             }
             for event in analysis.life_events
         ],

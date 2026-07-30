@@ -209,6 +209,11 @@ class AnalysisTelemetryPubgClient(FakePubgClient):
                         "location": {"x": 401000, "y": 411000, "z": 120},
                         "health": 100,
                     },
+                    "vehicle": {
+                        "vehicleType": "WheeledVehicle",
+                        "vehicleId": "Dacia_A_01_C",
+                        "seatIndex": 0,
+                    },
                 },
                 {
                     "_T": "LogPlayerKill",
@@ -558,9 +563,27 @@ def test_get_match_analysis_returns_players_route_and_events(
             elapsed_time_bucket,
             x,
             y,
-            alive
+            alive,
+            movement_mode,
+            vehicle_type,
+            vehicle_id,
+            vehicle_seat_index
         )
-        VALUES ('match-analysis', 'account.1', 'team-1', 1, 62, 12, 401000, 411000, 1)
+        VALUES (
+            'match-analysis',
+            'account.1',
+            'team-1',
+            1,
+            62,
+            12,
+            401000,
+            411000,
+            1,
+            'vehicle',
+            'WheeledVehicle',
+            'Dacia_A_01_C',
+            0
+        )
         """
     )
     repo.execute(
@@ -587,6 +610,9 @@ def test_get_match_analysis_returns_players_route_and_events(
     assert analysis.players[0].team_rank == 2
     assert analysis.circles[0].center_x == 400000
     assert analysis.positions[0].alive is True
+    assert analysis.positions[0].movement_mode == "vehicle"
+    assert analysis.positions[0].vehicle_id == "Dacia_A_01_C"
+    assert analysis.positions[0].vehicle_seat_index == 0
     assert analysis.life_events[0].actor_player_name == "PlayerOne"
     assert analysis.life_events[0].x == 405000
 
@@ -816,7 +842,13 @@ def test_get_match_analysis_downloads_and_parses_missing_telemetry_data(
 
     asset = repo.fetch_one(
         """
-        SELECT cache_path, parse_status, parse_profile, position_interval_seconds, parsed_at
+        SELECT
+            cache_path,
+            parse_status,
+            parse_profile,
+            position_interval_seconds,
+            parsed_at,
+            replay_schema_version
         FROM telemetry_assets
         WHERE match_id = 'match-auto'
         """
@@ -825,12 +857,16 @@ def test_get_match_analysis_downloads_and_parses_missing_telemetry_data(
     assert asset["parse_profile"] == "full"
     assert asset["position_interval_seconds"] == 5
     assert asset["parsed_at"] is not None
+    assert asset["replay_schema_version"] == 3
     assert Path(asset["cache_path"]).exists()
     assert analysis.match.circle_phase_count == 1
     assert analysis.match.position_sample_count == 1
     assert analysis.match.life_event_count == 1
     assert analysis.players[0].player_name == "PlayerOne"
     assert analysis.positions[0].x == 401000
+    assert analysis.positions[0].health == 100
+    assert analysis.positions[0].movement_mode == "vehicle"
+    assert analysis.positions[0].vehicle_id == "Dacia_A_01_C"
     assert analysis.life_events[0].event_type == "LogPlayerKill"
 
 
@@ -856,6 +892,18 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
                     },
                 },
                 {
+                    "_T": "LogPlayerPosition",
+                    "common": {"isGame": 1, "elapsedTime": 62},
+                    "character": {
+                        "accountId": "account.1",
+                        "name": "PlayerOne",
+                        "teamId": 1,
+                        "health": 76,
+                        "location": {"x": 401000, "y": 411000},
+                    },
+                    "vehicle": None,
+                },
+                {
                     "_T": "LogPlayerTakeDamage",
                     "common": {"isGame": 1, "elapsedTime": 120},
                     "attacker": {
@@ -871,6 +919,8 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
                         "location": {"x": 405000, "y": 412000},
                     },
                     "damage": 18.75,
+                    "damageCauserName": "WeapM416_C",
+                    "damageReason": "TorsoShot",
                 },
             ]
         ),
@@ -942,6 +992,18 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
     )
     repo.execute(
         """
+        INSERT INTO match_teams (match_id, team_id, team_rank)
+        VALUES ('match-damage', '1', 2)
+        """
+    )
+    repo.execute(
+        """
+        INSERT INTO match_rosters (match_id, team_id, player_id, player_name)
+        VALUES ('match-damage', '1', 'account.1', 'PlayerOne')
+        """
+    )
+    repo.execute(
+        """
         INSERT INTO player_life_events (
             match_id,
             elapsed_time,
@@ -966,11 +1028,46 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
         )
         """
     )
+    repo.execute(
+        """
+        INSERT INTO player_position_samples (
+            match_id,
+            player_id,
+            team_id,
+            phase,
+            elapsed_time,
+            elapsed_time_bucket,
+            x,
+            y,
+            alive,
+            health
+        )
+        VALUES (
+            'match-damage',
+            'account.1',
+            '1',
+            1,
+            62,
+            60,
+            401000,
+            411000,
+            1,
+            NULL
+        )
+        """
+    )
     migrated_connection.commit()
 
     analysis = service.get_match_analysis("match-damage")
 
     assert analysis.life_events[0].damage == 18.75
+    assert analysis.life_events[0].damage_causer_name == "WeapM416_C"
+    assert analysis.life_events[0].damage_reason == "TorsoShot"
+    assert analysis.positions[0].health == 76
+    assert analysis.positions[0].movement_mode == "foot"
+    assert repo.fetch_one(
+        "SELECT replay_schema_version FROM telemetry_assets WHERE match_id = 'match-damage'"
+    )["replay_schema_version"] == 3
 
 
 def test_retry_job_starts_new_job_with_incremented_retry_count(

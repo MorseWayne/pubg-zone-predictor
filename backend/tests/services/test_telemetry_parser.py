@@ -41,6 +41,23 @@ def test_telemetry_parser_extracts_circles_positions_rosters_and_life_events(
     assert repo.fetch_one("SELECT COUNT(*) AS count FROM match_rosters")["count"] == 3
     assert repo.fetch_one("SELECT COUNT(*) AS count FROM player_position_samples")["count"] == 2
     assert repo.fetch_one("SELECT COUNT(*) AS count FROM player_life_events")["count"] == 1
+    assert [
+        row["health"]
+        for row in repo.fetch_all(
+            "SELECT health FROM player_position_samples ORDER BY elapsed_time"
+        )
+    ] == [100.0, 90.0]
+    movement_rows = repo.fetch_all(
+        """
+        SELECT movement_mode, vehicle_type, vehicle_id, vehicle_seat_index
+        FROM player_position_samples
+        ORDER BY elapsed_time
+        """
+    )
+    assert [row["movement_mode"] for row in movement_rows] == ["foot", "vehicle"]
+    assert movement_rows[1]["vehicle_type"] == "WheeledVehicle"
+    assert movement_rows[1]["vehicle_id"] == "Dacia_A_01_C"
+    assert movement_rows[1]["vehicle_seat_index"] == 0
     assert repo.fetch_one("SELECT is_unknown FROM match_teams WHERE team_id = 'unknown'")[
         "is_unknown"
     ] == 1
@@ -74,6 +91,7 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
                 "health": 100,
                 "location": {"x": 1000, "y": 2000, "z": 300},
             },
+            "vehicle": None,
         },
         {
             "_T": "LogPlayerTakeDamage",
@@ -92,6 +110,8 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
                 "location": {"x": 2100, "y": 3100},
             },
             "damage": 18.75,
+            "damageCauserName": "WeapAK47_C",
+            "damageReason": "HeadShot",
         },
     ]
 
@@ -105,7 +125,15 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
     position = repo.fetch_one("SELECT elapsed_time FROM player_position_samples")
     life_event = repo.fetch_one(
         """
-        SELECT elapsed_time, actor_player_id, victim_player_id, x, y, damage
+        SELECT
+            elapsed_time,
+            actor_player_id,
+            victim_player_id,
+            x,
+            y,
+            damage,
+            damage_causer_name,
+            damage_reason
         FROM player_life_events
         """
     )
@@ -117,6 +145,8 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
     assert life_event["x"] == 2100
     assert life_event["y"] == 3100
     assert life_event["damage"] == 18.75
+    assert life_event["damage_causer_name"] == "WeapAK47_C"
+    assert life_event["damage_reason"] == "HeadShot"
 
 
 def test_telemetry_parser_backfills_existing_life_event_damage(
@@ -142,6 +172,8 @@ def test_telemetry_parser_backfills_existing_life_event_damage(
                 "location": {"x": 2100, "y": 3100},
             },
             "damage": 18.75,
+            "damageCauserName": "WeapM416_C",
+            "damageReason": "TorsoShot",
         },
     ]
     repo = SQLiteRepository(migrated_connection)
@@ -162,9 +194,49 @@ def test_telemetry_parser_backfills_existing_life_event_damage(
 
     result = TelemetryParser(migrated_connection).parse_match("match-1", events)
 
-    life_event = repo.fetch_one("SELECT damage FROM player_life_events")
+    life_event = repo.fetch_one(
+        "SELECT damage, damage_causer_name, damage_reason FROM player_life_events"
+    )
     assert result.life_event_count == 0
     assert life_event["damage"] == 18.75
+    assert life_event["damage_causer_name"] == "WeapM416_C"
+    assert life_event["damage_reason"] == "TorsoShot"
+
+
+def test_telemetry_parser_reads_nested_kill_damage_details(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    _seed_match(migrated_connection)
+    events = [
+        {
+            "_T": "LogPlayerKillV2",
+            "common": {"isGame": 2, "elapsedTime": 270},
+            "killer": {
+                "accountId": "account-1",
+                "name": "PlayerOne",
+                "teamId": 101,
+                "location": {"x": 2050, "y": 3050},
+            },
+            "victim": {
+                "accountId": "account-2",
+                "name": "PlayerTwo",
+                "teamId": 102,
+                "location": {"x": 2100, "y": 3100},
+            },
+            "killerDamageInfo": {
+                "damageCauserName": "WeapKar98k_C",
+                "damageReason": "HeadShot",
+            },
+        }
+    ]
+
+    TelemetryParser(migrated_connection).parse_match("match-1", events)
+
+    event = SQLiteRepository(migrated_connection).fetch_one(
+        "SELECT damage_causer_name, damage_reason FROM player_life_events"
+    )
+    assert event["damage_causer_name"] == "WeapKar98k_C"
+    assert event["damage_reason"] == "HeadShot"
 
 
 def test_telemetry_parser_is_idempotent(migrated_connection: sqlite3.Connection) -> None:

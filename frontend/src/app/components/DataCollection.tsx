@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import {
   AlertCircle,
   ArrowDown,
@@ -9,16 +10,27 @@ import {
   Database,
   Filter,
   Loader2,
+  ListChecks,
   Play,
   RotateCcw,
   Search,
   Square,
   Trash2,
-  Users,
   X,
 } from "lucide-react";
 import { api, apiErrorMessage, IngestJob, IngestMatch, PlayerSearchResult } from "../api";
 import { Alert, AlertDescription } from "./ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "./ui/alert-dialog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -46,16 +58,16 @@ import {
   TableHeader,
   TableRow,
 } from "./ui/table";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { cn } from "./ui/utils";
 
 type TaskStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
-type SourceMode = "sample" | "player";
 type MatchSortKey = "match_id" | "map_name" | "created_at" | "telemetry_parse_status" | "sample_count";
 type SortDirection = "asc" | "desc";
 type MatchStatusFilter = "all" | "completed" | "failed" | "pending";
 
 const DATA_COLLECTION_STORAGE_KEY = "pubg-zone-predictor:data-collection";
+const REPLAY_PARSE_PROFILE = "full";
+const REPLAY_POSITION_INTERVAL_SECONDS = 5;
 const PUBG_MAP_DISPLAY_NAMES: Record<string, string> = {
   Baltic_Main: "Erangel",
   Erangel_Main: "Erangel",
@@ -69,45 +81,12 @@ const PUBG_MAP_DISPLAY_NAMES: Record<string, string> = {
   Neon_Main: "Rondo",
 };
 
-const filterModes = [
-  {
-    id: "hotspot_light",
-    label: "轻量级热力图",
-    desc: "基础位置数据，处理速度快。",
-    interval: 30,
-  },
-  {
-    id: "zone_only",
-    label: "缩圈预测优先",
-    desc: "只保留圈阶段数据，适合快速补充预测样本。",
-    interval: 60,
-  },
-  {
-    id: "full",
-    label: "全量分析",
-    desc: "包含所有遥测数据，占用存储空间大。",
-    interval: 5,
-  },
-] as const;
-
-type FilterMode = (typeof filterModes)[number]["id"];
-
 type PersistedCollectionState = {
   limit?: number;
-  sourceMode?: SourceMode;
   playerQuery?: string;
   selectedPlayerNames?: string[];
-  filterMode?: FilterMode;
   currentJobId?: string | null;
 };
-
-function isSourceMode(value: unknown): value is SourceMode {
-  return value === "sample" || value === "player";
-}
-
-function isFilterMode(value: unknown): value is FilterMode {
-  return typeof value === "string" && filterModes.some((mode) => mode.id === value);
-}
 
 function clampLimit(value: unknown) {
   const numericValue = typeof value === "number" ? value : Number(value);
@@ -123,12 +102,10 @@ function readPersistedCollectionState(): PersistedCollectionState {
     const parsedValue = JSON.parse(rawValue) as Record<string, unknown>;
     return {
       limit: clampLimit(parsedValue.limit),
-      sourceMode: isSourceMode(parsedValue.sourceMode) ? parsedValue.sourceMode : undefined,
       playerQuery: typeof parsedValue.playerQuery === "string" ? parsedValue.playerQuery : undefined,
       selectedPlayerNames: Array.isArray(parsedValue.selectedPlayerNames)
         ? parsedValue.selectedPlayerNames.filter((name): name is string => typeof name === "string").slice(0, 10)
         : undefined,
-      filterMode: isFilterMode(parsedValue.filterMode) ? parsedValue.filterMode : undefined,
       currentJobId: typeof parsedValue.currentJobId === "string" ? parsedValue.currentJobId : null,
     };
   } catch {
@@ -205,11 +182,9 @@ function matchSortValue(match: IngestMatch, sortKey: MatchSortKey): string | num
 }
 
 export function DataCollection() {
+  const navigate = useNavigate();
   const [initialCollectionState] = useState(readPersistedCollectionState);
-  const [limit, setLimit] = useState(
-    initialCollectionState.limit ?? (initialCollectionState.sourceMode === "player" ? 50 : 20),
-  );
-  const [sourceMode, setSourceMode] = useState<SourceMode>(initialCollectionState.sourceMode ?? "sample");
+  const [limit, setLimit] = useState(initialCollectionState.limit ?? 20);
   const [playerQuery, setPlayerQuery] = useState(initialCollectionState.playerQuery ?? "");
   const [selectedPlayerNames, setSelectedPlayerNames] = useState<string[]>(
     initialCollectionState.selectedPlayerNames ?? [],
@@ -217,7 +192,6 @@ export function DataCollection() {
   const [playerCandidates, setPlayerCandidates] = useState<PlayerSearchResult[]>([]);
   const [isSearchingPlayer, setIsSearchingPlayer] = useState(false);
   const [playerSearchMessage, setPlayerSearchMessage] = useState<string | null>(null);
-  const [filterMode, setFilterMode] = useState<FilterMode>(initialCollectionState.filterMode ?? "hotspot_light");
   const [savedJobId, setSavedJobId] = useState<string | null>(initialCollectionState.currentJobId ?? null);
   const [isRestoringJob, setIsRestoringJob] = useState(Boolean(initialCollectionState.currentJobId));
   const [currentJob, setCurrentJob] = useState<IngestJob | null>(null);
@@ -234,10 +208,6 @@ export function DataCollection() {
   const [selectedMatchIds, setSelectedMatchIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
 
-  const selectedMode = useMemo(
-    () => filterModes.find((mode) => mode.id === filterMode) ?? filterModes[0],
-    [filterMode],
-  );
   const trimmedPlayerQuery = playerQuery.trim();
   const canSearchPlayer = trimmedPlayerQuery.length > 0 && selectedPlayerNames.length < 10;
 
@@ -286,6 +256,8 @@ export function DataCollection() {
   const visibleMatchIds = useMemo(() => filteredMatches.map((match) => match.match_id), [filteredMatches]);
   const selectedVisibleCount = visibleMatchIds.filter((matchId) => selectedMatchIds.has(matchId)).length;
   const allVisibleSelected = visibleMatchIds.length > 0 && selectedVisibleCount === visibleMatchIds.length;
+  const allMatchesSelected =
+    matches.length > 0 && matches.every((match) => selectedMatchIds.has(match.match_id));
   const selectedMatchCount = selectedMatchIds.size;
   const visibleJobIds = useMemo(() => jobs.map((job) => job.id), [jobs]);
   const selectedVisibleJobCount = visibleJobIds.filter((jobId) => selectedJobIds.has(jobId)).length;
@@ -349,13 +321,11 @@ export function DataCollection() {
   useEffect(() => {
     writePersistedCollectionState({
       limit,
-      sourceMode,
       playerQuery,
       selectedPlayerNames,
-      filterMode,
       currentJobId: currentJob?.id ?? savedJobId,
     });
-  }, [limit, sourceMode, playerQuery, selectedPlayerNames, filterMode, currentJob?.id, savedJobId]);
+  }, [limit, playerQuery, selectedPlayerNames, currentJob?.id, savedJobId]);
 
   useEffect(() => {
     if (!initialCollectionState.currentJobId) return;
@@ -446,26 +416,19 @@ export function DataCollection() {
 
   const handleStart = async () => {
     setError(null);
-    if (sourceMode === "player" && selectedPlayerNames.length === 0) {
+    if (selectedPlayerNames.length === 0) {
       setError("请至少输入一个玩家名。");
       return;
     }
     try {
-      const job =
-        sourceMode === "player"
-          ? await api.startPlayerIngest({
-              platform: "steam",
-              playerNames: selectedPlayerNames,
-              gameMode: "squad",
-              maxMatchesPerPlayer: limit,
-              parseProfile: selectedMode.id,
-              positionIntervalSeconds: selectedMode.interval,
-            })
-          : await api.startSquadSampleIngest({
-              maxMatches: limit,
-              parseProfile: selectedMode.id,
-              positionIntervalSeconds: selectedMode.interval,
-            });
+      const job = await api.startPlayerIngest({
+        platform: "steam",
+        playerNames: selectedPlayerNames,
+        gameMode: "squad",
+        maxMatchesPerPlayer: limit,
+        parseProfile: REPLAY_PARSE_PROFILE,
+        positionIntervalSeconds: REPLAY_POSITION_INTERVAL_SECONDS,
+      });
       setCurrentJob(job);
       setSavedJobId(job.id);
       setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
@@ -664,6 +627,27 @@ export function DataCollection() {
     }
   };
 
+  const handleDeleteAllMatches = async () => {
+    const matchIds = matches.map((match) => match.match_id);
+    if (matchIds.length === 0) return;
+    setError(null);
+    try {
+      await api.deleteMatches(matchIds);
+      setSelectedMatchIds(new Set());
+      await refreshMatches();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    }
+  };
+
+  const handleToggleAllMatches = () => {
+    setSelectedMatchIds(
+      allMatchesSelected
+        ? new Set()
+        : new Set(matches.map((match) => match.match_id)),
+    );
+  };
+
   const handleToggleMatch = (matchId: string, checked: boolean) => {
     setSelectedMatchIds((current) => {
       const next = new Set(current);
@@ -709,38 +693,11 @@ export function DataCollection() {
           </CardHeader>
 
           <CardContent className="flex flex-col gap-5">
-            <div className="flex flex-col gap-2">
-              <Label>采集来源</Label>
-              <ToggleGroup
-                type="single"
-                value={sourceMode}
-                onValueChange={(value) => {
-                  if (!value) return;
-                  setSourceMode(value as SourceMode);
-                  if (value === "player") setLimit((current) => Math.max(current, 50));
-                }}
-                className="grid grid-cols-2 gap-2"
-                variant="outline"
-              >
-                <ToggleGroupItem
-                  value="sample"
-                  className="rounded data-[state=on]:border-blue-500 data-[state=on]:bg-blue-500/10 data-[state=on]:text-blue-400"
-                >
-                  <Database className="size-4" />
-                  随机样本
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="player"
-                  className="rounded data-[state=on]:border-blue-500 data-[state=on]:bg-blue-500/10 data-[state=on]:text-blue-400"
-                >
-                  <Users className="size-4" />
-                  指定玩家
-                </ToggleGroupItem>
-              </ToggleGroup>
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-100">
+              统一采集完整回放数据：玩家轨迹、载具状态、伤害/击倒/淘汰事件、航线与安全区。
             </div>
 
-            {sourceMode === "player" && (
-              <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2">
                 <Label htmlFor="player-search">搜索添加玩家</Label>
                 <div className="flex gap-2">
                   <div className="relative min-w-0 flex-1">
@@ -809,13 +766,10 @@ export function DataCollection() {
                 </div>
                 {playerSearchMessage && <div className="text-xs text-yellow-500">{playerSearchMessage}</div>}
                 <div className="text-xs text-muted-foreground">已选择 {selectedPlayerNames.length} / 10，平台 steam，模式 squad。</div>
-              </div>
-            )}
+            </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="sample-limit">
-                {sourceMode === "player" ? "每个玩家最多采集（场次）" : "采集数量限制（场次）"}
-              </Label>
+              <Label htmlFor="sample-limit">每个玩家最多采集（场次）</Label>
               <Input
                 id="sample-limit"
                 type="number"
@@ -824,49 +778,13 @@ export function DataCollection() {
                 value={limit}
                 onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
               />
-              {sourceMode === "player" && (
-                <div className="text-xs text-muted-foreground">团队看板会从玩家最近 50 场四排里筛队友；这里建议采集 50 场。</div>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label>过滤模式</Label>
-              <ToggleGroup
-                type="single"
-                value={filterMode}
-                onValueChange={(value) => {
-                  if (value) setFilterMode(value as FilterMode);
-                }}
-                className="flex w-full flex-col items-stretch gap-3"
-                variant="outline"
-              >
-                {filterModes.map((mode) => (
-                  <ToggleGroupItem
-                    key={mode.id}
-                    value={mode.id}
-                    className={cn(
-                      "h-auto justify-start rounded-lg px-3 py-3 text-left",
-                      "data-[state=on]:border-blue-500 data-[state=on]:bg-blue-500/10",
-                    )}
-                  >
-                    <span className="flex min-w-0 flex-col gap-1">
-                      <span
-                        className={cn(
-                          "text-sm font-medium",
-                          filterMode === mode.id ? "text-blue-400" : "text-foreground",
-                        )}
-                      >
-                        {mode.label}
-                      </span>
-                      <span className="text-xs font-normal text-muted-foreground">{mode.desc}</span>
-                    </span>
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
+              <div className="text-xs text-muted-foreground">
+                固定使用完整回放规格，每 5 秒保留位置采样；重复对局会自动跳过。
+              </div>
             </div>
 
             <Button
-              disabled={isRestoringJob || taskStatus === "running" || (sourceMode === "player" && selectedPlayerNames.length === 0)}
+              disabled={isRestoringJob || taskStatus === "running" || selectedPlayerNames.length === 0}
               onClick={handleStart}
               className="h-11 w-full"
             >
@@ -1089,6 +1007,16 @@ export function DataCollection() {
               <CardTitle className="text-lg">已采集对局列表</CardTitle>
               <div className="flex items-center gap-2">
                 <Button
+                  type="button"
+                  onClick={handleToggleAllMatches}
+                  variant="outline"
+                  size="sm"
+                  disabled={matches.length === 0}
+                >
+                  <ListChecks data-icon="inline-start" />
+                  {allMatchesSelected ? "取消全选" : `全部选中 ${matches.length}`}
+                </Button>
+                <Button
                   onClick={() => void handleDeleteSelectedMatches()}
                   variant="destructive"
                   size="sm"
@@ -1096,6 +1024,40 @@ export function DataCollection() {
                 >
                   <Trash2 data-icon="inline-start" /> 删除选中 {selectedMatchCount || ""}
                 </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={matches.length === 0}
+                    >
+                      <Trash2 data-icon="inline-start" />
+                      清空全部
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>确认清空全部已采集对局？</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        将删除当前加载的 {matches.length} 场对局及其位置、事件和本地 telemetry
+                        缓存。此操作无法撤销。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction asChild>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => void handleDeleteAllMatches()}
+                        >
+                          确认清空
+                        </Button>
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
                 <Button onClick={() => void refreshMatches()} variant="ghost" size="icon" title="刷新">
                   {loadingMatches ? <RotateCcw className="animate-spin" /> : <Filter />}
                 </Button>
@@ -1250,9 +1212,27 @@ export function DataCollection() {
                     </TableCell>
                     <TableCell className="px-5">{matchSampleCount(match).toLocaleString()}</TableCell>
                     <TableCell className="px-5 text-right">
-                      <Button onClick={() => handleDeleteMatch(match.match_id)} variant="ghost" size="icon" title="删除">
-                        <Trash2 />
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            navigate(`/analysis?matches=${encodeURIComponent(match.match_id)}`)
+                          }
+                        >
+                          <Play data-icon="inline-start" />
+                          回放
+                        </Button>
+                        <Button
+                          onClick={() => handleDeleteMatch(match.match_id)}
+                          variant="ghost"
+                          size="icon"
+                          title="删除"
+                        >
+                          <Trash2 />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

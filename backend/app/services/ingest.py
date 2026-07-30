@@ -28,6 +28,7 @@ DEFAULT_SAMPLE_PARSE_PROFILE = PARSE_PROFILE_HOTSPOT_LIGHT
 DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS = 30
 ANALYSIS_PARSE_PROFILE = PARSE_PROFILE_FULL
 ANALYSIS_POSITION_INTERVAL_SECONDS = 5
+ANALYSIS_REPLAY_SCHEMA_VERSION = 3
 MAX_TEAM_DASHBOARD_TEAMMATES = 3
 TEAMMATE_CANDIDATE_LIMIT = 50
 TEAM_DASHBOARD_MATCH_LIMIT = 20
@@ -108,6 +109,11 @@ class MatchAnalysisPosition:
     y: float
     z: float | None
     alive: bool | None
+    health: float | None = None
+    movement_mode: str | None = None
+    vehicle_type: str | None = None
+    vehicle_id: str | None = None
+    vehicle_seat_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,8 @@ class MatchAnalysisLifeEvent:
     x: float | None
     y: float | None
     damage: float | None
+    damage_causer_name: str | None = None
+    damage_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -918,7 +926,12 @@ class IngestService:
                 x,
                 y,
                 z,
-                alive
+                alive,
+                health,
+                movement_mode,
+                vehicle_type,
+                vehicle_id,
+                vehicle_seat_index
             FROM player_position_samples
             WHERE match_id = ?
             ORDER BY elapsed_time ASC, player_id ASC
@@ -940,7 +953,9 @@ class IngestService:
                 victim.team_id AS victim_team_id,
                 le.x,
                 le.y,
-                le.damage
+                le.damage,
+                le.damage_causer_name,
+                le.damage_reason
             FROM player_life_events le
             LEFT JOIN match_rosters actor
                 ON actor.match_id = le.match_id
@@ -965,12 +980,15 @@ class IngestService:
         match = self._get_match_asset(match_id)
         has_analysis_data = self._has_match_analysis_data(match)
         needs_damage_backfill = has_analysis_data and self._has_missing_life_event_damage(match_id)
-        if has_analysis_data and not needs_damage_backfill:
+        needs_replay_backfill = (
+            has_analysis_data and not self._has_current_replay_schema(match_id)
+        )
+        if has_analysis_data and not needs_damage_backfill and not needs_replay_backfill:
             return
 
         cache_path = (
             self._existing_match_telemetry_cache(match)
-            if needs_damage_backfill
+            if needs_damage_backfill or needs_replay_backfill
             else self._ensure_match_telemetry_cache(match)
         )
         if cache_path is None:
@@ -1009,6 +1027,20 @@ class IngestService:
             (match_id,),
         )
         return row is not None
+
+    def _has_current_replay_schema(self, match_id: str) -> bool:
+        row = self.repo.fetch_one(
+            """
+            SELECT replay_schema_version
+            FROM telemetry_assets
+            WHERE match_id = ?
+            """,
+            (match_id,),
+        )
+        return bool(
+            row
+            and int(row["replay_schema_version"] or 0) >= ANALYSIS_REPLAY_SCHEMA_VERSION
+        )
 
     @staticmethod
     def _existing_match_telemetry_cache(match: IngestMatchAsset) -> Path | None:
@@ -1591,6 +1623,7 @@ class IngestService:
                 "position_interval_seconds": None,
                 "parsed_at": None,
                 "error_message": None,
+                "replay_schema_version": 0,
             },
             conflict_columns=("match_id",),
         )
@@ -1617,7 +1650,8 @@ class IngestService:
                 error_message = ?,
                 parse_profile = ?,
                 position_interval_seconds = ?,
-                parsed_at = ?
+                parsed_at = ?,
+                replay_schema_version = ?
             WHERE match_id = ?
             """,
             (
@@ -1627,6 +1661,12 @@ class IngestService:
                 parse_profile,
                 position_interval_seconds,
                 _utc_now(),
+                (
+                    ANALYSIS_REPLAY_SCHEMA_VERSION
+                    if parse_profile == ANALYSIS_PARSE_PROFILE
+                    and position_interval_seconds == ANALYSIS_POSITION_INTERVAL_SECONDS
+                    else 0
+                ),
                 match_id,
             ),
         )
@@ -2138,6 +2178,11 @@ class IngestService:
             y=float(row["y"]),
             z=float(row["z"]) if row["z"] is not None else None,
             alive=bool(alive) if alive is not None else None,
+            health=float(row["health"]) if row["health"] is not None else None,
+            movement_mode=row["movement_mode"],
+            vehicle_type=row["vehicle_type"],
+            vehicle_id=row["vehicle_id"],
+            vehicle_seat_index=row["vehicle_seat_index"],
         )
 
     @staticmethod
@@ -2156,6 +2201,8 @@ class IngestService:
             x=float(row["x"]) if row["x"] is not None else None,
             y=float(row["y"]) if row["y"] is not None else None,
             damage=float(row["damage"]) if row["damage"] is not None else None,
+            damage_causer_name=row["damage_causer_name"],
+            damage_reason=row["damage_reason"],
         )
 
     @staticmethod
