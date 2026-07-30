@@ -122,6 +122,9 @@ const FLIGHT_PATH_EARLY_WINDOW_SECONDS = 180;
 const FLIGHT_PATH_MIN_POINTS = 6;
 const PLAYBACK_FRAME_INTERVAL_MS = 50;
 const PLAYER_LABEL_ZOOM_THRESHOLD = 1.7;
+const PLAYER_MARKER_LABEL_HEIGHT = 21;
+const PLAYER_MARKER_LABEL_Y = 7;
+const PLAYER_MARKER_RADIUS = 9.5;
 
 type LayerId = "route" | "combat" | "eliminations" | "zones" | "flightPath";
 type TeamSummary = {
@@ -188,7 +191,7 @@ type MarkerCollisionBox = {
 };
 
 function markerWidthForLabel(label: string) {
-  return Math.max(48, Math.min(116, label.length * 6.6 + 12));
+  return Math.max(52, Math.min(132, label.length * 7.1 + 14));
 }
 
 function markerBoxesOverlap(left: MarkerCollisionBox, right: MarkerCollisionBox) {
@@ -213,7 +216,7 @@ function layoutPlayerMarkers(inputs: PlayerMarkerLayoutInput[]) {
   for (const input of orderedInputs) {
     const markerWidth = markerWidthForLabel(input.label);
     const horizontalStep = markerWidth + 8;
-    const verticalStep = 22;
+    const verticalStep = PLAYER_MARKER_LABEL_HEIGHT + 6;
     const candidates = [{ x: 0, y: 0 }];
     for (let ring = 1; ring <= 3; ring += 1) {
       candidates.push(
@@ -236,8 +239,8 @@ function layoutPlayerMarkers(inputs: PlayerMarkerLayoutInput[]) {
       const box = {
         left: centerX - markerWidth / 2 - 4,
         right: centerX + markerWidth / 2 + 4,
-        top: centerY + 5,
-        bottom: centerY + 25,
+        top: centerY + PLAYER_MARKER_LABEL_Y - 2,
+        bottom: centerY + PLAYER_MARKER_LABEL_Y + PLAYER_MARKER_LABEL_HEIGHT + 2,
       };
       if (placedBoxes.every((placedBox) => !markerBoxesOverlap(box, placedBox))) {
         selectedOffset = candidate;
@@ -252,8 +255,8 @@ function layoutPlayerMarkers(inputs: PlayerMarkerLayoutInput[]) {
       selectedBox = {
         left: centerX - markerWidth / 2 - 4,
         right: centerX + markerWidth / 2 + 4,
-        top: centerY + 5,
-        bottom: centerY + 25,
+        top: centerY + PLAYER_MARKER_LABEL_Y - 2,
+        bottom: centerY + PLAYER_MARKER_LABEL_Y + PLAYER_MARKER_LABEL_HEIGHT + 2,
       };
     }
     placedBoxes.push(selectedBox);
@@ -1705,6 +1708,15 @@ export function PlayerMatchAnalysis() {
                         <feMergeNode in="SourceGraphic" />
                       </feMerge>
                     </filter>
+                    <filter id="player-marker-shadow" x="-30%" y="-40%" width="160%" height="190%">
+                      <feDropShadow
+                        dx="0"
+                        dy="1.5"
+                        stdDeviation="1.4"
+                        floodColor="#020504"
+                        floodOpacity="0.72"
+                      />
+                    </filter>
                   </defs>
                   <rect width={MAP_VIEW_SIZE} height={MAP_VIEW_SIZE} fill="url(#analysis-grid)" />
 
@@ -1789,7 +1801,7 @@ export function PlayerMatchAnalysis() {
                     const label = player ? playerDisplayName(player) : position.player_id;
                     const isSelectedTeam = position.team_id === selectedTeamId;
                     const isSelectedPlayer = position.player_id === selectedPlayer?.player_id;
-                    const markerOpacity = isSelectedPlayer ? 0.96 : isSelectedTeam ? 0.84 : 0.72;
+                    const markerOpacity = isSelectedPlayer ? 1 : isSelectedTeam ? 0.96 : 0.88;
                     const showPlayerLabel =
                       isSelectedTeam ||
                       isSelectedPlayer ||
@@ -1800,10 +1812,6 @@ export function PlayerMatchAnalysis() {
                     const markerOffsetY = markerLayout?.offsetY ?? 0;
                     const isMarkerDisplaced =
                       Math.abs(markerOffsetX) > 0.5 || Math.abs(markerOffsetY) > 0.5;
-                    const markerRotation =
-                      position.movement_mode === "vehicle" || position.heading === null
-                        ? 0
-                        : position.heading + 90;
                     const stateLabel = movementStateLabel(position);
                     return (
                       <g
@@ -1845,97 +1853,80 @@ export function PlayerMatchAnalysis() {
                         <g
                           transform={`translate(${markerOffsetX} ${markerOffsetY})`}
                           opacity={markerOpacity}
+                          filter="url(#player-marker-shadow)"
                         >
-                        {position.movement_mode === "foot" && position.heading !== null && (
-                          <g transform={`rotate(${markerRotation})`} pointerEvents="none">
-                            <path
-                              d="M 0 -13 L 4 -7 L -4 -7 Z"
-                              fill="#ffffff"
-                              stroke="#09090b"
-                              strokeWidth="1.2"
-                              strokeLinejoin="round"
-                            />
-                          </g>
-                        )}
-                        {showPlayerLabel && (
-                          <g
-                            transform={`translate(${-markerWidth / 2} 6)`}
-                          >
-                            <rect
-                              x="0"
-                              y="0"
-                              width={markerWidth}
-                              height="18"
-                              rx="1"
-                              fill={color}
-                              stroke={isSelectedPlayer ? "#ffffff" : "rgba(9,9,11,0.9)"}
-                              strokeWidth={isSelectedPlayer ? 1.5 : 1}
-                            />
-                            <text
-                              x="6"
-                              y="12.5"
-                              fill="#ffffff"
-                              stroke="rgba(0,0,0,0.35)"
-                              strokeWidth="0.75"
-                              paintOrder="stroke"
-                              fontSize="10.5"
-                              fontWeight={isSelectedPlayer ? 800 : 650}
-                              textAnchor="start"
+                          {showPlayerLabel && (
+                            <g
+                              transform={`translate(${-markerWidth / 2} ${PLAYER_MARKER_LABEL_Y})`}
                             >
-                              {label}
-                            </text>
-                          </g>
-                        )}
-                        <g
-                          transform={`scale(${isSelectedPlayer ? 1.08 : isSelectedTeam ? 1.03 : 0.94})`}
-                        >
-                          <circle
-                            cx="0"
-                            cy="0"
-                            r="9"
-                            fill={color}
-                            stroke={isSelectedPlayer ? "#ffffff" : "rgba(9,9,11,0.95)"}
-                            strokeWidth={isSelectedPlayer ? 1.75 : 1.5}
-                          />
-                          {position.movement_mode === "vehicle" && (
-                            <g pointerEvents="none" opacity="0.55">
-                              <circle
-                                cx="0"
-                                cy="0"
-                                r="6.3"
-                                fill="none"
-                                stroke="#ffffff"
-                                strokeWidth="0.75"
+                              <rect
+                                x="0"
+                                y="0"
+                                width={markerWidth}
+                                height={PLAYER_MARKER_LABEL_HEIGHT}
+                                rx="1.5"
+                                fill={color}
+                                stroke={isSelectedPlayer ? "#f8faf0" : "rgba(230,235,216,0.72)"}
+                                strokeWidth={isSelectedPlayer ? 1.4 : 0.85}
                               />
-                              <path
-                                d="M -5.6 -1.8 H 5.6 M 0 1 V 6 M -4.8 -1.5 L -1.2 1.5 M 4.8 -1.5 L 1.2 1.5"
-                                fill="none"
-                                stroke="#ffffff"
-                                strokeWidth="0.7"
-                                strokeLinecap="round"
+                              <rect
+                                x="0"
+                                y="0"
+                                width={markerWidth}
+                                height={PLAYER_MARKER_LABEL_HEIGHT}
+                                rx="1.5"
+                                fill="#143331"
+                                opacity="0.48"
                               />
+                              <text
+                                x="7"
+                                y="14.6"
+                                fill="#f0f1dd"
+                                fontFamily="Arial, Helvetica, sans-serif"
+                                fontSize="12"
+                                fontWeight={isSelectedPlayer ? 700 : 600}
+                                textAnchor="start"
+                              >
+                                {label}
+                              </text>
                             </g>
                           )}
-                          <text
-                            x="0"
-                            y="3.25"
-                            fill="#ffffff"
-                            stroke="rgba(0,0,0,0.45)"
-                            strokeWidth="1"
-                            paintOrder="stroke"
-                            fontSize={
-                              position.team_id.length >= 3
-                                ? 7
-                                : position.team_id.length === 2
-                                  ? 8
-                                  : 10
-                            }
-                            fontWeight="900"
-                            textAnchor="middle"
+                          <g
+                            transform={`scale(${isSelectedPlayer ? 1.08 : isSelectedTeam ? 1.03 : 0.94})`}
                           >
-                            {position.team_id}
-                          </text>
-                        </g>
+                            <circle
+                              cx="0"
+                              cy="0"
+                              r={PLAYER_MARKER_RADIUS}
+                              fill={color}
+                              stroke={isSelectedPlayer ? "#ffffff" : "rgba(235,238,220,0.9)"}
+                              strokeWidth={isSelectedPlayer ? 1.6 : 1.15}
+                            />
+                            <circle
+                              cx="0"
+                              cy="0"
+                              r={PLAYER_MARKER_RADIUS - 0.7}
+                              fill="#143331"
+                              opacity="0.32"
+                            />
+                            <text
+                              x="0"
+                              y="3.5"
+                              fill="#f0f1dd"
+                              fontFamily="Arial, Helvetica, sans-serif"
+                              fontSize={
+                                position.team_id.length >= 3
+                                  ? 7.5
+                                  : position.team_id.length === 2
+                                    ? 9
+                                    : 10.5
+                              }
+                              fontWeight="700"
+                              textAnchor="middle"
+                            >
+                              {position.team_id}
+                            </text>
+                          </g>
                         </g>
                       </g>
                     );
