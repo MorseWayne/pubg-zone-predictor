@@ -21,7 +21,6 @@ import {
   Shield,
   Skull,
   Swords,
-  Target,
   ZoomIn,
   ZoomOut,
   GripVertical,
@@ -622,13 +621,6 @@ function teamSummaries(players: MatchAnalysisPlayer[]) {
 
 function isEliminationEvent(event: MatchAnalysisLifeEvent) {
   return event.event_type === "LogPlayerKill" || event.event_type === "LogPlayerKillV2";
-}
-
-function isCombatEvent(event: MatchAnalysisLifeEvent) {
-  return (
-    isEliminationEvent(event) ||
-    event.event_type === "LogPlayerMakeGroggy"
-  );
 }
 
 function isFireTracerEvent(event: MatchAnalysisLifeEvent) {
@@ -1661,36 +1653,14 @@ export function PlayerMatchAnalysis() {
       }),
     [routeEndpoints, routePositions, selectedTeam, worldSize],
   );
-  const { combatEvents, eliminationEvents } = useMemo(() => {
-    const nextEliminationEvents = selectedEvents.filter(isEliminationEvent);
-    const eliminationTimesByVictim = new Map<string, number[]>();
-    for (const event of nextEliminationEvents) {
-      if (!event.victim_player_id) continue;
-      const times = eliminationTimesByVictim.get(event.victim_player_id) ?? [];
-      times.push(event.elapsed_time);
-      eliminationTimesByVictim.set(event.victim_player_id, times);
-    }
-    const nextCombatEvents = selectedEvents.filter(isCombatEvent).filter((event) => {
-      if (isEliminationEvent(event)) return true;
-      if (!event.victim_player_id) return true;
-      return !(eliminationTimesByVictim.get(event.victim_player_id) ?? []).some(
-        (elapsedTime) =>
-          elapsedTime >= event.elapsed_time &&
-          elapsedTime <= event.elapsed_time + 60,
-      );
-    });
-    return {
-      combatEvents: nextCombatEvents,
-      eliminationEvents: nextEliminationEvents,
-    };
-  }, [selectedEvents]);
+  const eliminationEvents = useMemo(
+    () => selectedEvents.filter(isEliminationEvent),
+    [selectedEvents],
+  );
 
   const clusteredMapEvents = useMemo(() => {
     if (!analysis) return [];
     let activeEvents: MatchAnalysisLifeEvent[] = [];
-    if (layers.includes("combat")) {
-      activeEvents = activeEvents.concat(combatEvents.filter(e => e.point && !isEliminationEvent(e)));
-    }
     if (layers.includes("eliminations")) {
       activeEvents = activeEvents.concat(eliminationEvents.filter(e => e.point));
     }
@@ -1718,7 +1688,7 @@ export function PlayerMatchAnalysis() {
       }
     });
     return clusters;
-  }, [analysis, layers, combatEvents, eliminationEvents, mapTransform.scale, worldSize]);
+  }, [analysis, layers, eliminationEvents, mapTransform.scale, worldSize]);
   const refreshMatches = useCallback(async () => {
     setError(null);
     setIsLoading(true);
@@ -2506,69 +2476,39 @@ export function PlayerMatchAnalysis() {
                     if (cluster.events.length === 1) {
                       const event = cluster.events[0];
                       const color = playerColor(eventTeamPlayerId(event, selectedTeamId), selectedTeam);
-                      const isKill = isEliminationEvent(event);
-                      const isKnockdown = event.event_type === "LogPlayerMakeGroggy";
-                      const action = isKill ? "淘汰" : (isKnockdown ? "击倒" : "攻击");
-                      const label = `${event.actor_player_name || "未知"} ${action}了 ${event.victim_player_name || "未知"}`;
-                      
-                      if (isKill) {
-                        return (
-                          <Tooltip key={cluster.id}>
-                            <TooltipTrigger asChild>
-                              <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
-                                <circle cx="0" cy="0" r="10" fill="rgba(244,63,94,0.3)" stroke={color} strokeWidth="1.5" />
-                                <Skull x="-7" y="-7" width="14" height="14" color="#fff" style={{ filter: `drop-shadow(0px 0px 3px ${color})` }} />
-                              </g>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="border-red-500/30 bg-black/90 text-red-50">
-                              <p className="font-medium">{label}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        );
-                      } else {
-                        return (
-                          <Tooltip key={cluster.id}>
-                            <TooltipTrigger asChild>
-                              <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
-                                <circle cx="0" cy="0" r="7" fill="rgba(250,204,21,0.2)" stroke={color} strokeWidth="1.5" strokeDasharray={isKnockdown ? "" : "2 2"} />
-                                <Target x="-6" y="-6" width="12" height="12" color={color} strokeWidth={isKnockdown ? 2.5 : 2} />
-                              </g>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="border-yellow-500/30 bg-black/90 text-yellow-50">
-                              <p className="font-medium">{label}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        );
-                      }
-                    } else {
-                      const killCount = cluster.events.filter(isEliminationEvent).length;
-                      const hasKills = killCount > 0;
-                      const baseColor = hasKills ? "rgba(244,63,94,1)" : "rgba(250,204,21,1)";
-                      const bgColor = hasKills ? "rgba(244,63,94,0.4)" : "rgba(250,204,21,0.4)";
-                      
+                      const label = `${event.actor_player_name || "未知"} 淘汰了 ${event.victim_player_name || "未知"}`;
                       return (
                         <Tooltip key={cluster.id}>
                           <TooltipTrigger asChild>
                             <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
-                              <circle cx="0" cy="0" r="12" fill={bgColor} stroke={baseColor} strokeWidth="1.5" />
-                              <circle cx="0" cy="0" r="16" fill="none" stroke={baseColor} strokeWidth="1.5" strokeDasharray="3 3" className="animate-[spin_4s_linear_infinite]" opacity="0.8" />
+                              <circle cx="0" cy="0" r="10" fill="rgba(244,63,94,0.3)" stroke={color} strokeWidth="1.5" />
+                              <Skull x="-7" y="-7" width="14" height="14" color="#fff" style={{ filter: `drop-shadow(0px 0px 3px ${color})` }} />
+                            </g>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="border-red-500/30 bg-black/90 text-red-50">
+                            <p className="font-medium">{label}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    } else {
+                      return (
+                        <Tooltip key={cluster.id}>
+                          <TooltipTrigger asChild>
+                            <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
+                              <circle cx="0" cy="0" r="12" fill="rgba(244,63,94,0.4)" stroke="rgba(244,63,94,1)" strokeWidth="1.5" />
+                              <circle cx="0" cy="0" r="16" fill="none" stroke="rgba(244,63,94,1)" strokeWidth="1.5" strokeDasharray="3 3" className="animate-[spin_4s_linear_infinite]" opacity="0.8" />
                               <text x="0" y="3.5" fontSize="10" fontWeight="bold" fill="#fff" textAnchor="middle">{cluster.events.length}</text>
                             </g>
                           </TooltipTrigger>
-                          <TooltipContent side="top" className={`bg-black/90 text-white ${hasKills ? 'border-red-500/30' : 'border-yellow-500/30'}`}>
+                          <TooltipContent side="top" className="border-red-500/30 bg-black/90 text-white">
                             <div className="flex flex-col gap-1">
-                              {cluster.events.map((event, i) => {
-                                const isKill = isEliminationEvent(event);
-                                const isKnockdown = event.event_type === "LogPlayerMakeGroggy";
-                                const action = isKill ? "淘汰" : (isKnockdown ? "击倒" : "攻击");
-                                return (
-                                  <p key={i} className="text-xs">
-                                    <span className="opacity-80">{event.actor_player_name || "未知"}</span>
-                                    <span className={isKill ? "text-red-400 mx-1" : "text-yellow-400 mx-1"}>{action}了</span>
-                                    <span className="opacity-80">{event.victim_player_name || "未知"}</span>
-                                  </p>
-                                );
-                              })}
+                              {cluster.events.map((event) => (
+                                <p key={event.id} className="text-xs">
+                                  <span className="opacity-80">{event.actor_player_name || "未知"}</span>
+                                  <span className="mx-1 text-red-400">淘汰了</span>
+                                  <span className="opacity-80">{event.victim_player_name || "未知"}</span>
+                                </p>
+                              ))}
                             </div>
                           </TooltipContent>
                         </Tooltip>
