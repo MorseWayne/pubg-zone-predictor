@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   Check,
   ChevronsUpDown,
+  Eye,
+  EyeOff,
   Loader2,
   MapPinned,
   RefreshCw,
@@ -1032,6 +1034,10 @@ export function PlayerMatchAnalysis() {
     const savedSpeed = Number(localStorage.getItem("pzp_analysis_playbackSpeed"));
     return PLAYBACK_SPEEDS.some((speed) => speed === savedSpeed) ? savedSpeed : 5;
   });
+  const [showKillFeed, setShowKillFeed] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return localStorage.getItem("pzp_analysis_showKillFeed") !== "false";
+  });
 
   const [layersPanelPos, setLayersPanelPos] = useState(() => {
     if (typeof window !== "undefined") {
@@ -1061,6 +1067,15 @@ export function PlayerMatchAnalysis() {
       localStorage.setItem("pzp_analysis_playbackSpeed", String(playbackSpeed));
     }
   }, [playbackSpeed]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        "pzp_analysis_showKillFeed",
+        String(showKillFeed),
+      );
+    }
+  }, [showKillFeed]);
 
   useEffect(
     () => () => {
@@ -2807,6 +2822,22 @@ export function PlayerMatchAnalysis() {
                     航线
                   </ToggleGroupItem>
                 </ToggleGroup>
+                <Button
+                  type="button"
+                  variant={showKillFeed ? "secondary" : "ghost"}
+                  className="ml-1 h-8 px-2 text-xs"
+                  aria-label={showKillFeed ? "隐藏淘汰信息" : "显示淘汰信息"}
+                  aria-pressed={showKillFeed}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={() => setShowKillFeed((current) => !current)}
+                >
+                  {showKillFeed ? (
+                    <Eye className="mr-1.5 size-3.5" />
+                  ) : (
+                    <EyeOff className="mr-1.5 size-3.5" />
+                  )}
+                  战报
+                </Button>
               </div>
 
               <div className="absolute right-3 top-3 flex items-center gap-1 rounded border border-border bg-card/90 p-1 shadow-sm backdrop-blur-sm">
@@ -2870,8 +2901,29 @@ export function PlayerMatchAnalysis() {
                 </div>
               )}
 
-              {recentKillFeed.length > 0 && (
-                <div className="pointer-events-none absolute right-3 top-14 flex w-[min(420px,55%)] flex-col gap-1.5">
+              {showKillFeed && recentKillFeed.length > 0 && (
+                <div
+                  className="pointer-events-auto absolute right-3 top-14 flex w-[min(420px,55%)] flex-col gap-1.5"
+                  data-kill-feed-panel
+                >
+                  <div className="flex items-center justify-between rounded border border-border bg-card/95 px-2.5 py-1 text-xs shadow-sm backdrop-blur-sm">
+                    <span className="flex items-center gap-1.5 font-semibold">
+                      <Skull className="size-3.5 text-red-400" />
+                      淘汰信息
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-6"
+                      aria-label="收起淘汰信息"
+                      title="收起淘汰信息"
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClick={() => setShowKillFeed(false)}
+                    >
+                      <EyeOff className="size-3.5" />
+                    </Button>
+                  </div>
                   {recentKillFeed.map((event) => {
                     const eventColor = teamColor(
                       event.actor_team_id ?? event.victim_team_id ?? "unknown",
