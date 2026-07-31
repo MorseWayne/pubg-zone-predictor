@@ -28,6 +28,7 @@ interface MapViewProps {
 }
 
 const MAP_VIEW_SIZE = 1000;
+const MAX_MAP_SCALE = 64;
 const ZONE_MARKER_RADIUS = 2.5;
 const TEAM_MARKER_RADIUS = 3.5;
 const TEAM_MARKER_PULSE_RADIUS = 7;
@@ -135,7 +136,7 @@ export function MapView({
     e.stopPropagation();
     const scaleChange = e.deltaY < 0 ? 1.1 : 0.9;
     let newScale = transform.scale * scaleChange;
-    newScale = Math.max(1, Math.min(newScale, 8));
+    newScale = Math.max(1, Math.min(newScale, MAX_MAP_SCALE));
 
     if (newScale === transform.scale) return;
 

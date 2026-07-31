@@ -143,7 +143,10 @@ export function TeamDashboard() {
     try {
       const payload = await api.listLocalPlayers(100);
       setPlayers(payload.players);
-      setSelectedPlayerId((current) => current || payload.players[0]?.player_id || "");
+      setSelectedPlayerId((current) => {
+        if (payload.players.some((player) => player.player_id === current)) return current;
+        return payload.players[0]?.player_id || "";
+      });
     } catch (err) {
       setError(apiErrorMessage(err));
     } finally {

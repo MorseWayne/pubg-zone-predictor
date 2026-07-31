@@ -22,6 +22,8 @@ LIFE_EVENT_TYPES = {
     "LogPlayerRevive",
     "LogPlayerTakeDamage",
 }
+TARGETED_ATTACK_EVENT_TYPE = "LogPlayerAttack"
+ATTACK_BURST_MAX_GAP_SECONDS = 2.0
 MATCH_START_EVENT_TYPES = {"LogMatchStart"}
 
 
@@ -44,6 +46,7 @@ class TelemetryTimeline:
     def from_events(cls, events: list[dict[str, Any]]) -> TelemetryTimeline:
         first_timestamp: float | None = None
         match_start_timestamp: float | None = None
+        explicit_origin_timestamp: float | None = None
 
         for event in events:
             timestamp = _event_timestamp(event)
@@ -53,23 +56,32 @@ class TelemetryTimeline:
                 first_timestamp = timestamp
 
             explicit_elapsed_time = _explicit_elapsed_time(event)
-            if explicit_elapsed_time is not None:
-                return cls(origin_timestamp=timestamp - explicit_elapsed_time)
+            if explicit_elapsed_time is not None and explicit_origin_timestamp is None:
+                explicit_origin_timestamp = timestamp - explicit_elapsed_time
 
             if match_start_timestamp is None and _event_type(event) in MATCH_START_EVENT_TYPES:
                 match_start_timestamp = timestamp
 
-        return cls(origin_timestamp=match_start_timestamp or first_timestamp)
+        return cls(
+            origin_timestamp=(
+                match_start_timestamp or explicit_origin_timestamp or first_timestamp
+            )
+        )
 
     def elapsed_time(self, event: dict[str, Any]) -> float | None:
-        explicit_elapsed_time = _explicit_elapsed_time(event)
-        if explicit_elapsed_time is not None:
-            return explicit_elapsed_time
-
         timestamp = _event_timestamp(event)
-        if timestamp is None or self.origin_timestamp is None:
-            return None
-        return max(0.0, round(timestamp - self.origin_timestamp, 3))
+        if timestamp is not None and self.origin_timestamp is not None:
+            return max(0.0, round(timestamp - self.origin_timestamp, 3))
+
+        return _explicit_elapsed_time(event)
+
+    def is_before_origin(self, event: dict[str, Any]) -> bool:
+        timestamp = _event_timestamp(event)
+        return bool(
+            timestamp is not None
+            and self.origin_timestamp is not None
+            and timestamp < self.origin_timestamp
+        )
 
 
 @dataclass
@@ -85,7 +97,13 @@ class TelemetryParser:
             raise ValueError(f"parse_profile must be one of {sorted(PARSE_PROFILES)}")
         self.repo = SQLiteRepository(self.connection)
 
-    def parse_match(self, match_id: str, events: list[dict[str, Any]]) -> TelemetryParseResult:
+    def parse_match(
+        self,
+        match_id: str,
+        events: list[dict[str, Any]],
+        *,
+        replace_existing: bool = False,
+    ) -> TelemetryParseResult:
         if not isinstance(events, list):
             raise AppError(
                 code="TELEMETRY_FORMAT_INVALID",
@@ -93,39 +111,61 @@ class TelemetryParser:
                 status_code=400,
             )
 
-        warnings: list[str] = []
-        events_to_parse = [event for event in events if isinstance(event, dict)]
-        if len(events_to_parse) != len(events):
-            warnings.append("skipped non-object telemetry events")
-        timeline = TelemetryTimeline.from_events(events_to_parse)
-        counts = {
-            "circle_phase_count": 0,
-            "team_count": 0,
-            "roster_count": 0,
-            "position_sample_count": 0,
-            "life_event_count": 0,
-        }
+        savepoint = f"telemetry_parse_{id(self):x}"
+        self.connection.execute(f"SAVEPOINT {savepoint}")
+        try:
+            if replace_existing:
+                self._clear_match_analysis_rows(match_id)
 
-        circle_rows = self._circle_rows(match_id, events_to_parse, timeline, warnings)
-        for row in circle_rows:
-            counts["circle_phase_count"] += self.repo.insert_or_ignore(
-                "circle_phases",
-                row,
-            ).rowcount
+            warnings: list[str] = []
+            events_to_parse = [event for event in events if isinstance(event, dict)]
+            if len(events_to_parse) != len(events):
+                warnings.append("skipped non-object telemetry events")
+            timeline = TelemetryTimeline.from_events(events_to_parse)
+            counts = {
+                "circle_phase_count": 0,
+                "team_count": 0,
+                "roster_count": 0,
+                "position_sample_count": 0,
+                "life_event_count": 0,
+            }
 
-        if self.parse_profile == PARSE_PROFILE_ZONE_ONLY:
+            circle_rows = self._circle_rows(match_id, events_to_parse, timeline, warnings)
+            for row in circle_rows:
+                counts["circle_phase_count"] += self.repo.insert_or_ignore(
+                    "circle_phases",
+                    row,
+                ).rowcount
+
+            if self.parse_profile != PARSE_PROFILE_ZONE_ONLY:
+                for event in events_to_parse:
+                    if timeline.is_before_origin(event):
+                        continue
+                    event_type = _event_type(event)
+                    if event_type in POSITION_EVENT_TYPES:
+                        self._parse_position_event(match_id, event, timeline, counts, warnings)
+                    elif event_type in LIFE_EVENT_TYPES:
+                        self._parse_life_event(match_id, event, timeline, counts, warnings)
+                for event in _targeted_attack_events(events_to_parse):
+                    if not timeline.is_before_origin(event):
+                        self._parse_life_event(match_id, event, timeline, counts, warnings)
+
+            result = TelemetryParseResult(
+                event_count=len(events),
+                warnings=warnings,
+                **counts,
+            )
+            self.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
             self.connection.commit()
-            return TelemetryParseResult(event_count=len(events), warnings=warnings, **counts)
+            return result
+        except Exception:
+            self.connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            self.connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
 
-        for event in events_to_parse:
-            event_type = _event_type(event)
-            if event_type in POSITION_EVENT_TYPES:
-                self._parse_position_event(match_id, event, timeline, counts, warnings)
-            elif event_type in LIFE_EVENT_TYPES:
-                self._parse_life_event(match_id, event, timeline, counts, warnings)
-
-        self.connection.commit()
-        return TelemetryParseResult(event_count=len(events), warnings=warnings, **counts)
+    def _clear_match_analysis_rows(self, match_id: str) -> None:
+        for table in ("player_life_events", "player_position_samples", "circle_phases"):
+            self.repo.execute(f"DELETE FROM {table} WHERE match_id = ?", (match_id,))
 
     def _circle_rows(
         self,
@@ -135,15 +175,22 @@ class TelemetryParser:
         warnings: list[str],
     ) -> list[dict[str, Any]]:
         by_phase: dict[int, dict[str, Any]] = {}
+        incomplete_counts: dict[int | None, int] = {}
         for event in events:
             if _event_type(event) != "LogGameStatePeriodic":
+                continue
+            if timeline.is_before_origin(event):
                 continue
             row = self._circle_row(match_id, event, timeline)
             if row is None:
                 phase = _phase(event)
-                warnings.append(f"skipped incomplete circle phase sample: phase={phase}")
+                incomplete_counts[phase] = incomplete_counts.get(phase, 0) + 1
                 continue
             by_phase.setdefault(row["phase"], row)
+        for phase, count in incomplete_counts.items():
+            warnings.append(
+                f"skipped incomplete circle phase samples: phase={phase}, count={count}"
+            )
         return [by_phase[phase] for phase in sorted(by_phase)]
 
     def _circle_row(
@@ -268,7 +315,10 @@ class TelemetryParser:
                         _player_name(character),
                     )
 
-        location = _location(victim or {}) or _location(actor or {}) or _location(event)
+        if _event_type(event) == TARGETED_ATTACK_EVENT_TYPE:
+            location = _location(actor or {}) or _location(event)
+        else:
+            location = _location(victim or {}) or _location(actor or {}) or _location(event)
         damage = _number(event.get("damage"))
         values = {
             "match_id": match_id,
@@ -391,6 +441,126 @@ class TelemetryParser:
 
 def _event_type(event: dict[str, Any]) -> str:
     return str(event.get("_T") or event.get("type") or "")
+
+
+def _targeted_attack_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    damage_events_by_attack_id: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        if _event_type(event) != "LogPlayerTakeDamage":
+            continue
+        attack_id = _attack_id(event)
+        if attack_id is None:
+            continue
+        damage_events_by_attack_id.setdefault(attack_id, []).append(event)
+
+    attacks_by_stream: dict[
+        tuple[str, str | None], list[tuple[float, dict[str, Any]]]
+    ] = {}
+    for event in events:
+        if _event_type(event) != TARGETED_ATTACK_EVENT_TYPE:
+            continue
+        attack_id = _attack_id(event)
+        attacker = _character(event.get("attacker"))
+        attacker_id = _player_id(attacker)
+        attack_time = _event_timestamp(event)
+        if attack_time is None:
+            attack_time = _explicit_elapsed_time(event)
+        if attack_id is None or attacker_id is None or attack_time is None:
+            continue
+        stream_key = (attacker_id, _weapon_item_id(event))
+        attacks_by_stream.setdefault(stream_key, []).append((attack_time, event))
+
+    linked_events: list[dict[str, Any]] = []
+    for attacks in attacks_by_stream.values():
+        attacks.sort(key=lambda item: item[0])
+        burst: list[tuple[float, dict[str, Any]]] = []
+        for attack in attacks:
+            if burst and attack[0] - burst[-1][0] > ATTACK_BURST_MAX_GAP_SECONDS:
+                _append_targeted_attack_burst(
+                    linked_events,
+                    burst,
+                    damage_events_by_attack_id,
+                )
+                burst = []
+            burst.append(attack)
+        _append_targeted_attack_burst(
+            linked_events,
+            burst,
+            damage_events_by_attack_id,
+        )
+    return linked_events
+
+
+def _append_targeted_attack_burst(
+    linked_events: list[dict[str, Any]],
+    burst: list[tuple[float, dict[str, Any]]],
+    damage_events_by_attack_id: dict[str, list[dict[str, Any]]],
+) -> None:
+    anchors: list[tuple[float, list[dict[str, Any]]]] = []
+    for attack_time, event in burst:
+        target_events = _attack_target_events(event, damage_events_by_attack_id)
+        if target_events:
+            anchors.append((attack_time, target_events))
+    if not anchors:
+        return
+
+    for attack_time, event in burst:
+        target_events = _attack_target_events(event, damage_events_by_attack_id)
+        is_inferred_target = not target_events
+        if is_inferred_target:
+            target_events = min(
+                anchors,
+                key=lambda anchor: abs(anchor[0] - attack_time),
+            )[1]
+        for damage_event in target_events:
+            victim = _character(damage_event.get("victim"))
+            linked_event = dict(event)
+            linked_event["victim"] = victim
+            linked_event["damageCauserName"] = (
+                _damage_causer_name(damage_event) or _weapon_item_id(event)
+            )
+            linked_event["damageReason"] = (
+                None if is_inferred_target else _damage_reason(damage_event)
+            )
+            linked_events.append(linked_event)
+
+
+def _attack_target_events(
+    attack_event: dict[str, Any],
+    damage_events_by_attack_id: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    attack_id = _attack_id(attack_event)
+    attacker_id = _player_id(_character(attack_event.get("attacker")))
+    if attack_id is None or attacker_id is None:
+        return []
+
+    target_events: list[dict[str, Any]] = []
+    seen_victim_ids: set[str] = set()
+    for damage_event in damage_events_by_attack_id.get(attack_id, []):
+        damage_attacker = _character(damage_event.get("attacker"))
+        victim = _character(damage_event.get("victim"))
+        victim_id = _player_id(victim)
+        if (
+            _player_id(damage_attacker) != attacker_id
+            or victim_id is None
+            or victim_id in seen_victim_ids
+        ):
+            continue
+        seen_victim_ids.add(victim_id)
+        target_events.append(damage_event)
+    return target_events
+
+
+def _attack_id(event: dict[str, Any]) -> str | None:
+    value = event.get("attackId")
+    if value is None or isinstance(value, bool):
+        return None
+    return str(value)
+
+
+def _weapon_item_id(event: dict[str, Any]) -> str | None:
+    value = _dict(event.get("weapon")).get("itemId")
+    return str(value) if value else None
 
 
 def _phase(event: dict[str, Any]) -> int | None:

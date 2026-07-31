@@ -30,6 +30,43 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 
+const DATA_PREPARATION_STORAGE_KEY = "pubg-zone-predictor:data-preparation";
+
+type PersistedPreparationState = {
+  selectedMap?: string;
+  phase?: number;
+};
+
+function readPersistedPreparationState(): PersistedPreparationState {
+  if (typeof window === "undefined") return {};
+  try {
+    const rawValue = window.localStorage.getItem(DATA_PREPARATION_STORAGE_KEY);
+    if (!rawValue) return {};
+    const parsedValue = JSON.parse(rawValue) as Record<string, unknown>;
+    return {
+      selectedMap: typeof parsedValue.selectedMap === "string" ? parsedValue.selectedMap : undefined,
+      phase:
+        typeof parsedValue.phase === "number" &&
+        Number.isInteger(parsedValue.phase) &&
+        parsedValue.phase >= 1 &&
+        parsedValue.phase <= 8
+          ? parsedValue.phase
+          : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writePersistedPreparationState(state: Required<PersistedPreparationState>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DATA_PREPARATION_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Persistence is optional; preparation still works when browser storage is unavailable.
+  }
+}
+
 function latestCompletedRun(runs: ModelRun[]) {
   return runs.find((run) => run.status === "completed") ?? null;
 }
@@ -46,9 +83,10 @@ function formatAccuracy(run: ModelRun | null) {
 }
 
 export function DataPreparation() {
+  const [initialPreparationState] = useState(readPersistedPreparationState);
   const [maps, setMaps] = useState<MapConfig[]>([]);
-  const [selectedMap, setSelectedMap] = useState("erangel");
-  const [phase, setPhase] = useState(1);
+  const [selectedMap, setSelectedMap] = useState(initialPreparationState.selectedMap ?? "erangel");
+  const [phase, setPhase] = useState(initialPreparationState.phase ?? 1);
   const [matches, setMatches] = useState<IngestMatch[]>([]);
   const [runs, setRuns] = useState<ModelRun[]>([]);
   const [latestHotspot, setLatestHotspot] = useState<HotspotResult | null>(null);
@@ -69,6 +107,10 @@ export function DataPreparation() {
     (sum, match) => sum + match.circle_phase_count + match.position_sample_count + match.life_event_count,
     0,
   );
+
+  useEffect(() => {
+    writePersistedPreparationState({ selectedMap, phase });
+  }, [selectedMap, phase]);
 
   const refreshOverview = async () => {
     try {

@@ -86,7 +86,30 @@ type PersistedCollectionState = {
   playerQuery?: string;
   selectedPlayerNames?: string[];
   currentJobId?: string | null;
+  matchSearch?: string;
+  matchMapFilter?: string;
+  matchStatusFilter?: MatchStatusFilter;
+  matchSortKey?: MatchSortKey;
+  matchSortDirection?: SortDirection;
 };
+
+function isMatchStatusFilter(value: unknown): value is MatchStatusFilter {
+  return value === "all" || value === "completed" || value === "failed" || value === "pending";
+}
+
+function isMatchSortKey(value: unknown): value is MatchSortKey {
+  return (
+    value === "match_id" ||
+    value === "map_name" ||
+    value === "created_at" ||
+    value === "telemetry_parse_status" ||
+    value === "sample_count"
+  );
+}
+
+function isSortDirection(value: unknown): value is SortDirection {
+  return value === "asc" || value === "desc";
+}
 
 function clampLimit(value: unknown) {
   const numericValue = typeof value === "number" ? value : Number(value);
@@ -107,6 +130,15 @@ function readPersistedCollectionState(): PersistedCollectionState {
         ? parsedValue.selectedPlayerNames.filter((name): name is string => typeof name === "string").slice(0, 10)
         : undefined,
       currentJobId: typeof parsedValue.currentJobId === "string" ? parsedValue.currentJobId : null,
+      matchSearch: typeof parsedValue.matchSearch === "string" ? parsedValue.matchSearch : undefined,
+      matchMapFilter: typeof parsedValue.matchMapFilter === "string" ? parsedValue.matchMapFilter : undefined,
+      matchStatusFilter: isMatchStatusFilter(parsedValue.matchStatusFilter)
+        ? parsedValue.matchStatusFilter
+        : undefined,
+      matchSortKey: isMatchSortKey(parsedValue.matchSortKey) ? parsedValue.matchSortKey : undefined,
+      matchSortDirection: isSortDirection(parsedValue.matchSortDirection)
+        ? parsedValue.matchSortDirection
+        : undefined,
     };
   } catch {
     return {};
@@ -200,11 +232,17 @@ export function DataCollection() {
   const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(() => new Set());
   const [matches, setMatches] = useState<IngestMatch[]>([]);
   const [loadingMatches, setLoadingMatches] = useState(false);
-  const [matchSearch, setMatchSearch] = useState("");
-  const [matchMapFilter, setMatchMapFilter] = useState("all");
-  const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatusFilter>("all");
-  const [matchSortKey, setMatchSortKey] = useState<MatchSortKey>("created_at");
-  const [matchSortDirection, setMatchSortDirection] = useState<SortDirection>("desc");
+  const [matchSearch, setMatchSearch] = useState(initialCollectionState.matchSearch ?? "");
+  const [matchMapFilter, setMatchMapFilter] = useState(initialCollectionState.matchMapFilter ?? "all");
+  const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatusFilter>(
+    initialCollectionState.matchStatusFilter ?? "all",
+  );
+  const [matchSortKey, setMatchSortKey] = useState<MatchSortKey>(
+    initialCollectionState.matchSortKey ?? "created_at",
+  );
+  const [matchSortDirection, setMatchSortDirection] = useState<SortDirection>(
+    initialCollectionState.matchSortDirection ?? "desc",
+  );
   const [selectedMatchIds, setSelectedMatchIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
 
@@ -282,6 +320,10 @@ export function DataCollection() {
     try {
       const response = await api.listMatches(200);
       setMatches(response.matches);
+      setMatchMapFilter((current) => {
+        if (current === "all" || response.matches.some((match) => match.map_name === current)) return current;
+        return "all";
+      });
       setSelectedMatchIds((current) => {
         const knownIds = new Set(response.matches.map((match) => match.match_id));
         return new Set(Array.from(current).filter((matchId) => knownIds.has(matchId)));
@@ -324,8 +366,24 @@ export function DataCollection() {
       playerQuery,
       selectedPlayerNames,
       currentJobId: currentJob?.id ?? savedJobId,
+      matchSearch,
+      matchMapFilter,
+      matchStatusFilter,
+      matchSortKey,
+      matchSortDirection,
     });
-  }, [limit, playerQuery, selectedPlayerNames, currentJob?.id, savedJobId]);
+  }, [
+    limit,
+    playerQuery,
+    selectedPlayerNames,
+    currentJob?.id,
+    savedJobId,
+    matchSearch,
+    matchMapFilter,
+    matchStatusFilter,
+    matchSortKey,
+    matchSortDirection,
+  ]);
 
   useEffect(() => {
     if (!initialCollectionState.currentJobId) return;

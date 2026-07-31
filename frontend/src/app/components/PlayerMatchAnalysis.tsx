@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router";
 import {
   AlertTriangle,
@@ -60,6 +67,8 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const MAP_VIEW_SIZE = 1000;
+const MAX_MAP_SCALE = 64;
+const PLAYBACK_SPEEDS = [0.5, 1, 2, 5, 10, 16, 20, 32] as const;
 const MAP_NAME_ALIASES: Record<string, string> = {
   Baltic_Main: "erangel",
   Erangel_Main: "erangel",
@@ -120,11 +129,13 @@ const AIRBORNE_Z_MIN = 10000;
 const AIRBORNE_DESCENT_Z_DELTA = 1000;
 const FLIGHT_PATH_EARLY_WINDOW_SECONDS = 180;
 const FLIGHT_PATH_MIN_POINTS = 6;
-const PLAYBACK_FRAME_INTERVAL_MS = 50;
 const PLAYER_LABEL_ZOOM_THRESHOLD = 1.7;
 const PLAYER_MARKER_LABEL_HEIGHT = 21;
 const PLAYER_MARKER_LABEL_Y = 7;
 const PLAYER_MARKER_RADIUS = 9.5;
+const FIRE_TRACER_MIN_REPLAY_DURATION_SECONDS = 2.5;
+const FIRE_TRACER_SCREEN_DURATION_SECONDS = 1.2;
+const PLAYBACK_RENDER_INTERVAL_MS = 1000 / 20;
 
 type LayerId = "route" | "combat" | "eliminations" | "zones" | "flightPath";
 type TeamSummary = {
@@ -143,6 +154,11 @@ type MapDragStart = {
   startX: number;
   startY: number;
 };
+type MapFocusNotice = {
+  tone: "info" | "warning";
+  title: string;
+  description: string;
+};
 type PlayerGroundSegment = {
   id: string;
   playerId: string;
@@ -160,6 +176,22 @@ type PlayerReplayStats = {
   knocks: number;
   damage: number;
   deadAt: number | null;
+  knockedDown: boolean;
+};
+type ReplayCounterPoint = {
+  elapsedTime: number;
+  value: number;
+};
+type ReplayBooleanPoint = {
+  elapsedTime: number;
+  value: boolean;
+};
+type PlayerReplayTimeline = {
+  kills: ReplayCounterPoint[];
+  knocks: ReplayCounterPoint[];
+  damage: ReplayCounterPoint[];
+  knockedDown: ReplayBooleanPoint[];
+  eliminatedAt: number | null;
 };
 type TeamReplayRow = {
   team: TeamSummary;
@@ -170,104 +202,9 @@ type TeamReplayRow = {
   eliminatedAt: number | null;
   displayRank: number | null;
 };
-type PlayerMarkerLayoutInput = {
-  playerId: string;
-  teamId: string;
-  label: string;
-  anchorX: number;
-  anchorY: number;
-  priority: number;
-};
-type PlayerMarkerLayout = {
-  markerWidth: number;
-  offsetX: number;
-  offsetY: number;
-};
-type MarkerCollisionBox = {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-};
 
 function markerWidthForLabel(label: string) {
   return Math.max(52, Math.min(132, label.length * 7.1 + 14));
-}
-
-function markerBoxesOverlap(left: MarkerCollisionBox, right: MarkerCollisionBox) {
-  return !(
-    left.right <= right.left ||
-    left.left >= right.right ||
-    left.bottom <= right.top ||
-    left.top >= right.bottom
-  );
-}
-
-function layoutPlayerMarkers(inputs: PlayerMarkerLayoutInput[]) {
-  const layouts = new Map<string, PlayerMarkerLayout>();
-  const placedBoxes: MarkerCollisionBox[] = [];
-  const orderedInputs = [...inputs].sort(
-    (left, right) =>
-      right.priority - left.priority ||
-      left.teamId.localeCompare(right.teamId, undefined, { numeric: true }) ||
-      left.playerId.localeCompare(right.playerId),
-  );
-
-  for (const input of orderedInputs) {
-    const markerWidth = markerWidthForLabel(input.label);
-    const horizontalStep = markerWidth + 8;
-    const verticalStep = PLAYER_MARKER_LABEL_HEIGHT + 6;
-    const candidates = [{ x: 0, y: 0 }];
-    for (let ring = 1; ring <= 3; ring += 1) {
-      candidates.push(
-        { x: 0, y: verticalStep * ring },
-        { x: 0, y: -verticalStep * ring },
-        { x: horizontalStep * ring, y: 0 },
-        { x: -horizontalStep * ring, y: 0 },
-        { x: horizontalStep * ring, y: verticalStep * ring },
-        { x: -horizontalStep * ring, y: verticalStep * ring },
-        { x: horizontalStep * ring, y: -verticalStep * ring },
-        { x: -horizontalStep * ring, y: -verticalStep * ring },
-      );
-    }
-
-    let selectedOffset = candidates[candidates.length - 1];
-    let selectedBox: MarkerCollisionBox | null = null;
-    for (const candidate of candidates) {
-      const centerX = input.anchorX + candidate.x;
-      const centerY = input.anchorY + candidate.y;
-      const box = {
-        left: centerX - markerWidth / 2 - 4,
-        right: centerX + markerWidth / 2 + 4,
-        top: centerY + PLAYER_MARKER_LABEL_Y - 2,
-        bottom: centerY + PLAYER_MARKER_LABEL_Y + PLAYER_MARKER_LABEL_HEIGHT + 2,
-      };
-      if (placedBoxes.every((placedBox) => !markerBoxesOverlap(box, placedBox))) {
-        selectedOffset = candidate;
-        selectedBox = box;
-        break;
-      }
-    }
-
-    if (!selectedBox) {
-      const centerX = input.anchorX + selectedOffset.x;
-      const centerY = input.anchorY + selectedOffset.y;
-      selectedBox = {
-        left: centerX - markerWidth / 2 - 4,
-        right: centerX + markerWidth / 2 + 4,
-        top: centerY + PLAYER_MARKER_LABEL_Y - 2,
-        bottom: centerY + PLAYER_MARKER_LABEL_Y + PLAYER_MARKER_LABEL_HEIGHT + 2,
-      };
-    }
-    placedBoxes.push(selectedBox);
-    layouts.set(input.playerId, {
-      markerWidth,
-      offsetX: selectedOffset.x,
-      offsetY: selectedOffset.y,
-    });
-  }
-
-  return layouts;
 }
 
 function matchTitle(match: IngestMatch) {
@@ -312,42 +249,6 @@ function markerTextColor(color: string) {
   const blue = Number.parseInt(value.slice(4, 6), 16);
   const luminance = red * 0.299 + green * 0.587 + blue * 0.114;
   return luminance >= 150 ? "#111827" : "#ffffff";
-}
-
-function positionHeadingDegrees(
-  positions: MatchAnalysisPosition[],
-  playbackTime: number,
-) {
-  if (positions.length < 2) return null;
-
-  let low = 0;
-  let high = positions.length - 1;
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2);
-    if (positions[middle].elapsed_time <= playbackTime) {
-      low = middle + 1;
-    } else {
-      high = middle - 1;
-    }
-  }
-
-  const currentIndex = Math.max(0, high);
-  const vectors: Array<[MatchAnalysisPosition, MatchAnalysisPosition]> = [];
-  if (currentIndex < positions.length - 1) {
-    vectors.push([positions[currentIndex], positions[currentIndex + 1]]);
-  }
-  if (currentIndex > 0) {
-    vectors.push([positions[currentIndex - 1], positions[currentIndex]]);
-  }
-
-  for (const [start, end] of vectors) {
-    if (end.elapsed_time - start.elapsed_time > 20) continue;
-    const dx = end.point.x - start.point.x;
-    const dy = end.point.y - start.point.y;
-    if (Math.hypot(dx, dy) < 25) continue;
-    return (Math.atan2(dy, dx) * 180) / Math.PI;
-  }
-  return null;
 }
 
 function movementStateLabel(position: MatchAnalysisPosition) {
@@ -458,10 +359,46 @@ function routePath(positions: MatchAnalysisPosition[], worldSize: number) {
 }
 
 function groupedPositions(positions: MatchAnalysisPosition[]) {
-  return positions.reduce<Record<string, MatchAnalysisPosition[]>>((groups, position) => {
-    groups[position.player_id] = [...(groups[position.player_id] ?? []), position];
-    return groups;
-  }, {});
+  const groups: Record<string, MatchAnalysisPosition[]> = {};
+  for (const position of positions) {
+    (groups[position.player_id] ??= []).push(position);
+  }
+  return groups;
+}
+
+function upperBoundByElapsedTime<T extends { elapsed_time: number }>(
+  entries: T[],
+  playbackTime: number,
+) {
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (entries[middle].elapsed_time <= playbackTime) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
+}
+
+function replayTimelineValueAt<T>(
+  entries: Array<{ elapsedTime: number; value: T }>,
+  playbackTime: number,
+  fallback: T,
+) {
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (entries[middle].elapsedTime <= playbackTime) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low === 0 ? fallback : entries[low - 1].value;
 }
 
 function squaredDistance(left: ApiPoint, right: ApiPoint) {
@@ -681,13 +618,6 @@ function teamSummaries(players: MatchAnalysisPlayer[]) {
     });
 }
 
-function isSelectedEvent(event: MatchAnalysisLifeEvent, teamId: string) {
-  return (
-    Boolean(teamId) &&
-    (event.actor_team_id === teamId || event.victim_team_id === teamId)
-  );
-}
-
 function isEliminationEvent(event: MatchAnalysisLifeEvent) {
   return event.event_type === "LogPlayerKill" || event.event_type === "LogPlayerKillV2";
 }
@@ -696,6 +626,15 @@ function isCombatEvent(event: MatchAnalysisLifeEvent) {
   return (
     isEliminationEvent(event) ||
     event.event_type === "LogPlayerMakeGroggy"
+  );
+}
+
+function isFireTracerEvent(event: MatchAnalysisLifeEvent) {
+  return (
+    event.event_type === "LogPlayerAttack" &&
+    event.actor_player_id !== null &&
+    event.victim_player_id !== null &&
+    event.actor_player_id !== event.victim_player_id
   );
 }
 
@@ -722,6 +661,276 @@ function formatPlaybackTime(seconds: number) {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
+const TeamReplayList = memo(function TeamReplayList({
+  teamRows,
+  playerStats,
+  selectedTeamId,
+  selectedPlayerId,
+  onSelectTeam,
+  onSelectPlayer,
+}: {
+  teamRows: TeamReplayRow[];
+  playerStats: Record<string, PlayerReplayStats>;
+  selectedTeamId: string;
+  selectedPlayerId: string | null;
+  onSelectTeam: (teamId: string) => void;
+  onSelectPlayer: (player: MatchAnalysisPlayer) => void;
+}) {
+  return (
+    <ScrollArea className="h-full">
+      <div className="flex flex-col gap-2 p-2">
+        {teamRows.map((row) => (
+          <div
+            key={row.team.teamId}
+            className={cn(
+              "overflow-hidden rounded-md border border-border bg-muted/20 [content-visibility:auto] [contain-intrinsic-size:auto_148px]",
+              row.team.teamId === selectedTeamId && "bg-accent/60 ring-1 ring-primary/30",
+            )}
+            style={{ borderLeftColor: row.color, borderLeftWidth: 4 }}
+            data-team-row={row.team.teamId}
+          >
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-accent/50"
+              onClick={() => onSelectTeam(row.team.teamId)}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="min-w-7 text-sm font-black tabular-nums" style={{ color: row.color }}>
+                  {row.team.teamId}
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold">
+                    {row.aliveCount > 0 ? `${row.aliveCount} 人存活` : "全队淘汰"}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {row.displayRank ? `当前 #${row.displayRank}` : "仍在争夺排名"}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 text-xs tabular-nums">
+                <span>{row.kills}</span>
+                <span className="w-10 text-right">{Math.round(row.damage)}</span>
+              </div>
+            </button>
+            <div className="border-t border-border/70 px-2 py-1">
+              {row.team.players.map((player) => {
+                const stats = playerStats[player.player_id] ?? {
+                  kills: 0,
+                  knocks: 0,
+                  damage: 0,
+                  deadAt: null,
+                  knockedDown: false,
+                };
+                const isSelected = player.player_id === selectedPlayerId;
+                return (
+                  <button
+                    key={player.player_id}
+                    type="button"
+                    className={cn(
+                      "grid w-full grid-cols-[minmax(0,1fr)_30px_30px_48px] items-center gap-1 rounded px-1.5 py-1 text-left text-xs hover:bg-accent/50",
+                      isSelected && "bg-accent text-accent-foreground",
+                      stats.deadAt !== null && "text-muted-foreground",
+                    )}
+                    onClick={() => onSelectPlayer(player)}
+                  >
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className={cn("truncate", stats.deadAt !== null && "line-through")}>
+                        {playerDisplayName(player)}
+                      </span>
+                      {stats.deadAt !== null && (
+                        <Skull
+                          className="size-3 shrink-0 text-red-400"
+                          aria-label={`已于 ${formatPlaybackTime(stats.deadAt)} 被淘汰`}
+                        />
+                      )}
+                    </span>
+                    <span className="text-right tabular-nums">{stats.kills}</span>
+                    <span className="text-right tabular-nums">{stats.knocks}</span>
+                    <span className="text-right tabular-nums">{Math.round(stats.damage)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </ScrollArea>
+  );
+});
+
+const ReplayAnalysisToolbar = memo(function ReplayAnalysisToolbar({
+  analysis,
+  aliveTeamCount,
+  alivePlayerCount,
+  squadMatches,
+  selectedMatchId,
+  teams,
+  selectedTeam,
+  selectedTeamId,
+  selectedPlayer,
+  playerStats,
+  isPinnedPlayerUnavailable,
+  isTeamSearchOpen,
+  isLoading,
+  onSelectMatch,
+  onTeamSearchOpenChange,
+  onSelectTeam,
+  onSelectPlayer,
+  onRefresh,
+}: {
+  analysis: MatchAnalysis | null;
+  aliveTeamCount: number;
+  alivePlayerCount: number;
+  squadMatches: IngestMatch[];
+  selectedMatchId: string;
+  teams: TeamSummary[];
+  selectedTeam: TeamSummary | undefined;
+  selectedTeamId: string;
+  selectedPlayer: MatchAnalysisPlayer | null;
+  playerStats: Record<string, PlayerReplayStats>;
+  isPinnedPlayerUnavailable: boolean;
+  isTeamSearchOpen: boolean;
+  isLoading: boolean;
+  onSelectMatch: (matchId: string) => void;
+  onTeamSearchOpenChange: (open: boolean) => void;
+  onSelectTeam: (teamId: string) => void;
+  onSelectPlayer: (player: MatchAnalysisPlayer) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-1">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="rounded border border-border bg-muted p-2 text-primary">
+          <MapPinned className="size-5" />
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-lg font-bold text-foreground">2D 对局回放</h1>
+            {analysis && (
+              <>
+                <Badge variant="outline">{aliveTeamCount} 队存活</Badge>
+                <Badge variant="outline">{alivePlayerCount} 人存活</Badge>
+              </>
+            )}
+          </div>
+          <p className="truncate text-xs text-muted-foreground">全员位置、安全区、交战事件与队伍实时状态</p>
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+        <Select value={selectedMatchId} onValueChange={onSelectMatch}>
+          <SelectTrigger className="w-full sm:w-[300px]">
+            <SelectValue placeholder="选择对局" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {squadMatches.map((match) => (
+                <SelectItem key={match.match_id} value={match.match_id}>
+                  {matchTitle(match)}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Popover open={isTeamSearchOpen} onOpenChange={onTeamSearchOpenChange}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              role="combobox"
+              aria-expanded={isTeamSearchOpen}
+              aria-label="搜索并高亮队伍"
+              className="w-full justify-between sm:w-[220px]"
+              disabled={!analysis || teams.length === 0}
+            >
+              <span className="truncate">
+                {selectedTeam
+                  ? `队伍 ${selectedTeam.teamId} · ${selectedTeam.players.length} 人`
+                  : "搜索高亮队伍"}
+              </span>
+              <ChevronsUpDown data-icon="inline-end" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            className="w-[320px] max-w-[calc(100vw-2rem)] p-0"
+            align="end"
+          >
+            <Command>
+              <CommandInput placeholder="搜索队伍 ID 或选手名" />
+              <CommandList>
+                <CommandEmpty>没有匹配的队伍</CommandEmpty>
+                <CommandGroup>
+                  {teams.map((team) => (
+                    <CommandItem
+                      key={team.teamId}
+                      value={`队伍 ${team.teamId} ${team.players.map(playerDisplayName).join(" ")}`}
+                      onSelect={() => {
+                        onSelectTeam(team.teamId);
+                        onTeamSearchOpenChange(false);
+                      }}
+                    >
+                      <Check
+                        className={cn(
+                          selectedTeamId === team.teamId
+                            ? "opacity-100"
+                            : "opacity-0",
+                        )}
+                      />
+                      <div className="min-w-0">
+                        <div className="font-medium">
+                          队伍 {team.teamId} · {team.players.length} 人
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {team.players.map(playerDisplayName).join(" / ")}
+                        </div>
+                      </div>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        <Select
+          value={selectedPlayer?.player_id ?? ""}
+          onValueChange={(playerId) => {
+            const player = analysis?.players.find((item) => item.player_id === playerId);
+            if (player) onSelectPlayer(player);
+          }}
+          disabled={!analysis || analysis.players.length === 0}
+        >
+          <SelectTrigger className="w-full sm:w-[220px]">
+            <SelectValue
+              placeholder={
+                isPinnedPlayerUnavailable
+                  ? "关注选手不在本场"
+                  : "固定关注选手"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {(analysis?.players ?? []).map((player) => (
+                <SelectItem key={player.player_id} value={player.player_id}>
+                  {playerDisplayName(player)} · 队伍 {player.team_id}
+                  {(playerStats[player.player_id]?.deadAt ?? null) !== null ? " · 已淘汰" : ""}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Button variant="outline" onClick={onRefresh} disabled={isLoading}>
+          {isLoading ? (
+            <Loader2 data-icon="inline-start" className="animate-spin" />
+          ) : (
+            <RefreshCw data-icon="inline-start" />
+          )}
+          刷新
+        </Button>
+      </div>
+    </div>
+  );
+});
+
 export function PlayerMatchAnalysis() {
   const [searchParams, setSearchParams] = useSearchParams();
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -729,7 +938,7 @@ export function PlayerMatchAnalysis() {
   const [matches, setMatches] = useState<IngestMatch[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState(() => {
     if (typeof window !== "undefined") {
-      return searchParams.get("matches") || "";
+      return searchParams.get("matches") || localStorage.getItem("pzp_analysis_selectedMatchId") || "";
     }
     return "";
   });
@@ -810,11 +1019,19 @@ export function PlayerMatchAnalysis() {
   const [isMapReady, setIsMapReady] = useState(false);
   const [decodedHighResUrl, setDecodedHighResUrl] = useState<string | null>(null);
   const [isTeamSearchOpen, setIsTeamSearchOpen] = useState(false);
+  const [isMapAutoFocusing, setIsMapAutoFocusing] = useState(false);
+  const [mapFocusNotice, setMapFocusNotice] = useState<MapFocusNotice | null>(null);
+  const mapFocusAnimationTimerRef = useRef<number | null>(null);
+  const mapFocusNoticeTimerRef = useRef<number | null>(null);
 
   const [playbackTime, setPlaybackTime] = useState(0);
   const playbackSecond = Math.floor(playbackTime);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(5);
+  const [playbackSpeed, setPlaybackSpeed] = useState(() => {
+    if (typeof window === "undefined") return 5;
+    const savedSpeed = Number(localStorage.getItem("pzp_analysis_playbackSpeed"));
+    return PLAYBACK_SPEEDS.some((speed) => speed === savedSpeed) ? savedSpeed : 5;
+  });
 
   const [layersPanelPos, setLayersPanelPos] = useState(() => {
     if (typeof window !== "undefined") {
@@ -838,6 +1055,24 @@ export function PlayerMatchAnalysis() {
       localStorage.setItem("pzp_analysis_layersPanelPos", JSON.stringify(layersPanelPos));
     }
   }, [layersPanelPos]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pzp_analysis_playbackSpeed", String(playbackSpeed));
+    }
+  }, [playbackSpeed]);
+
+  useEffect(
+    () => () => {
+      if (mapFocusAnimationTimerRef.current !== null) {
+        window.clearTimeout(mapFocusAnimationTimerRef.current);
+      }
+      if (mapFocusNoticeTimerRef.current !== null) {
+        window.clearTimeout(mapFocusNoticeTimerRef.current);
+      }
+    },
+    [],
+  );
   const layersDragStart = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
 
   const handleLayersMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -945,13 +1180,10 @@ export function PlayerMatchAnalysis() {
     const tick = (time: number) => {
       if (
         lastTimeRef.current !== 0 &&
-        time - lastTimeRef.current < PLAYBACK_FRAME_INTERVAL_MS
+        time - lastTimeRef.current >= PLAYBACK_RENDER_INTERVAL_MS
       ) {
-        animationFrameId = requestAnimationFrame(tick);
-        return;
-      }
-      if (lastTimeRef.current !== 0) {
         const deltaSeconds = (time - lastTimeRef.current) / 1000;
+        lastTimeRef.current = time;
         setPlaybackTime((prev) => {
           const next = prev + deltaSeconds * playbackSpeed;
           if (next >= maxPlaybackTime) {
@@ -961,7 +1193,6 @@ export function PlayerMatchAnalysis() {
           return next;
         });
       }
-      lastTimeRef.current = time;
       animationFrameId = requestAnimationFrame(tick);
     };
 
@@ -983,40 +1214,156 @@ export function PlayerMatchAnalysis() {
       ),
     [analysis],
   );
-  const allPositionGroups = useMemo(() => {
-    const groups = groupedPositions(analysis?.positions ?? []);
-    for (const positions of Object.values(groups)) {
+  const { allPositionGroups, positionsByTeam } = useMemo(() => {
+    const playerGroups = groupedPositions(analysis?.positions ?? []);
+    const teamGroups: Record<string, MatchAnalysisPosition[]> = {};
+    for (const position of analysis?.positions ?? []) {
+      (teamGroups[position.team_id] ??= []).push(position);
+    }
+    for (const positions of Object.values(playerGroups)) {
       positions.sort((left, right) => left.elapsed_time - right.elapsed_time);
     }
-    return groups;
+    for (const positions of Object.values(teamGroups)) {
+      positions.sort((left, right) => left.elapsed_time - right.elapsed_time);
+    }
+    return {
+      allPositionGroups: playerGroups,
+      positionsByTeam: teamGroups,
+    };
   }, [analysis]);
+
+  const playerReplayTimelines = useMemo(() => {
+    const timelines: Record<string, PlayerReplayTimeline> = {};
+    for (const player of analysis?.players ?? []) {
+      timelines[player.player_id] = {
+        kills: [],
+        knocks: [],
+        damage: [],
+        knockedDown: [],
+        eliminatedAt: null,
+      };
+    }
+    for (const event of analysis?.life_events ?? []) {
+      const actorTimeline = event.actor_player_id
+        ? timelines[event.actor_player_id]
+        : undefined;
+      if (actorTimeline) {
+        if (isEliminationEvent(event)) {
+          actorTimeline.kills.push({
+            elapsedTime: event.elapsed_time,
+            value: (actorTimeline.kills.at(-1)?.value ?? 0) + 1,
+          });
+        } else if (event.event_type === "LogPlayerMakeGroggy") {
+          actorTimeline.knocks.push({
+            elapsedTime: event.elapsed_time,
+            value: (actorTimeline.knocks.at(-1)?.value ?? 0) + 1,
+          });
+        } else if (event.event_type === "LogPlayerTakeDamage" && event.damage) {
+          actorTimeline.damage.push({
+            elapsedTime: event.elapsed_time,
+            value: (actorTimeline.damage.at(-1)?.value ?? 0) + event.damage,
+          });
+        }
+      }
+
+      const victimTimeline = event.victim_player_id
+        ? timelines[event.victim_player_id]
+        : undefined;
+      if (!victimTimeline) continue;
+      if (event.event_type === "LogPlayerMakeGroggy") {
+        victimTimeline.knockedDown.push({
+          elapsedTime: event.elapsed_time,
+          value: true,
+        });
+      } else if (event.event_type === "LogPlayerRevive") {
+        victimTimeline.knockedDown.push({
+          elapsedTime: event.elapsed_time,
+          value: false,
+        });
+      } else if (isEliminationEvent(event)) {
+        victimTimeline.eliminatedAt ??= event.elapsed_time;
+        victimTimeline.knockedDown.push({
+          elapsedTime: event.elapsed_time,
+          value: false,
+        });
+      }
+    }
+    return timelines;
+  }, [analysis]);
+
+  const replayFeedEvents = useMemo(
+    () =>
+      (analysis?.life_events ?? []).filter(
+        (event) =>
+          isEliminationEvent(event) ||
+          event.event_type === "LogPlayerMakeGroggy",
+      ),
+    [analysis],
+  );
+  const replayStatEvents = useMemo(
+    () =>
+      (analysis?.life_events ?? []).filter(
+        (event) =>
+          isEliminationEvent(event) ||
+          event.event_type === "LogPlayerMakeGroggy" ||
+          event.event_type === "LogPlayerRevive" ||
+          event.event_type === "LogPlayerTakeDamage",
+      ),
+    [analysis],
+  );
+  const replayStatsEventIndex = upperBoundByElapsedTime(
+    replayStatEvents,
+    playbackTime,
+  );
+  const replayStateTime =
+    replayStatsEventIndex > 0
+      ? replayStatEvents[replayStatsEventIndex - 1].elapsed_time
+      : 0;
+  const combatEventsByTeam = useMemo(() => {
+    const groups: Record<string, MatchAnalysisLifeEvent[]> = {};
+    for (const event of replayFeedEvents) {
+      const teamIds = new Set(
+        [event.actor_team_id, event.victim_team_id].filter(
+          (teamId): teamId is string => Boolean(teamId),
+        ),
+      );
+      for (const teamId of teamIds) {
+        (groups[teamId] ??= []).push(event);
+      }
+    }
+    return groups;
+  }, [replayFeedEvents]);
 
   const playerStats = useMemo(() => {
     const stats: Record<string, PlayerReplayStats> = {};
     for (const player of analysis?.players ?? []) {
-      stats[player.player_id] = { kills: 0, knocks: 0, damage: 0, deadAt: null };
-    }
-    for (const event of analysis?.life_events ?? []) {
-      if (event.elapsed_time > playbackSecond) break;
-      if (event.actor_player_id && stats[event.actor_player_id]) {
-        if (isEliminationEvent(event)) {
-          stats[event.actor_player_id].kills += 1;
-        } else if (event.event_type === "LogPlayerMakeGroggy") {
-          stats[event.actor_player_id].knocks += 1;
-        } else if (event.event_type === "LogPlayerTakeDamage" && event.damage) {
-          stats[event.actor_player_id].damage += event.damage;
-        }
-      }
-      if (
-        isEliminationEvent(event) &&
-        event.victim_player_id &&
-        stats[event.victim_player_id]
-      ) {
-        stats[event.victim_player_id].deadAt = event.elapsed_time;
-      }
+      const timeline = playerReplayTimelines[player.player_id];
+      const deadAt =
+        timeline.eliminatedAt !== null &&
+        timeline.eliminatedAt <= replayStateTime
+          ? timeline.eliminatedAt
+          : null;
+      stats[player.player_id] = {
+        kills: replayTimelineValueAt(timeline.kills, replayStateTime, 0),
+        knocks: replayTimelineValueAt(timeline.knocks, replayStateTime, 0),
+        damage: replayTimelineValueAt(timeline.damage, replayStateTime, 0),
+        deadAt,
+        knockedDown:
+          deadAt === null &&
+          replayTimelineValueAt(
+            timeline.knockedDown,
+            replayStateTime,
+            false,
+          ),
+      };
     }
     return stats;
-  }, [analysis, playbackSecond]);
+  }, [
+    analysis,
+    playerReplayTimelines,
+    replayStateTime,
+    replayStatsEventIndex,
+  ]);
 
   const deadPlayers = useMemo(
     () =>
@@ -1031,74 +1378,109 @@ export function PlayerMatchAnalysis() {
   const currentPlayerPositions = useMemo(
     () =>
       Object.values(allPositionGroups)
-        .map((positions) => {
-          const position = interpolatePosition(positions, playbackTime);
-          return position
-            ? {
-                ...position,
-                heading: positionHeadingDegrees(positions, playbackTime),
-              }
-            : null;
-        })
+        .map((positions) => interpolatePosition(positions, playbackTime))
         .filter(
-          (
-            position,
-          ): position is MatchAnalysisPosition & { heading: number | null } =>
+          (position): position is MatchAnalysisPosition =>
             position !== null && !deadPlayers.has(position.player_id),
         ),
     [allPositionGroups, deadPlayers, playbackTime],
   );
-  const playerMarkerLayouts = useMemo(
-    () =>
-      layoutPlayerMarkers(
-        currentPlayerPositions.flatMap((position) => {
-          const player = playersById.get(position.player_id);
-          const label = player ? playerDisplayName(player) : position.player_id;
-          const point = pointToView(position.point, worldSize);
-          const isSelectedPlayer =
-            position.player_id === selectedPlayerId ||
-            (player !== undefined && playerDisplayName(player) === selectedPlayerId);
-          const isSelectedTeam = position.team_id === selectedTeamId;
-          if (
-            !isSelectedPlayer &&
-            !isSelectedTeam &&
-            mapTransform.scale < PLAYER_LABEL_ZOOM_THRESHOLD
-          ) {
-            return [];
-          }
-          return [
-            {
-              playerId: position.player_id,
-              teamId: position.team_id,
-              label,
-              anchorX: point.x * mapTransform.scale,
-              anchorY: point.y * mapTransform.scale,
-              priority: isSelectedPlayer ? 2 : isSelectedTeam ? 1 : 0,
-            },
-          ];
-        }),
-      ),
-    [
-      currentPlayerPositions,
-      mapTransform.scale,
-      playersById,
-      selectedPlayerId,
-      selectedTeamId,
-      worldSize,
-    ],
+  const fireTracerEvents = useMemo(
+    () => (analysis?.life_events ?? []).filter(isFireTracerEvent),
+    [analysis],
+  );
+  const fireTracerDurationSeconds = Math.max(
+    FIRE_TRACER_MIN_REPLAY_DURATION_SECONDS,
+    playbackSpeed * FIRE_TRACER_SCREEN_DURATION_SECONDS,
+  );
+  const activeFireTracers = useMemo(() => {
+    let low = 0;
+    let high = fireTracerEvents.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (fireTracerEvents[middle].elapsed_time <= playbackTime) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    const visibleAfter = playbackTime - fireTracerDurationSeconds;
+    const seenPairs = new Set<string>();
+    const tracers: Array<{
+      id: string;
+      attackerPlayerId: string;
+      victimPlayerId: string;
+      start: ApiPoint;
+      end: ApiPoint;
+      opacity: number;
+    }> = [];
+    for (let index = low - 1; index >= 0; index -= 1) {
+      const event = fireTracerEvents[index];
+      if (event.elapsed_time < visibleAfter) break;
+      const attackerPlayerId = event.actor_player_id;
+      const victimPlayerId = event.victim_player_id;
+      if (!attackerPlayerId || !victimPlayerId) continue;
+      const pairKey = `${attackerPlayerId}:${victimPlayerId}`;
+      if (seenPairs.has(pairKey)) continue;
+      const attackerPosition = interpolatePosition(
+        allPositionGroups[attackerPlayerId] ?? [],
+        event.elapsed_time,
+      );
+      const victimPosition = interpolatePosition(
+        allPositionGroups[victimPlayerId] ?? [],
+        event.elapsed_time,
+      );
+      if (!attackerPosition || !victimPosition) continue;
+      seenPairs.add(pairKey);
+      tracers.push({
+        id: `${event.id}-${pairKey}`,
+        attackerPlayerId,
+        victimPlayerId,
+        start: pointToView(attackerPosition.point, worldSize),
+        end: pointToView(victimPosition.point, worldSize),
+        opacity:
+          0.3 +
+          Math.max(
+            0,
+            1 - (playbackTime - event.elapsed_time) / fireTracerDurationSeconds,
+          ) *
+            0.7,
+      });
+      if (tracers.length >= 16) break;
+    }
+    return tracers;
+  }, [
+    allPositionGroups,
+    fireTracerDurationSeconds,
+    fireTracerEvents,
+    playbackTime,
+    worldSize,
+  ]);
+  const firingPlayerIds = useMemo(
+    () => new Set(activeFireTracers.map((tracer) => tracer.attackerPlayerId)),
+    [activeFireTracers],
   );
 
   const selectedPositions = useMemo(() => {
-    if (!analysis || !selectedTeamId) return [];
-    return analysis.positions
-      .filter((position) => position.team_id === selectedTeamId && position.elapsed_time <= playbackSecond)
-      .sort((left, right) => left.elapsed_time - right.elapsed_time);
-  }, [analysis, selectedTeamId, playbackSecond]);
+    if (!selectedTeamId) return [];
+    const teamPositions = positionsByTeam[selectedTeamId] ?? [];
+    return teamPositions.slice(
+      0,
+      upperBoundByElapsedTime(teamPositions, playbackSecond),
+    );
+  }, [playbackSecond, positionsByTeam, selectedTeamId]);
 
   const teamRows = useMemo<TeamReplayRow[]>(() => {
     const rows = teams.map((team) => {
       const teamPlayerStats = team.players.map(
-        (player) => playerStats[player.player_id] ?? { kills: 0, knocks: 0, damage: 0, deadAt: null },
+        (player) =>
+          playerStats[player.player_id] ?? {
+            kills: 0,
+            knocks: 0,
+            damage: 0,
+            deadAt: null,
+            knockedDown: false,
+          },
       );
       const aliveCount = teamPlayerStats.filter((stats) => stats.deadAt === null).length;
       return {
@@ -1143,21 +1525,33 @@ export function PlayerMatchAnalysis() {
   const isPinnedPlayerUnavailable = Boolean(
     analysis && selectedPlayerId && !selectedPlayer,
   );
+  const selectedPlayerEliminatedAt = selectedPlayer
+    ? playerStats[selectedPlayer.player_id]?.deadAt ?? null
+    : null;
+  const selectedEliminatedPosition =
+    selectedPlayer && selectedPlayerEliminatedAt !== null
+      ? interpolatePosition(
+          allPositionGroups[selectedPlayer.player_id] ?? [],
+          selectedPlayerEliminatedAt,
+        )
+      : null;
   const aliveTeamCount = teamRows.filter((row) => row.aliveCount > 0).length;
   const alivePlayerCount = Math.max(0, (analysis?.players.length ?? 0) - deadPlayers.size);
-  const recentKillFeed = useMemo(
-    () =>
-      (analysis?.life_events ?? [])
-        .filter(
-          (event) =>
-            event.elapsed_time <= playbackSecond &&
-            event.elapsed_time >= Math.max(0, playbackSecond - 18) &&
-            (isEliminationEvent(event) || event.event_type === "LogPlayerMakeGroggy"),
-        )
-        .slice(-5)
-        .reverse(),
-    [analysis, playbackSecond],
-  );
+  const recentKillFeed = useMemo(() => {
+    const endIndex = upperBoundByElapsedTime(replayFeedEvents, playbackSecond);
+    const visibleAfter = Math.max(0, playbackSecond - 18);
+    const events: MatchAnalysisLifeEvent[] = [];
+    for (
+      let index = endIndex - 1;
+      index >= 0 && events.length < 5;
+      index -= 1
+    ) {
+      const event = replayFeedEvents[index];
+      if (event.elapsed_time < visibleAfter) break;
+      events.push(event);
+    }
+    return events;
+  }, [playbackSecond, replayFeedEvents]);
 
   const currentCircle = useMemo(() => {
     if (!analysis) return null;
@@ -1172,15 +1566,13 @@ export function PlayerMatchAnalysis() {
     return latest;
   }, [analysis, playbackSecond]);
 
-  const selectedEvents = useMemo(
-    () =>
-      analysis?.life_events.filter(
-        (event) =>
-          isSelectedEvent(event, selectedTeamId) &&
-          event.elapsed_time <= playbackSecond,
-      ) ?? [],
-    [analysis, selectedTeamId, playbackSecond],
-  );
+  const selectedEvents = useMemo(() => {
+    const teamEvents = combatEventsByTeam[selectedTeamId] ?? [];
+    return teamEvents.slice(
+      0,
+      upperBoundByElapsedTime(teamEvents, playbackSecond),
+    );
+  }, [combatEventsByTeam, playbackSecond, selectedTeamId]);
 
   const flightPath = useMemo(() => {
     return analysis ? inferFlightPath(analysis.positions, worldSize) : null;
@@ -1216,6 +1608,44 @@ export function PlayerMatchAnalysis() {
       routeEndpoints: nextRouteEndpoints,
     };
   }, [selectedPositions, worldSize]);
+  const routePathElements = useMemo(
+    () =>
+      routeSegments.map((segment) => (
+        <path
+          key={segment.id}
+          d={segment.path}
+          fill="none"
+          stroke={playerColor(segment.playerId, selectedTeam)}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.5"
+          strokeDasharray="6 6"
+          opacity="0.9"
+          filter="url(#analysis-glow)"
+          className="animate-dash-flow"
+        />
+      )),
+    [routeSegments, selectedTeam],
+  );
+  const routePositionElements = useMemo(
+    () =>
+      routePositions.map((position) => {
+        const point = pointToView(position.point, worldSize);
+        const color = playerColor(position.player_id, selectedTeam);
+        const isEndpoint = routeEndpoints.has(position);
+        return (
+          <circle
+            key={`${position.player_id}-${position.elapsed_time}-${position.point.x}-${position.point.y}`}
+            cx={point.x}
+            cy={point.y}
+            r={isEndpoint ? 2.5 : 1}
+            fill={color}
+            opacity={isEndpoint ? 0.9 : 0.3}
+          />
+        );
+      }),
+    [routeEndpoints, routePositions, selectedTeam, worldSize],
+  );
   const { combatEvents, eliminationEvents } = useMemo(() => {
     const nextEliminationEvents = selectedEvents.filter(isEliminationEvent);
     const eliminationTimesByVictim = new Map<string, number[]>();
@@ -1274,7 +1704,7 @@ export function PlayerMatchAnalysis() {
     });
     return clusters;
   }, [analysis, layers, combatEvents, eliminationEvents, mapTransform.scale, worldSize]);
-  const refreshMatches = async () => {
+  const refreshMatches = useCallback(async () => {
     setError(null);
     setIsLoading(true);
     try {
@@ -1288,17 +1718,20 @@ export function PlayerMatchAnalysis() {
       );
       setMaps(mapsResponse.maps);
       setMatches(nextMatches);
-      setSelectedMatchId((current) => current || nextParsedMatches[0]?.match_id || nextSquadMatches[0]?.match_id || "");
+      setSelectedMatchId((current) => {
+        if (nextSquadMatches.some((match) => match.match_id === current)) return current;
+        return nextParsedMatches[0]?.match_id || nextSquadMatches[0]?.match_id || "";
+      });
     } catch (err) {
       setError(apiErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void refreshMatches();
-  }, []);
+  }, [refreshMatches]);
 
   const isInitialMount = useRef(true);
   useEffect(() => {
@@ -1379,7 +1812,7 @@ export function PlayerMatchAnalysis() {
     const container = mapContainerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
-    const scale = Math.max(1, Math.min(nextScale, 8));
+    const scale = Math.max(1, Math.min(nextScale, MAX_MAP_SCALE));
     const mouseX = originX ?? rect.width / 2;
     const mouseY = originY ?? rect.height / 2;
     setMapTransform((current) => {
@@ -1440,135 +1873,236 @@ export function PlayerMatchAnalysis() {
     setMapDragStart(null);
   };
 
+  const showMapFocusNotice = useCallback((notice: MapFocusNotice, duration = 3600) => {
+    setMapFocusNotice(notice);
+    if (mapFocusNoticeTimerRef.current !== null) {
+      window.clearTimeout(mapFocusNoticeTimerRef.current);
+    }
+    mapFocusNoticeTimerRef.current = window.setTimeout(() => {
+      setMapFocusNotice(null);
+      mapFocusNoticeTimerRef.current = null;
+    }, duration);
+  }, []);
+
+  const focusMapPoints = useCallback((points: ApiPoint[], mode: "player" | "team") => {
+    const container = mapContainerRef.current;
+    if (!container || points.length === 0) return;
+
+    const rect = container.getBoundingClientRect();
+    const mapSize = Math.min(rect.width, rect.height);
+    const mapOffsetX = (rect.width - mapSize) / 2;
+    const mapOffsetY = (rect.height - mapSize) / 2;
+    const screenPoints = points.map((point) => ({
+      x: mapOffsetX + (point.x / MAP_VIEW_SIZE) * mapSize,
+      y: mapOffsetY + (point.y / MAP_VIEW_SIZE) * mapSize,
+    }));
+    const minX = Math.min(...screenPoints.map((point) => point.x));
+    const maxX = Math.max(...screenPoints.map((point) => point.x));
+    const minY = Math.min(...screenPoints.map((point) => point.y));
+    const maxY = Math.max(...screenPoints.map((point) => point.y));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const padding = Math.min(140, Math.max(64, Math.min(rect.width, rect.height) * 0.14));
+
+    setIsMapAutoFocusing(true);
+    if (mapFocusAnimationTimerRef.current !== null) {
+      window.clearTimeout(mapFocusAnimationTimerRef.current);
+    }
+    mapFocusAnimationTimerRef.current = window.setTimeout(() => {
+      setIsMapAutoFocusing(false);
+      mapFocusAnimationTimerRef.current = null;
+    }, 360);
+
+    setMapTransform((current) => {
+      const spanX = Math.max(maxX - minX, mapSize * 0.025);
+      const spanY = Math.max(maxY - minY, mapSize * 0.025);
+      const fitScale = Math.min(
+        (rect.width - padding * 2) / spanX,
+        (rect.height - padding * 2) / spanY,
+      );
+      const scale =
+        mode === "player"
+          ? Math.min(MAX_MAP_SCALE, Math.max(8, current.scale))
+          : Math.max(1, Math.min(12, fitScale));
+      return clampMapTransform(
+        {
+          x: rect.width / 2 - centerX * scale,
+          y: rect.height / 2 - centerY * scale,
+          scale,
+        },
+        rect.width,
+        rect.height,
+      );
+    });
+  }, []);
+
+  const mapInteractionStateRef = useRef({
+    playerStats,
+    allPositionGroups,
+    playbackTime,
+    worldSize,
+    teams,
+    currentPlayerPositions,
+  });
+  mapInteractionStateRef.current = {
+    playerStats,
+    allPositionGroups,
+    playbackTime,
+    worldSize,
+    teams,
+    currentPlayerPositions,
+  };
+
+  const selectAndFocusPlayer = useCallback((player: MatchAnalysisPlayer) => {
+    setSelectedTeamId(player.team_id);
+    setSelectedPlayerId(player.player_id);
+
+    const {
+      playerStats: latestPlayerStats,
+      allPositionGroups: latestPositionGroups,
+      playbackTime: latestPlaybackTime,
+      worldSize: latestWorldSize,
+    } = mapInteractionStateRef.current;
+    const stats = latestPlayerStats[player.player_id];
+    const eliminatedAt = stats?.deadAt ?? null;
+    const position = interpolatePosition(
+      latestPositionGroups[player.player_id] ?? [],
+      eliminatedAt ?? latestPlaybackTime,
+    );
+    const label = playerDisplayName(player);
+
+    if (!position) {
+      showMapFocusNotice({
+        tone: "warning",
+        title: `${label} 暂无位置`,
+        description: "当前回放时间之前没有可用的位置记录。",
+      });
+      return;
+    }
+
+    focusMapPoints([pointToView(position.point, latestWorldSize)], "player");
+    if (eliminatedAt !== null) {
+      showMapFocusNotice(
+        {
+          tone: "warning",
+          title: `${label} 已被淘汰`,
+          description: `淘汰于 ${formatPlaybackTime(eliminatedAt)}，已定位到淘汰前最后位置。`,
+        },
+        5200,
+      );
+      return;
+    }
+
+    showMapFocusNotice({
+      tone: "info",
+      title: `已定位 ${label}`,
+      description: `队伍 ${player.team_id} · ${formatPlaybackTime(latestPlaybackTime)} 的当前位置`,
+    });
+  }, [focusMapPoints, showMapFocusNotice]);
+
+  const selectAndFocusTeam = useCallback((teamId: string) => {
+    setSelectedTeamId(teamId);
+    const {
+      teams: latestTeams,
+      currentPlayerPositions: latestCurrentPositions,
+      playerStats: latestPlayerStats,
+      allPositionGroups: latestPositionGroups,
+      playbackTime: latestPlaybackTime,
+      worldSize: latestWorldSize,
+    } = mapInteractionStateRef.current;
+    const team = latestTeams.find((item) => item.teamId === teamId);
+    if (!team) return;
+
+    const alivePositions = latestCurrentPositions.filter(
+      (position) => position.team_id === teamId,
+    );
+    const eliminatedPlayers = team.players.filter(
+      (player) => (latestPlayerStats[player.player_id]?.deadAt ?? null) !== null,
+    );
+
+    if (alivePositions.length > 0) {
+      focusMapPoints(
+        alivePositions.map((position) => pointToView(position.point, latestWorldSize)),
+        "team",
+      );
+      showMapFocusNotice({
+        tone: eliminatedPlayers.length > 0 ? "warning" : "info",
+        title: `已定位队伍 ${teamId}`,
+        description:
+          eliminatedPlayers.length > 0
+            ? `${alivePositions.length} 人存活，${eliminatedPlayers.length} 人已被淘汰。`
+            : `${alivePositions.length} 名队员均在视野内。`,
+      });
+      return;
+    }
+
+    if (eliminatedPlayers.length < team.players.length) {
+      showMapFocusNotice({
+        tone: "warning",
+        title: `队伍 ${teamId} 暂无位置`,
+        description: "当前回放时间之前还没有可用的队员位置记录。",
+      });
+      return;
+    }
+
+    const lastPositions = team.players
+      .map((player) => {
+        const eliminatedAt = latestPlayerStats[player.player_id]?.deadAt;
+        return interpolatePosition(
+          latestPositionGroups[player.player_id] ?? [],
+          eliminatedAt ?? latestPlaybackTime,
+        );
+      })
+      .filter(
+        (position): position is MatchAnalysisPosition => position !== null,
+      );
+    if (lastPositions.length > 0) {
+      focusMapPoints(
+        lastPositions.map((position) => pointToView(position.point, latestWorldSize)),
+        "team",
+      );
+    }
+    const eliminatedAt = Math.max(
+      0,
+      ...eliminatedPlayers.map(
+        (player) => latestPlayerStats[player.player_id]?.deadAt ?? 0,
+      ),
+    );
+    showMapFocusNotice(
+      {
+        tone: "warning",
+        title: `队伍 ${teamId} 已全员淘汰`,
+        description:
+          lastPositions.length > 0
+            ? `最后一名队员于 ${formatPlaybackTime(eliminatedAt)} 被淘汰，已定位到队伍最后活动区域。`
+            : `最后一名队员于 ${formatPlaybackTime(eliminatedAt)} 被淘汰，暂无可用位置记录。`,
+      },
+      5200,
+    );
+  }, [focusMapPoints, showMapFocusNotice]);
+
   return (
     <div className="dark flex h-full w-full flex-col gap-3 overflow-hidden bg-background p-3 text-foreground">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-1">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="rounded border border-border bg-muted p-2 text-primary">
-            <MapPinned className="size-5" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="truncate text-lg font-bold text-foreground">2D 对局回放</h1>
-              {analysis && (
-                <>
-                  <Badge variant="outline">{aliveTeamCount} 队存活</Badge>
-                  <Badge variant="outline">{alivePlayerCount} 人存活</Badge>
-                </>
-              )}
-            </div>
-            <p className="truncate text-xs text-muted-foreground">全员位置、安全区、交战事件与队伍实时状态</p>
-          </div>
-        </div>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-          <Select value={selectedMatchId} onValueChange={setSelectedMatchId}>
-            <SelectTrigger className="w-full sm:w-[300px]">
-              <SelectValue placeholder="选择对局" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {squadMatches.map((match) => (
-                  <SelectItem key={match.match_id} value={match.match_id}>
-                    {matchTitle(match)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Popover open={isTeamSearchOpen} onOpenChange={setIsTeamSearchOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                role="combobox"
-                aria-expanded={isTeamSearchOpen}
-                aria-label="搜索并高亮队伍"
-                className="w-full justify-between sm:w-[220px]"
-                disabled={!analysis || teams.length === 0}
-              >
-                <span className="truncate">
-                  {selectedTeam
-                    ? `队伍 ${selectedTeam.teamId} · ${selectedTeam.players.length} 人`
-                    : "搜索高亮队伍"}
-                </span>
-                <ChevronsUpDown data-icon="inline-end" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              className="w-[320px] max-w-[calc(100vw-2rem)] p-0"
-              align="end"
-            >
-              <Command>
-                <CommandInput placeholder="搜索队伍 ID 或选手名" />
-                <CommandList>
-                  <CommandEmpty>没有匹配的队伍</CommandEmpty>
-                  <CommandGroup>
-                    {teams.map((team) => (
-                      <CommandItem
-                        key={team.teamId}
-                        value={`队伍 ${team.teamId} ${team.players.map(playerDisplayName).join(" ")}`}
-                        onSelect={() => {
-                          setSelectedTeamId(team.teamId);
-                          setIsTeamSearchOpen(false);
-                        }}
-                      >
-                        <Check
-                          className={cn(
-                            selectedTeamId === team.teamId
-                              ? "opacity-100"
-                              : "opacity-0",
-                          )}
-                        />
-                        <div className="min-w-0">
-                          <div className="font-medium">
-                            队伍 {team.teamId} · {team.players.length} 人
-                          </div>
-                          <div className="truncate text-xs text-muted-foreground">
-                            {team.players.map(playerDisplayName).join(" / ")}
-                          </div>
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
-          <Select
-            value={selectedPlayer?.player_id ?? ""}
-            onValueChange={(playerId) => {
-              const player = analysis?.players.find((item) => item.player_id === playerId);
-              if (!player) return;
-              setSelectedTeamId(player.team_id);
-              setSelectedPlayerId(player.player_id);
-            }}
-            disabled={!analysis || analysis.players.length === 0}
-          >
-            <SelectTrigger className="w-full sm:w-[220px]">
-              <SelectValue
-                placeholder={
-                  isPinnedPlayerUnavailable
-                    ? "关注选手不在本场"
-                    : "固定关注选手"
-                }
-              />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {(analysis?.players ?? []).map((player) => (
-                  <SelectItem key={player.player_id} value={player.player_id}>
-                    {playerDisplayName(player)} · 队伍 {player.team_id}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={refreshMatches} disabled={isLoading}>
-            {isLoading ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <RefreshCw data-icon="inline-start" />}
-            刷新
-          </Button>
-        </div>
-      </div>
+      <ReplayAnalysisToolbar
+        analysis={analysis}
+        aliveTeamCount={aliveTeamCount}
+        alivePlayerCount={alivePlayerCount}
+        squadMatches={squadMatches}
+        selectedMatchId={selectedMatchId}
+        teams={teams}
+        selectedTeam={selectedTeam}
+        selectedTeamId={selectedTeamId}
+        selectedPlayer={selectedPlayer}
+        playerStats={playerStats}
+        isPinnedPlayerUnavailable={isPinnedPlayerUnavailable}
+        isTeamSearchOpen={isTeamSearchOpen}
+        isLoading={isLoading}
+        onSelectMatch={setSelectedMatchId}
+        onTeamSearchOpenChange={setIsTeamSearchOpen}
+        onSelectTeam={selectAndFocusTeam}
+        onSelectPlayer={selectAndFocusPlayer}
+        onRefresh={refreshMatches}
+      />
 
       {error && (
         <Alert variant="destructive" className="shrink-0">
@@ -1645,14 +2179,11 @@ export function PlayerMatchAnalysis() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    <SelectItem value="0.5">0.5x</SelectItem>
-                    <SelectItem value="1">1x</SelectItem>
-                    <SelectItem value="2">2x</SelectItem>
-                    <SelectItem value="5">5x</SelectItem>
-                    <SelectItem value="10">10x</SelectItem>
-                    <SelectItem value="16">16x</SelectItem>
-                    <SelectItem value="20">20x</SelectItem>
-                    <SelectItem value="32">32x</SelectItem>
+                    {PLAYBACK_SPEEDS.map((speed) => (
+                      <SelectItem key={speed} value={String(speed)}>
+                        {speed}x
+                      </SelectItem>
+                    ))}
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -1671,7 +2202,10 @@ export function PlayerMatchAnalysis() {
               onMouseLeave={stopMapDragging}
             >
               <div
-                className="absolute inset-0 origin-top-left"
+                className={cn(
+                  "absolute inset-0 origin-top-left",
+                  isMapAutoFocusing && "transition-transform duration-300 ease-out",
+                )}
                 style={{
                   transform: `translate(${mapTransform.x}px, ${mapTransform.y}px) scale(${mapTransform.scale})`,
                 }}
@@ -1717,6 +2251,24 @@ export function PlayerMatchAnalysis() {
                         floodOpacity="0.72"
                       />
                     </filter>
+                    <marker
+                      id="fire-tracer-arrow"
+                      viewBox="0 0 8 8"
+                      refX="7"
+                      refY="4"
+                      markerWidth="5.5"
+                      markerHeight="5.5"
+                      markerUnits="strokeWidth"
+                      orient="auto"
+                    >
+                      <path
+                        d="M 0.5 0.8 L 7.5 4 L 0.5 7.2 Z"
+                        fill="#ffffff"
+                        stroke="rgba(2, 6, 23, 0.9)"
+                        strokeWidth="0.8"
+                        strokeLinejoin="round"
+                      />
+                    </marker>
                   </defs>
                   <rect width={MAP_VIEW_SIZE} height={MAP_VIEW_SIZE} fill="url(#analysis-grid)" />
 
@@ -1757,41 +2309,9 @@ export function PlayerMatchAnalysis() {
                     </g>
                   )}
 
-                  {analysis &&
-                    layers.includes("route") &&
-                    routeSegments.map((segment) => (
-                      <path
-                        key={segment.id}
-                        d={segment.path}
-                        fill="none"
-                        stroke={playerColor(segment.playerId, selectedTeam)}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="1.5"
-                        strokeDasharray="6 6"
-                        opacity="0.9"
-                        filter="url(#analysis-glow)"
-                        className="animate-dash-flow"
-                      />
-                    ))}
+                  {analysis && layers.includes("route") && routePathElements}
 
-                  {analysis &&
-                    layers.includes("route") &&
-                    routePositions.map((position) => {
-                      const point = pointToView(position.point, worldSize);
-                      const color = playerColor(position.player_id, selectedTeam);
-                      const isEndpoint = routeEndpoints.has(position);
-                      return (
-                        <circle
-                          key={`${position.player_id}-${position.elapsed_time}-${position.point.x}-${position.point.y}`}
-                          cx={point.x}
-                          cy={point.y}
-                          r={isEndpoint ? 2.5 : 1}
-                          fill={color}
-                          opacity={isEndpoint ? 0.9 : 0.3}
-                        />
-                      );
-                    })}
+                  {analysis && layers.includes("route") && routePositionElements}
 
                   {currentPlayerPositions.map((position) => {
                     const point = pointToView(position.point, worldSize);
@@ -1801,18 +2321,31 @@ export function PlayerMatchAnalysis() {
                     const label = player ? playerDisplayName(player) : position.player_id;
                     const isSelectedTeam = position.team_id === selectedTeamId;
                     const isSelectedPlayer = position.player_id === selectedPlayer?.player_id;
-                    const markerOpacity = isSelectedPlayer ? 1 : isSelectedTeam ? 0.96 : 0.88;
+                    const isKnockedDown =
+                      playerStats[position.player_id]?.knockedDown ?? false;
+                    const isFiring =
+                      layers.includes("combat") &&
+                      !isKnockedDown &&
+                      firingPlayerIds.has(position.player_id);
+                    const markerOpacity = isKnockedDown
+                      ? 0.96
+                      : isSelectedPlayer
+                        ? 1
+                        : isSelectedTeam
+                          ? 0.96
+                          : 0.88;
                     const showPlayerLabel =
                       isSelectedTeam ||
                       isSelectedPlayer ||
                       mapTransform.scale >= PLAYER_LABEL_ZOOM_THRESHOLD;
-                    const markerLayout = playerMarkerLayouts.get(position.player_id);
-                    const markerWidth = markerLayout?.markerWidth ?? markerWidthForLabel(label);
-                    const markerOffsetX = markerLayout?.offsetX ?? 0;
-                    const markerOffsetY = markerLayout?.offsetY ?? 0;
-                    const isMarkerDisplaced =
-                      Math.abs(markerOffsetX) > 0.5 || Math.abs(markerOffsetY) > 0.5;
-                    const stateLabel = movementStateLabel(position);
+                    const showMarkerDetails = showPlayerLabel;
+                    const markerWidth = showPlayerLabel
+                      ? markerWidthForLabel(label)
+                      : 0;
+                    const isVehicle = position.movement_mode === "vehicle";
+                    const stateLabel = showMarkerDetails
+                      ? movementStateLabel(position)
+                      : "";
                     return (
                       <g
                         key={`player-${position.player_id}`}
@@ -1821,39 +2354,23 @@ export function PlayerMatchAnalysis() {
                         pointerEvents="all"
                         onMouseDown={(event) => event.stopPropagation()}
                         onClick={() => {
-                          setSelectedTeamId(position.team_id);
-                          setSelectedPlayerId(position.player_id);
+                          if (player) selectAndFocusPlayer(player);
                         }}
                       >
-                        <title>
-                          {position.team_id} · {label} · {stateLabel}
-                        </title>
-                        {showPlayerLabel && isMarkerDisplaced && (
-                          <g pointerEvents="none">
-                            <line
-                              x1="0"
-                              y1="0"
-                              x2={markerOffsetX}
-                              y2={markerOffsetY}
-                              stroke={color}
-                              strokeWidth="1"
-                              strokeDasharray="2 3"
-                              opacity={isSelectedTeam || isSelectedPlayer ? 0.7 : 0.4}
-                            />
-                            <circle
-                              cx="0"
-                              cy="0"
-                              r="2.5"
-                              fill={color}
-                              stroke="#09090b"
-                              strokeWidth="1"
-                            />
-                          </g>
+                        {showMarkerDetails && (
+                          <title>
+                            {position.team_id} · {label} · {stateLabel}
+                            {isKnockedDown ? " · 已被击倒" : ""}
+                            {isFiring ? " · 正在开火" : ""}
+                          </title>
                         )}
                         <g
-                          transform={`translate(${markerOffsetX} ${markerOffsetY})`}
                           opacity={markerOpacity}
-                          filter="url(#player-marker-shadow)"
+                          filter={
+                            showMarkerDetails
+                              ? "url(#player-marker-shadow)"
+                              : undefined
+                          }
                         >
                           {showPlayerLabel && (
                             <g
@@ -1866,7 +2383,11 @@ export function PlayerMatchAnalysis() {
                                 height={PLAYER_MARKER_LABEL_HEIGHT}
                                 rx="1.5"
                                 fill={color}
-                                stroke={isSelectedPlayer ? "#f8faf0" : "rgba(230,235,216,0.72)"}
+                                stroke={
+                                  isSelectedPlayer
+                                    ? "#f8faf0"
+                                    : "rgba(230,235,216,0.72)"
+                                }
                                 strokeWidth={isSelectedPlayer ? 1.4 : 0.85}
                               />
                               <rect
@@ -1899,7 +2420,11 @@ export function PlayerMatchAnalysis() {
                               cy="0"
                               r={PLAYER_MARKER_RADIUS}
                               fill={color}
-                              stroke={isSelectedPlayer ? "#ffffff" : "rgba(235,238,220,0.9)"}
+                              stroke={
+                                isSelectedPlayer
+                                  ? "#ffffff"
+                                  : "rgba(235,238,220,0.9)"
+                              }
                               strokeWidth={isSelectedPlayer ? 1.6 : 1.15}
                             />
                             <circle
@@ -1909,23 +2434,52 @@ export function PlayerMatchAnalysis() {
                               fill="#143331"
                               opacity="0.32"
                             />
-                            <text
-                              x="0"
-                              y="3.5"
-                              fill="#f0f1dd"
-                              fontFamily="Arial, Helvetica, sans-serif"
-                              fontSize={
-                                position.team_id.length >= 3
-                                  ? 7.5
-                                  : position.team_id.length === 2
-                                    ? 9
-                                    : 10.5
-                              }
-                              fontWeight="700"
-                              textAnchor="middle"
-                            >
-                              {position.team_id}
-                            </text>
+                            {isKnockedDown ? (
+                              <g
+                                fill="none"
+                                stroke="#f7f1df"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                pointerEvents="none"
+                                transform="rotate(-12)"
+                              >
+                                <circle cx="-2.8" cy="-3.8" r="1.55" fill="#f7f1df" stroke="none" />
+                                <path d="M -1.7 -2.4 L 0.4 0.2 L 4.4 -1" strokeWidth="2" />
+                                <path d="M 0.4 0.2 L -2 2.6 L -5.1 2.5" strokeWidth="2" />
+                                <path d="M -1.3 1.8 L 2.1 4.7" strokeWidth="2" />
+                              </g>
+                            ) : isVehicle ? (
+                              <g
+                                fill="none"
+                                stroke="#f0f1dd"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                pointerEvents="none"
+                              >
+                                <circle cx="0" cy="0" r="5.6" strokeWidth="1.25" />
+                                <circle cx="0" cy="0.8" r="1.35" strokeWidth="1.1" />
+                                <path d="M 0 -0.55 V -5.45" strokeWidth="1.1" />
+                                <path d="M -1.1 1.55 L -4.65 3.65 M 1.1 1.55 L 4.65 3.65" strokeWidth="1.1" />
+                              </g>
+                            ) : (
+                              <text
+                                x="0"
+                                y="3.5"
+                                fill="#f0f1dd"
+                                fontFamily="Arial, Helvetica, sans-serif"
+                                fontSize={
+                                  position.team_id.length >= 3
+                                    ? 7.5
+                                    : position.team_id.length === 2
+                                      ? 9
+                                      : 10.5
+                                }
+                                fontWeight="700"
+                                textAnchor="middle"
+                              >
+                                {position.team_id}
+                              </text>
+                            )}
                           </g>
                         </g>
                       </g>
@@ -2006,8 +2560,211 @@ export function PlayerMatchAnalysis() {
                       );
                     }
                   })}
+
+                  {selectedPlayer && selectedEliminatedPosition && (() => {
+                    const point = pointToView(selectedEliminatedPosition.point, worldSize);
+                    const invScale = 1 / mapTransform.scale;
+                    const label = `${playerDisplayName(selectedPlayer)} · 已淘汰`;
+                    const markerWidth = markerWidthForLabel(label);
+                    return (
+                      <g
+                        data-selected-eliminated-player={selectedPlayer.player_id}
+                        transform={`translate(${point.x}, ${point.y}) scale(${invScale})`}
+                        pointerEvents="none"
+                        filter="url(#player-marker-shadow)"
+                      >
+                        <circle
+                          cx="0"
+                          cy="0"
+                          r="16"
+                          fill="rgba(127, 29, 29, 0.22)"
+                          stroke="#f87171"
+                          strokeWidth="1.5"
+                          strokeDasharray="3 3"
+                        >
+                          <animate
+                            attributeName="r"
+                            values="14;19;14"
+                            dur="1.4s"
+                            repeatCount="indefinite"
+                          />
+                          <animate
+                            attributeName="opacity"
+                            values="1;0.45;1"
+                            dur="1.4s"
+                            repeatCount="indefinite"
+                          />
+                        </circle>
+                        <circle
+                          cx="0"
+                          cy="0"
+                          r={PLAYER_MARKER_RADIUS + 1}
+                          fill="#7f1d1d"
+                          stroke="#fee2e2"
+                          strokeWidth="1.5"
+                        />
+                        <path
+                          d="M -4 -4 L 4 4 M 4 -4 L -4 4"
+                          fill="none"
+                          stroke="#fff1f2"
+                          strokeWidth="2.2"
+                          strokeLinecap="round"
+                        />
+                        <g transform={`translate(${-markerWidth / 2} ${PLAYER_MARKER_LABEL_Y + 5})`}>
+                          <rect
+                            x="0"
+                            y="0"
+                            width={markerWidth}
+                            height={PLAYER_MARKER_LABEL_HEIGHT}
+                            rx="2"
+                            fill="#7f1d1d"
+                            stroke="#fecaca"
+                            strokeWidth="1"
+                          />
+                          <text
+                            x={markerWidth / 2}
+                            y="14.6"
+                            fill="#fff1f2"
+                            fontFamily="Arial, Helvetica, sans-serif"
+                            fontSize="12"
+                            fontWeight="700"
+                            textAnchor="middle"
+                          >
+                            {label}
+                          </text>
+                        </g>
+                      </g>
+                    );
+                  })()}
+
+                  {layers.includes("combat") &&
+                    activeFireTracers.map((tracer) => {
+                      const invScale = 1 / mapTransform.scale;
+                      const deltaX = tracer.end.x - tracer.start.x;
+                      const deltaY = tracer.end.y - tracer.start.y;
+                      const distance = Math.hypot(deltaX, deltaY);
+                      const directionX = distance > 0 ? deltaX / distance : 1;
+                      const directionY = distance > 0 ? deltaY / distance : 0;
+                      const isCloseRange = distance * mapTransform.scale < 28;
+                      const bend = isCloseRange ? 48 * invScale : 0;
+                      const controlX =
+                        (tracer.start.x + tracer.end.x) / 2 - directionY * bend;
+                      const controlY =
+                        (tracer.start.y + tracer.end.y) / 2 + directionX * bend;
+                      const tracerPath = isCloseRange
+                        ? `M ${tracer.start.x} ${tracer.start.y} Q ${controlX} ${controlY} ${tracer.end.x} ${tracer.end.y}`
+                        : `M ${tracer.start.x} ${tracer.start.y} L ${tracer.end.x} ${tracer.end.y}`;
+                      return (
+                        <g
+                          key={tracer.id}
+                          data-fire-tracer={`${tracer.attackerPlayerId}:${tracer.victimPlayerId}`}
+                          opacity={tracer.opacity}
+                          pointerEvents="none"
+                        >
+                          <path
+                            d={tracerPath}
+                            fill="none"
+                            stroke="rgba(2, 6, 23, 0.78)"
+                            strokeWidth={4.8 * invScale}
+                            strokeLinecap="round"
+                            strokeDasharray={`${9 * invScale} ${6 * invScale}`}
+                          >
+                            <animate
+                              attributeName="stroke-dashoffset"
+                              values={`${15 * invScale};0`}
+                              dur="0.55s"
+                              repeatCount="indefinite"
+                            />
+                          </path>
+                          <path
+                            data-fire-tracer-path="true"
+                            d={tracerPath}
+                            fill="none"
+                            stroke="#ffffff"
+                            strokeWidth={2 * invScale}
+                            strokeLinecap="round"
+                            strokeDasharray={`${9 * invScale} ${6 * invScale}`}
+                            markerEnd="url(#fire-tracer-arrow)"
+                          >
+                            <animate
+                              attributeName="stroke-dashoffset"
+                              values={`${15 * invScale};0`}
+                              dur="0.55s"
+                              repeatCount="indefinite"
+                            />
+                          </path>
+                          <circle
+                            cx={tracer.start.x}
+                            cy={tracer.start.y}
+                            r={5.5 * invScale}
+                            fill="rgba(2, 6, 23, 0.82)"
+                            stroke="#ffffff"
+                            strokeWidth={1.4 * invScale}
+                          >
+                            <animate
+                              attributeName="r"
+                              values={`${4.5 * invScale};${7 * invScale};${4.5 * invScale}`}
+                              dur="0.7s"
+                              repeatCount="indefinite"
+                            />
+                            <animate
+                              attributeName="stroke-opacity"
+                              values="1;0.35;1"
+                              dur="0.7s"
+                              repeatCount="indefinite"
+                            />
+                          </circle>
+                          <path
+                            d={`M ${-3.5 * invScale} ${-2.6 * invScale} L ${4 * invScale} 0 L ${-3.5 * invScale} ${2.6 * invScale} Z`}
+                            fill="#ffffff"
+                            stroke="rgba(2, 6, 23, 0.9)"
+                            strokeWidth={1 * invScale}
+                          >
+                            <animateMotion
+                              path={tracerPath}
+                              rotate="auto"
+                              dur="0.7s"
+                              repeatCount="indefinite"
+                            />
+                            <animate
+                              attributeName="opacity"
+                              values="0.15;1;0.15"
+                              dur="0.7s"
+                              repeatCount="indefinite"
+                            />
+                          </path>
+                        </g>
+                      );
+                  })}
                 </svg>
               </div>
+              {mapFocusNotice && (
+                <div
+                  className={cn(
+                    "pointer-events-none absolute left-1/2 top-3 z-30 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-start gap-2 rounded-md border px-3 py-2 shadow-xl backdrop-blur-sm",
+                    mapFocusNotice.tone === "warning"
+                      ? "border-red-400/60 bg-red-950/90 text-red-50"
+                      : "border-cyan-300/50 bg-slate-950/90 text-slate-50",
+                  )}
+                  role="status"
+                  aria-live="polite"
+                  data-map-focus-notice={mapFocusNotice.tone}
+                >
+                  {mapFocusNotice.tone === "warning" ? (
+                    <Skull className="mt-0.5 size-4 shrink-0 text-red-300" />
+                  ) : (
+                    <MapPinned className="mt-0.5 size-4 shrink-0 text-cyan-300" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-semibold">
+                      {mapFocusNotice.title}
+                    </div>
+                    <div className="truncate text-[11px] opacity-80">
+                      {mapFocusNotice.description}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div
                 className="absolute z-10 flex items-center rounded border border-border bg-card/90 p-1 shadow-sm backdrop-blur-sm"
@@ -2150,77 +2907,14 @@ export function PlayerMatchAnalysis() {
           <CardDescription>玩家 / 淘汰 / 击倒 / 伤害</CardDescription>
         </CardHeader>
         <CardContent className="min-h-0 flex-1 p-0">
-          <ScrollArea className="h-full">
-            <div className="flex flex-col gap-2 p-2">
-              {teamRows.map((row) => (
-                <div
-                  key={row.team.teamId}
-                  className={cn(
-                    "overflow-hidden rounded-md border border-border bg-muted/20",
-                    row.team.teamId === selectedTeamId && "bg-accent/60 ring-1 ring-primary/30",
-                  )}
-                  style={{ borderLeftColor: row.color, borderLeftWidth: 4 }}
-                >
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-accent/50"
-                    onClick={() => setSelectedTeamId(row.team.teamId)}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-7 text-sm font-black tabular-nums" style={{ color: row.color }}>
-                        {row.team.teamId}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-semibold">
-                          {row.aliveCount > 0 ? `${row.aliveCount} 人存活` : "全队淘汰"}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground">
-                          {row.displayRank ? `当前 #${row.displayRank}` : "仍在争夺排名"}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs tabular-nums">
-                      <span>{row.kills}</span>
-                      <span className="w-10 text-right">{Math.round(row.damage)}</span>
-                    </div>
-                  </button>
-                  <div className="border-t border-border/70 px-2 py-1">
-                    {row.team.players.map((player) => {
-                      const stats = playerStats[player.player_id] ?? {
-                        kills: 0,
-                        knocks: 0,
-                        damage: 0,
-                        deadAt: null,
-                      };
-                      const isSelected = player.player_id === selectedPlayer?.player_id;
-                      return (
-                        <button
-                          key={player.player_id}
-                          type="button"
-                          className={cn(
-                            "grid w-full grid-cols-[minmax(0,1fr)_30px_30px_48px] items-center gap-1 rounded px-1.5 py-1 text-left text-xs hover:bg-accent/50",
-                            isSelected && "bg-accent text-accent-foreground",
-                            stats.deadAt !== null && "text-muted-foreground",
-                          )}
-                          onClick={() => {
-                            setSelectedTeamId(row.team.teamId);
-                            setSelectedPlayerId(player.player_id);
-                          }}
-                        >
-                          <span className={cn("truncate", stats.deadAt !== null && "line-through")}>
-                            {playerDisplayName(player)}
-                          </span>
-                          <span className="text-right tabular-nums">{stats.kills}</span>
-                          <span className="text-right tabular-nums">{stats.knocks}</span>
-                          <span className="text-right tabular-nums">{Math.round(stats.damage)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
+          <TeamReplayList
+            teamRows={teamRows}
+            playerStats={playerStats}
+            selectedTeamId={selectedTeamId}
+            selectedPlayerId={selectedPlayer?.player_id ?? null}
+            onSelectTeam={selectAndFocusTeam}
+            onSelectPlayer={selectAndFocusPlayer}
+          />
         </CardContent>
       </Card>
       </div>

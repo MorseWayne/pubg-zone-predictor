@@ -33,6 +33,68 @@ const strategyOptions = [
   { id: "slow", label: "慢打进圈", apiValue: "slow" },
   { id: "avoid", label: "避战绕行", apiValue: "avoid_hotspots" },
 ] as const;
+const TACTICAL_PREDICTION_STORAGE_KEY = "pubg-zone-predictor:tactical-prediction";
+
+type PersistedTacticalState = {
+  selectedMap?: string;
+  zoneStage?: number;
+  mapMode?: MapMode;
+  zoneCenter?: Point | null;
+  teamPos?: Point | null;
+  strategy?: string;
+  smartExplain?: boolean;
+};
+
+function readPersistedPoint(value: unknown): Point | null {
+  if (!value || typeof value !== "object") return null;
+  const point = value as Record<string, unknown>;
+  if (typeof point.x !== "number" || typeof point.y !== "number") return null;
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  if (point.x < 0 || point.x > MAP_VIEW_SIZE || point.y < 0 || point.y > MAP_VIEW_SIZE) return null;
+  return { x: point.x, y: point.y };
+}
+
+function readPersistedTacticalState(): PersistedTacticalState {
+  if (typeof window === "undefined") return {};
+  try {
+    const rawValue = window.localStorage.getItem(TACTICAL_PREDICTION_STORAGE_KEY);
+    if (!rawValue) return {};
+    const parsedValue = JSON.parse(rawValue) as Record<string, unknown>;
+    return {
+      selectedMap: typeof parsedValue.selectedMap === "string" ? parsedValue.selectedMap : undefined,
+      zoneStage:
+        typeof parsedValue.zoneStage === "number" &&
+        Number.isInteger(parsedValue.zoneStage) &&
+        parsedValue.zoneStage >= 1 &&
+        parsedValue.zoneStage <= 8
+          ? parsedValue.zoneStage
+          : undefined,
+      mapMode:
+        parsedValue.mapMode === "center" || parsedValue.mapMode === "team"
+          ? parsedValue.mapMode
+          : undefined,
+      zoneCenter: readPersistedPoint(parsedValue.zoneCenter),
+      teamPos: readPersistedPoint(parsedValue.teamPos),
+      strategy:
+        typeof parsedValue.strategy === "string" &&
+        strategyOptions.some((option) => option.id === parsedValue.strategy)
+          ? parsedValue.strategy
+          : undefined,
+      smartExplain: typeof parsedValue.smartExplain === "boolean" ? parsedValue.smartExplain : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writePersistedTacticalState(state: Required<PersistedTacticalState>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(TACTICAL_PREDICTION_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Persistence is optional; prediction still works when browser storage is unavailable.
+  }
+}
 
 function mapPointToWorld(point: Point, worldSize: number) {
   return {
@@ -50,15 +112,16 @@ function withCacheBust(url: string) {
 }
 
 export function TacticalPrediction() {
+  const [initialTacticalState] = useState(readPersistedTacticalState);
   const [maps, setMaps] = useState<MapConfig[]>([]);
   const [zoneConfig, setZoneConfig] = useState<ZonePhaseConfig | null>(null);
-  const [selectedMap, setSelectedMap] = useState("miramar");
-  const [zoneStage, setZoneStage] = useState(1);
-  const [mapMode, setMapMode] = useState<MapMode>("center");
-  const [zoneCenter, setZoneCenter] = useState<Point | null>(null);
-  const [teamPos, setTeamPos] = useState<Point | null>(null);
-  const [strategy, setStrategy] = useState("edge");
-  const [smartExplain, setSmartExplain] = useState(true);
+  const [selectedMap, setSelectedMap] = useState(initialTacticalState.selectedMap ?? "miramar");
+  const [zoneStage, setZoneStage] = useState(initialTacticalState.zoneStage ?? 1);
+  const [mapMode, setMapMode] = useState<MapMode>(initialTacticalState.mapMode ?? "center");
+  const [zoneCenter, setZoneCenter] = useState<Point | null>(initialTacticalState.zoneCenter ?? null);
+  const [teamPos, setTeamPos] = useState<Point | null>(initialTacticalState.teamPos ?? null);
+  const [strategy, setStrategy] = useState(initialTacticalState.strategy ?? "edge");
+  const [smartExplain, setSmartExplain] = useState(initialTacticalState.smartExplain ?? true);
   const [predState, setPredState] = useState<PredictionState>("idle");
   const [prediction, setPrediction] = useState<PredictResponse | null>(null);
   const [mapImageUrl, setMapImageUrl] = useState("");
@@ -68,6 +131,18 @@ export function TacticalPrediction() {
   const [mapAssetRetryKey, setMapAssetRetryKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const previousMapAssetRetryKeyRef = useRef(mapAssetRetryKey);
+
+  useEffect(() => {
+    writePersistedTacticalState({
+      selectedMap,
+      zoneStage,
+      mapMode,
+      zoneCenter,
+      teamPos,
+      strategy,
+      smartExplain,
+    });
+  }, [selectedMap, zoneStage, mapMode, zoneCenter, teamPos, strategy, smartExplain]);
 
   const currentMap = useMemo(
     () => maps.find((map) => map.map_id === selectedMap) ?? null,

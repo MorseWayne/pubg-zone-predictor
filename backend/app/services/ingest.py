@@ -28,7 +28,7 @@ DEFAULT_SAMPLE_PARSE_PROFILE = PARSE_PROFILE_HOTSPOT_LIGHT
 DEFAULT_SAMPLE_POSITION_INTERVAL_SECONDS = 30
 ANALYSIS_PARSE_PROFILE = PARSE_PROFILE_FULL
 ANALYSIS_POSITION_INTERVAL_SECONDS = 5
-ANALYSIS_REPLAY_SCHEMA_VERSION = 3
+ANALYSIS_REPLAY_SCHEMA_VERSION = 6
 MAX_TEAM_DASHBOARD_TEAMMATES = 3
 TEAMMATE_CANDIDATE_LIMIT = 50
 TEAM_DASHBOARD_MATCH_LIMIT = 20
@@ -986,13 +986,9 @@ class IngestService:
         if has_analysis_data and not needs_damage_backfill and not needs_replay_backfill:
             return
 
-        cache_path = (
-            self._existing_match_telemetry_cache(match)
-            if needs_damage_backfill or needs_replay_backfill
-            else self._ensure_match_telemetry_cache(match)
-        )
+        cache_path = self._existing_match_telemetry_cache(match)
         if cache_path is None:
-            return
+            cache_path = self._ensure_match_telemetry_cache(match)
         try:
             parse_result = self._parse_cached_match_telemetry(
                 match_id,
@@ -1642,7 +1638,7 @@ class IngestService:
             self.connection,
             sample_interval_seconds=position_interval_seconds,
             parse_profile=parse_profile,
-        ).parse_match(match_id, events)
+        ).parse_match(match_id, events, replace_existing=True)
         self.repo.execute(
             """
             UPDATE telemetry_assets

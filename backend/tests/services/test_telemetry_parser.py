@@ -2,6 +2,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from app.db.repository import SQLiteRepository
 from app.services.telemetry_parser import TelemetryParser
 
@@ -149,6 +151,157 @@ def test_telemetry_parser_derives_elapsed_time_from_event_timestamps(
     assert life_event["damage_reason"] == "HeadShot"
 
 
+def test_telemetry_parser_uses_match_start_for_mixed_event_clocks(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    _seed_match(migrated_connection)
+    events = [
+        {
+            "_T": "LogPlayerPosition",
+            "_D": "2026-06-04T23:59:00Z",
+            "elapsedTime": 0,
+            "common": {"isGame": 0},
+            "character": {
+                "accountId": "account-lobby",
+                "name": "LobbyPlayer",
+                "teamId": 99,
+                "health": 100,
+                "location": {"x": 100, "y": 200},
+            },
+            "vehicle": None,
+        },
+        {"_T": "LogMatchStart", "_D": "2026-06-05T00:00:00Z", "common": {"isGame": 0}},
+        {
+            "_T": "LogPlayerPosition",
+            "_D": "2026-06-05T00:00:10Z",
+            "elapsedTime": 3,
+            "common": {"isGame": 1},
+            "character": {
+                "accountId": "account-1",
+                "name": "PlayerOne",
+                "teamId": 1,
+                "health": 100,
+                "location": {"x": 1000, "y": 2000},
+            },
+            "vehicle": None,
+        },
+        {
+            "_T": "LogPlayerMakeGroggy",
+            "_D": "2026-06-05T00:00:12Z",
+            "common": {"isGame": 1},
+            "attacker": {"accountId": "account-2", "name": "PlayerTwo", "teamId": 2},
+            "victim": {"accountId": "account-1", "name": "PlayerOne", "teamId": 1},
+        },
+        {
+            "_T": "LogPlayerRevive",
+            "_D": "2026-06-05T00:00:20Z",
+            "common": {"isGame": 1},
+            "victim": {"accountId": "account-1", "name": "PlayerOne", "teamId": 1},
+        },
+    ]
+
+    result = TelemetryParser(migrated_connection).parse_match("match-1", events)
+
+    repo = SQLiteRepository(migrated_connection)
+    assert result.position_sample_count == 1
+    assert result.life_event_count == 2
+    assert repo.fetch_one(
+        "SELECT COUNT(*) AS count FROM match_rosters WHERE player_id = 'account-lobby'"
+    )["count"] == 0
+    assert repo.fetch_one("SELECT elapsed_time FROM player_position_samples")[
+        "elapsed_time"
+    ] == 10
+    assert [
+        row["elapsed_time"]
+        for row in repo.fetch_all(
+            "SELECT elapsed_time FROM player_life_events ORDER BY elapsed_time"
+        )
+    ] == [12, 20]
+
+
+def test_telemetry_parser_links_attack_to_victim_by_attack_id(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    _seed_match(migrated_connection)
+    attacker = {
+        "accountId": "account-1",
+        "name": "PlayerOne",
+        "teamId": 101,
+        "location": {"x": 1000, "y": 2000},
+    }
+    victim = {
+        "accountId": "account-2",
+        "name": "PlayerTwo",
+        "teamId": 102,
+        "location": {"x": 4000, "y": 5000},
+    }
+    events = [
+        {"_T": "LogMatchStart", "_D": "2026-06-05T00:00:00Z"},
+        {
+            "_T": "LogPlayerAttack",
+            "_D": "2026-06-05T00:00:59Z",
+            "attackId": 41,
+            "attacker": attacker,
+            "weapon": {"itemId": "Item_Weapon_AUG_C"},
+        },
+        {
+            "_T": "LogPlayerAttack",
+            "_D": "2026-06-05T00:01:00Z",
+            "attackId": 42,
+            "attacker": attacker,
+            "weapon": {"itemId": "Item_Weapon_AUG_C"},
+        },
+        {
+            "_T": "LogPlayerAttack",
+            "_D": "2026-06-05T00:01:10Z",
+            "attackId": 43,
+            "attacker": attacker,
+            "weapon": {"itemId": "Item_Weapon_AUG_C"},
+        },
+        {
+            "_T": "LogPlayerTakeDamage",
+            "_D": "2026-06-05T00:01:02.500Z",
+            "attackId": 42,
+            "attacker": attacker,
+            "victim": victim,
+            "damage": 24,
+            "damageCauserName": "WeapAUG_C",
+            "damageReason": "TorsoShot",
+        },
+    ]
+
+    result = TelemetryParser(migrated_connection).parse_match("match-1", events)
+
+    repo = SQLiteRepository(migrated_connection)
+    attacks = repo.fetch_all(
+        """
+        SELECT
+            elapsed_time,
+            actor_player_id,
+            victim_player_id,
+            x,
+            y,
+            damage,
+            damage_causer_name,
+            damage_reason
+        FROM player_life_events
+        WHERE event_type = 'LogPlayerAttack'
+        ORDER BY elapsed_time
+        """
+    )
+    assert result.life_event_count == 3
+    assert len(attacks) == 2
+    assert [event["elapsed_time"] for event in attacks] == [59, 60]
+    assert all(event["actor_player_id"] == "account-1" for event in attacks)
+    assert all(event["victim_player_id"] == "account-2" for event in attacks)
+    assert all(event["x"] == 1000 for event in attacks)
+    assert all(event["y"] == 2000 for event in attacks)
+    assert all(event["damage"] is None for event in attacks)
+    assert all(event["damage_causer_name"] == "WeapAUG_C" for event in attacks)
+    assert attacks[0]["damage_reason"] is None
+    assert attacks[1]["damage_reason"] == "TorsoShot"
+
+
 def test_telemetry_parser_backfills_existing_life_event_damage(
     migrated_connection: sqlite3.Connection,
 ) -> None:
@@ -253,6 +406,87 @@ def test_telemetry_parser_is_idempotent(migrated_connection: sqlite3.Connection)
     assert second.position_sample_count == 0
     assert repo.fetch_one("SELECT COUNT(*) AS count FROM circle_phases")["count"] == 2
     assert repo.fetch_one("SELECT COUNT(*) AS count FROM player_position_samples")["count"] == 2
+
+
+def test_telemetry_parser_can_replace_existing_timeline_rows(
+    migrated_connection: sqlite3.Connection,
+) -> None:
+    _seed_match(migrated_connection)
+    parser = TelemetryParser(migrated_connection)
+    parser.parse_match("match-1", json.loads(FIXTURE_PATH.read_text(encoding="utf-8")))
+    replacement_events = [
+        {
+            "_T": "LogGameStatePeriodic",
+            "common": {"isGame": 1},
+            "gameState": {
+                "elapsedTime": 70,
+                "poisonGasWarningPosition": {"x": 420000, "y": 430000},
+                "poisonGasWarningRadius": 300000,
+            },
+        },
+        {
+            "_T": "LogPlayerPosition",
+            "common": {"isGame": 1, "elapsedTime": 71},
+            "character": {
+                "accountId": "account-1",
+                "name": "PlayerOne",
+                "teamId": 101,
+                "health": 80,
+                "location": {"x": 5000, "y": 6000},
+            },
+            "vehicle": None,
+        },
+        {
+            "_T": "LogPlayerKillV2",
+            "common": {"isGame": 1, "elapsedTime": 80},
+            "killer": {"accountId": "account-1", "name": "PlayerOne", "teamId": 101},
+            "victim": {"accountId": "account-2", "name": "PlayerTwo", "teamId": 102},
+        },
+    ]
+
+    result = parser.parse_match("match-1", replacement_events, replace_existing=True)
+
+    repo = SQLiteRepository(migrated_connection)
+    assert result.circle_phase_count == 1
+    assert result.position_sample_count == 1
+    assert result.life_event_count == 1
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM circle_phases")["count"] == 1
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM player_position_samples")["count"] == 1
+    assert repo.fetch_one("SELECT x FROM player_position_samples")["x"] == 5000
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM player_life_events")["count"] == 1
+    assert repo.fetch_one("SELECT elapsed_time FROM player_life_events")["elapsed_time"] == 80
+
+
+def test_telemetry_parser_rolls_back_failed_timeline_replacement(
+    migrated_connection: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_match(migrated_connection)
+    parser = TelemetryParser(migrated_connection)
+    parser.parse_match("match-1", json.loads(FIXTURE_PATH.read_text(encoding="utf-8")))
+    replacement_events = [
+        {
+            "_T": "LogGameStatePeriodic",
+            "common": {"isGame": 1},
+            "gameState": {
+                "elapsedTime": 70,
+                "poisonGasWarningPosition": {"x": 420000, "y": 430000},
+                "poisonGasWarningRadius": 300000,
+            },
+        }
+    ]
+    def fail_insert(*_args: object, **_kwargs: object) -> None:
+        raise sqlite3.OperationalError("simulated insert failure")
+
+    monkeypatch.setattr(parser.repo, "insert_or_ignore", fail_insert)
+
+    with pytest.raises(sqlite3.OperationalError, match="simulated insert failure"):
+        parser.parse_match("match-1", replacement_events, replace_existing=True)
+
+    repo = SQLiteRepository(migrated_connection)
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM circle_phases")["count"] == 2
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM player_position_samples")["count"] == 2
+    assert repo.fetch_one("SELECT COUNT(*) AS count FROM player_life_events")["count"] == 1
 
 
 def test_telemetry_parser_zone_only_skips_position_and_life_tables(

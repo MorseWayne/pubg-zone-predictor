@@ -513,7 +513,8 @@ def test_get_match_analysis_returns_players_route_and_events(
             parse_status,
             parse_profile,
             position_interval_seconds,
-            parsed_at
+            parsed_at,
+            replay_schema_version
         )
         VALUES (
             'match-analysis',
@@ -521,7 +522,8 @@ def test_get_match_analysis_returns_players_route_and_events(
             'completed',
             'full',
             5,
-            '2026-06-05T00:02:00+00:00'
+            '2026-06-05T00:02:00+00:00',
+            6
         )
         """
     )
@@ -857,7 +859,7 @@ def test_get_match_analysis_downloads_and_parses_missing_telemetry_data(
     assert asset["parse_profile"] == "full"
     assert asset["position_interval_seconds"] == 5
     assert asset["parsed_at"] is not None
-    assert asset["replay_schema_version"] == 3
+    assert asset["replay_schema_version"] == 6
     assert Path(asset["cache_path"]).exists()
     assert analysis.match.circle_phase_count == 1
     assert analysis.match.position_sample_count == 1
@@ -1017,7 +1019,7 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
         )
         VALUES (
             'match-damage',
-            120,
+            20,
             NULL,
             'LogPlayerTakeDamage',
             'account.1',
@@ -1060,6 +1062,8 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
 
     analysis = service.get_match_analysis("match-damage")
 
+    assert len(analysis.life_events) == 1
+    assert analysis.life_events[0].elapsed_time == 120
     assert analysis.life_events[0].damage == 18.75
     assert analysis.life_events[0].damage_causer_name == "WeapM416_C"
     assert analysis.life_events[0].damage_reason == "TorsoShot"
@@ -1067,7 +1071,7 @@ def test_get_match_analysis_backfills_cached_damage_for_existing_analysis(
     assert analysis.positions[0].movement_mode == "foot"
     assert repo.fetch_one(
         "SELECT replay_schema_version FROM telemetry_assets WHERE match_id = 'match-damage'"
-    )["replay_schema_version"] == 3
+    )["replay_schema_version"] == 6
 
 
 def test_retry_job_starts_new_job_with_incremented_retry_count(
