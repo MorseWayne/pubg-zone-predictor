@@ -1,14 +1,13 @@
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Card } from "@astryxdesign/core/Card";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { Skeleton } from "@astryxdesign/core/Skeleton";
+import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from "@astryxdesign/core/Table";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BarChart3, Loader2, RefreshCw, Shield, Skull, Swords, Trophy, Users } from "lucide-react";
+import { BarChart3, Loader2, RefreshCw, Shield, Skull, Swords, Trophy, Users } from "lucide-react";
 import { api, apiErrorMessage, LocalPlayer, TeamDashboard as TeamDashboardData, TeamDashboardPlayer } from "../api";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Checkbox } from "./ui/checkbox";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Skeleton } from "./ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 
 const SERIES = ["#3987e5", "#199e70", "#c98500", "#008300"];
 const MAX_TEAMMATES = 3;
@@ -51,15 +50,15 @@ function teamTotals(players: TeamDashboardPlayer[]) {
 
 function StatCard({ icon: Icon, label, value, sublabel }: StatCardProps) {
   return (
-    <Card className="border-border bg-card shadow-sm">
-      <CardContent className="flex flex-col gap-2 p-4">
-        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+    <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+      <div className="px-5 pb-5 flex flex-col gap-2 p-4">
+        <div className="flex items-center gap-2 text-xs font-medium text-secondary">
           <Icon className="size-4" />
           {label}
         </div>
-        <div className="text-2xl font-bold tracking-tight text-foreground">{value}</div>
-        {sublabel && <div className="text-xs text-muted-foreground">{sublabel}</div>}
-      </CardContent>
+        <div className="text-2xl font-bold tracking-tight text-primary">{value}</div>
+        {sublabel && <div className="text-xs text-secondary">{sublabel}</div>}
+      </div>
     </Card>
   );
 }
@@ -82,9 +81,9 @@ function TeamBarChart({ players }: { players: TeamDashboardPlayer[] }) {
             <div className="flex items-center justify-between gap-3 text-xs">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
-                <span className="truncate font-medium text-foreground">{playerLabel(player)}</span>
+                <span className="truncate font-medium text-primary">{playerLabel(player)}</span>
               </div>
-              <span className="shrink-0 text-muted-foreground">
+              <span className="shrink-0 text-secondary">
                 {Math.round(player.damage)} 伤害 · {player.kills} 淘汰
               </span>
             </div>
@@ -107,7 +106,7 @@ function LoadingCards() {
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
       {Array.from({ length: 4 }).map((_, index) => (
-        <Skeleton key={index} className="h-28" />
+        <Skeleton key={index} height={112} />
       ))}
     </div>
   );
@@ -209,60 +208,56 @@ export function TeamDashboard() {
   };
 
   return (
-    <div className="dark flex h-full w-full flex-col gap-4 overflow-auto bg-background p-4 text-foreground">
+    <div className="flex h-full w-full flex-col gap-4 overflow-auto bg-body p-4 text-primary">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="rounded border border-border bg-muted p-2 text-primary">
             <Users className="size-5" />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-bold text-foreground">团队数据看板</h1>
-            <p className="truncate text-xs text-muted-foreground">从个人最近 50 场四排筛队友，选择 20 场统计协同表现</p>
+            <h1 className="truncate text-lg font-bold text-primary">团队数据看板</h1>
+            <p className="truncate text-xs text-secondary">从个人最近 50 场四排筛队友，选择 20 场统计协同表现</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select
+          <Selector
+            label="选择个人"
+            isLabelHidden
+            placeholder="选择个人"
             value={selectedPlayerId}
-            onValueChange={(value) => {
+            onChange={(value) => {
               setSelectedPlayerId(value);
               setSelectedTeammates([]);
             }}
-            disabled={isLoadingPlayers || !hasPlayers}
-          >
-            <SelectTrigger className="w-[280px]">
-              <SelectValue placeholder="选择个人" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {players.map((player) => (
-                  <SelectItem key={player.player_id} value={player.player_id}>
-                    {playerLabel(player)} · {player.match_count} 场
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={refreshPlayers} disabled={isLoadingPlayers}>
-            {isLoadingPlayers ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <RefreshCw data-icon="inline-start" />}
-            刷新
-          </Button>
+            isDisabled={isLoadingPlayers || !hasPlayers}
+            containerClassName="w-[280px]"
+            options={players.map((player) => ({
+              value: player.player_id,
+              label: `${playerLabel(player)} · ${player.match_count} 场`,
+            }))}
+          />
+          <Button
+            onClick={refreshPlayers}
+            label="刷新"
+            variant="secondary"
+            isDisabled={isLoadingPlayers}
+            icon={
+              isLoadingPlayers ? (
+                <Loader2 data-icon="inline-start" className="animate-spin" />
+              ) : (
+                <RefreshCw data-icon="inline-start" />
+              )
+            }
+          />
         </div>
       </div>
 
       {error && (
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertTitle>团队数据加载失败</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <Banner status="error" role="alert" title="团队数据加载失败" description={error} />
       )}
 
       {!isLoadingPlayers && !hasPlayers && (
-        <Alert>
-          <AlertTriangle />
-          <AlertTitle>还没有本地玩家数据</AlertTitle>
-          <AlertDescription>先在“数据采集”里按玩家采集 squad/squad-fpp 对局，再回到这里看团队分析。</AlertDescription>
-        </Alert>
+        <Banner status="info" title="还没有本地玩家数据" description="先在“数据采集”里按玩家采集 squad/squad-fpp 对局，再回到这里看团队分析。" />
       )}
 
       {isLoadingDashboard ? (
@@ -277,60 +272,60 @@ export function TeamDashboard() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
-            <Card className="border-border bg-card shadow-sm">
-              <CardHeader className="px-4 pt-4">
-                <CardTitle className="text-sm">最近 50 场四排队友</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 px-4">
+            <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+              <header className="grid gap-1.5 px-4 pt-4">
+                <h3 className="font-semibold text-sm">最近 50 场四排队友</h3>
+              </header>
+              <div className="pb-5 space-y-2 px-4">
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
-                  <div className="text-xs text-muted-foreground">个人</div>
-                  <div className="mt-1 font-semibold text-foreground">{playerLabel(dashboard.primary_player)}</div>
+                  <div className="text-xs text-secondary">个人</div>
+                  <div className="mt-1 font-semibold text-primary">{playerLabel(dashboard.primary_player)}</div>
                 </div>
                 {dashboard.teammates.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">最近对局里还没识别到同队队友。</div>
+                  <div className="rounded-lg border border-dashed border-border p-4 text-sm text-secondary">最近对局里还没识别到同队队友。</div>
                 ) : (
                   dashboard.teammates.map((player) => {
                     const checked = selectedIds.includes(player.player_id);
                     const disabled = !checked && selectedTeammates.length >= MAX_TEAMMATES;
                     return (
-                      <label key={player.player_id} className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-muted/20 p-3 text-sm hover:bg-muted/40">
-                        <Checkbox checked={checked} disabled={disabled} onCheckedChange={() => toggleTeammate(player.player_id)} />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium text-foreground">{playerLabel(player)}</div>
-                          <div className="text-xs text-muted-foreground">{player.match_count} 场同队 · {player.kills} 淘汰 · {Math.round(player.damage)} 伤害</div>
-                        </div>
-                        {checked && <Badge variant="outline">已选</Badge>}
-                      </label>
+                      <CheckboxInput
+                        key={player.player_id}
+                        label={playerLabel(player)}
+                        description={`${player.match_count} 场同队 · ${player.kills} 淘汰 · ${Math.round(player.damage)} 伤害`}
+                        value={checked}
+                        isDisabled={disabled}
+                        onChange={() => toggleTeammate(player.player_id)}
+                      />
                     );
                   })
                 )}
-              </CardContent>
+              </div>
             </Card>
 
             <div className="grid min-w-0 grid-cols-1 gap-4 2xl:grid-cols-2">
-              <Card className="border-border bg-card shadow-sm">
-                <CardHeader className="px-4 pt-4">
-                  <CardTitle className="flex items-center gap-2 text-sm"><BarChart3 className="size-4" /> 输出对比</CardTitle>
-                </CardHeader>
-                <CardContent className="px-4">
+              <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+                <header className="grid gap-1.5 px-4 pt-4">
+                  <h3 className="font-semibold flex items-center gap-2 text-sm"><BarChart3 className="size-4" /> 输出对比</h3>
+                </header>
+                <div className="pb-5 px-4">
                   <TeamBarChart players={dashboard.selected_players} />
-                </CardContent>
+                </div>
               </Card>
 
-              <Card className="border-border bg-card shadow-sm">
-                <CardHeader className="px-4 pt-4">
-                  <CardTitle className="text-sm">成员明细</CardTitle>
-                </CardHeader>
-                <CardContent className="px-4">
+              <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+                <header className="grid gap-1.5 px-4 pt-4">
+                  <h3 className="font-semibold text-sm">成员明细</h3>
+                </header>
+                <div className="pb-5 px-4">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>玩家</TableHead>
-                        <TableHead className="text-right">场次</TableHead>
-                        <TableHead className="text-right">均伤</TableHead>
-                        <TableHead className="text-right">淘汰</TableHead>
-                        <TableHead className="text-right">击倒</TableHead>
-                        <TableHead className="text-right">均名次</TableHead>
+                <TableRow isHeaderRow>
+                        <TableHeaderCell>玩家</TableHeaderCell>
+                        <TableHeaderCell className="text-right">场次</TableHeaderCell>
+                        <TableHeaderCell className="text-right">均伤</TableHeaderCell>
+                        <TableHeaderCell className="text-right">淘汰</TableHeaderCell>
+                        <TableHeaderCell className="text-right">击倒</TableHeaderCell>
+                        <TableHeaderCell className="text-right">均名次</TableHeaderCell>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -351,25 +346,25 @@ export function TeamDashboard() {
                       ))}
                     </TableBody>
                   </Table>
-                </CardContent>
+                </div>
               </Card>
             </div>
           </div>
 
-          <Card className="border-border bg-card shadow-sm">
-            <CardHeader className="px-4 pt-4">
-              <CardTitle className="text-sm">最近同队对局</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4">
+          <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+            <header className="grid gap-1.5 px-4 pt-4">
+              <h3 className="font-semibold text-sm">最近同队对局</h3>
+            </header>
+            <div className="pb-5 px-4">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>时间</TableHead>
-                    <TableHead>地图</TableHead>
-                    <TableHead>成员</TableHead>
-                    <TableHead className="text-right">排名</TableHead>
-                    <TableHead className="text-right">淘汰</TableHead>
-                    <TableHead className="text-right">伤害</TableHead>
+                <TableRow isHeaderRow>
+                    <TableHeaderCell>时间</TableHeaderCell>
+                    <TableHeaderCell>地图</TableHeaderCell>
+                    <TableHeaderCell>成员</TableHeaderCell>
+                    <TableHeaderCell className="text-right">排名</TableHeaderCell>
+                    <TableHeaderCell className="text-right">淘汰</TableHeaderCell>
+                    <TableHeaderCell className="text-right">伤害</TableHeaderCell>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -385,7 +380,7 @@ export function TeamDashboard() {
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
+            </div>
           </Card>
         </>
       ) : null}

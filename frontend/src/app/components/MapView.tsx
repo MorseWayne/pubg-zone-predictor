@@ -1,10 +1,10 @@
+import { Button } from "@astryxdesign/core/Button";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { useRef, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { Point, MapAssetStatus } from "./TacticalPrediction";
 import type { PredictResponse } from "../api";
 import { api } from "../api";
-import { Button } from "./ui/button";
-import { Progress } from "./ui/progress";
 
 interface MapViewProps {
   selectedMap: string;
@@ -367,9 +367,12 @@ export function MapView({
               </div>
             </div>
 
-            <Progress
+            <ProgressBar
               value={mapAssetProgress}
               className="h-2 bg-neutral-800 [&_[data-slot=progress-indicator]]:bg-orange-500"
+              label="进度"
+              isLabelHidden
+              hasValueLabel={false}
             />
             <div className="mt-2 flex items-center justify-between text-xs text-neutral-500">
               <span>{mapAssetStatus === "loading" ? "缓存检查 / 下载 / 渲染" : "可重新触发后端下载"}</span>
@@ -380,10 +383,10 @@ export function MapView({
               <Button
                 onClick={onRetryMapAsset}
                 className="mt-4 h-9 w-full rounded border border-orange-500/40 bg-orange-600 text-white hover:bg-orange-500"
-              >
-                <RefreshCw className="w-4 h-4" />
-                重新加载地图
-              </Button>
+                label="重新加载地图"
+                variant="primary"
+                icon={<RefreshCw className="w-4 h-4" />}
+              />
             )}
           </div>
         </div>

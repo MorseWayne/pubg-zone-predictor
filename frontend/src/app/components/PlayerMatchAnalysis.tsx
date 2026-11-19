@@ -1,3 +1,13 @@
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Card } from "@astryxdesign/core/Card";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Slider } from "@astryxdesign/core/Slider";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { ToggleButton } from "@astryxdesign/core/ToggleButton";
+import { Item } from "@astryxdesign/core/Item";
+import { ScrollableArea } from "@astryxdesign/core/ScrollableArea";
 import {
   memo,
   useCallback,
@@ -8,9 +18,6 @@ import {
 } from "react";
 import { useSearchParams } from "react-router";
 import {
-  AlertTriangle,
-  Check,
-  ChevronsUpDown,
   Eye,
   EyeOff,
   Loader2,
@@ -41,31 +48,6 @@ import {
   MatchAnalysisPlayer,
 } from "../api";
 import { cn } from "../../lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "./ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { ScrollArea } from "./ui/scroll-area";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
-import { Slider } from "./ui/slider";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const MAP_VIEW_SIZE = 1000;
 const MAX_MAP_SCALE = 64;
@@ -139,6 +121,14 @@ const FIRE_TRACER_SCREEN_DURATION_SECONDS = 1.2;
 const PLAYBACK_RENDER_INTERVAL_MS = 1000 / 20;
 
 type LayerId = "route" | "combat" | "eliminations" | "zones" | "flightPath";
+const layerControls = [
+  { id: "route", label: "路线", icon: Route },
+  { id: "combat", label: "交战", icon: Swords },
+  { id: "eliminations", label: "淘汰", icon: Skull },
+  { id: "zones", label: "安全区", icon: Shield },
+  { id: "flightPath", label: "航线", icon: Plane },
+] as const;
+
 type TeamSummary = {
   teamId: string;
   teamRank: number | null;
@@ -472,19 +462,19 @@ function buildFlightPathFromPoints(points: ApiPoint[], worldSize: number) {
   );
   if (uniquePoints.length < 2) return null;
 
-  let line = fitPrincipalLine(uniquePoints);
-  if (!line) return null;
+  const initialLine = fitPrincipalLine(uniquePoints);
+  if (!initialLine) return null;
 
-  const residuals = uniquePoints.map((point) => perpendicularDistance(point, line));
+  const residuals = uniquePoints.map((point) => perpendicularDistance(point, initialLine));
   const residualLimit = Math.max(
     worldSize * 0.015,
     Math.min(worldSize * 0.08, median(residuals) * 2.5),
   );
-  const inliers = uniquePoints.filter((point) => perpendicularDistance(point, line) <= residualLimit);
+  const inliers = uniquePoints.filter((point) => perpendicularDistance(point, initialLine) <= residualLimit);
 
-  if (inliers.length >= FLIGHT_PATH_MIN_POINTS) {
-    line = fitPrincipalLine(inliers) ?? line;
-  }
+  const line = inliers.length >= FLIGHT_PATH_MIN_POINTS
+    ? fitPrincipalLine(inliers) ?? initialLine
+    : initialLine;
 
   const pathPoints = inliers.length >= 2 ? inliers : uniquePoints;
   const span = projectedSpan(pathPoints, line);
@@ -671,41 +661,32 @@ const TeamReplayList = memo(function TeamReplayList({
   onSelectPlayer: (player: MatchAnalysisPlayer) => void;
 }) {
   return (
-    <ScrollArea className="h-full">
+    <ScrollableArea label="队伍和选手" height="100%">
       <div className="flex flex-col gap-2 p-2">
         {teamRows.map((row) => (
           <div
             key={row.team.teamId}
             className={cn(
               "overflow-hidden rounded-md border border-border bg-muted/20 [content-visibility:auto] [contain-intrinsic-size:auto_148px]",
-              row.team.teamId === selectedTeamId && "bg-accent/60 ring-1 ring-primary/30",
+              row.team.teamId === selectedTeamId && "bg-muted ring-1 ring-primary/30",
             )}
             style={{ borderLeftColor: row.color, borderLeftWidth: 4 }}
             data-team-row={row.team.teamId}
           >
-            <button
-              type="button"
-              className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-accent/50"
+            <Item
+              density="compact"
+              isSelected={row.team.teamId === selectedTeamId}
               onClick={() => onSelectTeam(row.team.teamId)}
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-7 text-sm font-black tabular-nums" style={{ color: row.color }}>
-                  {row.team.teamId}
+              startContent={<strong style={{ color: row.color }}>{row.team.teamId}</strong>}
+              label={row.aliveCount > 0 ? `${row.aliveCount} 人存活` : "全队淘汰"}
+              description={row.displayRank ? `当前 #${row.displayRank}` : "仍在争夺排名"}
+              endContent={
+                <span className="flex gap-3 text-xs tabular-nums">
+                  <span>{row.kills}</span>
+                  <span>{Math.round(row.damage)}</span>
                 </span>
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-semibold">
-                    {row.aliveCount > 0 ? `${row.aliveCount} 人存活` : "全队淘汰"}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {row.displayRank ? `当前 #${row.displayRank}` : "仍在争夺排名"}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 text-xs tabular-nums">
-                <span>{row.kills}</span>
-                <span className="w-10 text-right">{Math.round(row.damage)}</span>
-              </div>
-            </button>
+              }
+            />
             <div className="border-t border-border/70 px-2 py-1">
               {row.team.players.map((player) => {
                 const stats = playerStats[player.player_id] ?? {
@@ -717,38 +698,39 @@ const TeamReplayList = memo(function TeamReplayList({
                 };
                 const isSelected = player.player_id === selectedPlayerId;
                 return (
-                  <button
+                  <Item
                     key={player.player_id}
-                    type="button"
-                    className={cn(
-                      "grid w-full grid-cols-[minmax(0,1fr)_30px_30px_48px] items-center gap-1 rounded px-1.5 py-1 text-left text-xs hover:bg-accent/50",
-                      isSelected && "bg-accent text-accent-foreground",
-                      stats.deadAt !== null && "text-muted-foreground",
-                    )}
+                    density="compact"
+                    isSelected={isSelected}
                     onClick={() => onSelectPlayer(player)}
-                  >
-                    <span className="flex min-w-0 items-center gap-1">
-                      <span className={cn("truncate", stats.deadAt !== null && "line-through")}>
+                    label={
+                      <span className={cn("text-xs", stats.deadAt !== null && "line-through")}>
                         {playerDisplayName(player)}
                       </span>
-                      {stats.deadAt !== null && (
+                    }
+                    startContent={
+                      stats.deadAt !== null && (
                         <Skull
-                          className="size-3 shrink-0 text-red-400"
+                          className="size-3 text-red-400"
                           aria-label={`已于 ${formatPlaybackTime(stats.deadAt)} 被淘汰`}
                         />
-                      )}
-                    </span>
-                    <span className="text-right tabular-nums">{stats.kills}</span>
-                    <span className="text-right tabular-nums">{stats.knocks}</span>
-                    <span className="text-right tabular-nums">{Math.round(stats.damage)}</span>
-                  </button>
+                      )
+                    }
+                    endContent={
+                      <span className="grid grid-cols-[30px_30px_48px] text-right text-xs tabular-nums">
+                        <span>{stats.kills}</span>
+                        <span>{stats.knocks}</span>
+                        <span>{Math.round(stats.damage)}</span>
+                      </span>
+                    }
+                  />
                 );
               })}
             </div>
           </div>
         ))}
       </div>
-    </ScrollArea>
+    </ScrollableArea>
   );
 });
 
@@ -759,15 +741,12 @@ const ReplayAnalysisToolbar = memo(function ReplayAnalysisToolbar({
   squadMatches,
   selectedMatchId,
   teams,
-  selectedTeam,
   selectedTeamId,
   selectedPlayer,
   playerStats,
   isPinnedPlayerUnavailable,
-  isTeamSearchOpen,
   isLoading,
   onSelectMatch,
-  onTeamSearchOpenChange,
   onSelectTeam,
   onSelectPlayer,
   onRefresh,
@@ -778,15 +757,12 @@ const ReplayAnalysisToolbar = memo(function ReplayAnalysisToolbar({
   squadMatches: IngestMatch[];
   selectedMatchId: string;
   teams: TeamSummary[];
-  selectedTeam: TeamSummary | undefined;
   selectedTeamId: string;
   selectedPlayer: MatchAnalysisPlayer | null;
   playerStats: Record<string, PlayerReplayStats>;
   isPinnedPlayerUnavailable: boolean;
-  isTeamSearchOpen: boolean;
   isLoading: boolean;
   onSelectMatch: (matchId: string) => void;
-  onTeamSearchOpenChange: (open: boolean) => void;
   onSelectTeam: (teamId: string) => void;
   onSelectPlayer: (player: MatchAnalysisPlayer) => void;
   onRefresh: () => void;
@@ -799,127 +775,74 @@ const ReplayAnalysisToolbar = memo(function ReplayAnalysisToolbar({
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="truncate text-lg font-bold text-foreground">2D 对局回放</h1>
+            <h1 className="truncate text-lg font-bold text-primary">2D 对局回放</h1>
             {analysis && (
               <>
-                <Badge variant="outline">{aliveTeamCount} 队存活</Badge>
-                <Badge variant="outline">{alivePlayerCount} 人存活</Badge>
+                <Badge variant="neutral" label={<>{aliveTeamCount} 队存活</>} />
+                <Badge variant="neutral" label={<>{alivePlayerCount} 人存活</>} />
               </>
             )}
           </div>
-          <p className="truncate text-xs text-muted-foreground">全员位置、安全区、交战事件与队伍实时状态</p>
+          <p className="truncate text-xs text-secondary">全员位置、安全区、交战事件与队伍实时状态</p>
         </div>
       </div>
       <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-        <Select value={selectedMatchId} onValueChange={onSelectMatch}>
-          <SelectTrigger className="w-full sm:w-[300px]">
-            <SelectValue placeholder="选择对局" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {squadMatches.map((match) => (
-                <SelectItem key={match.match_id} value={match.match_id}>
-                  {matchTitle(match)}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <Popover open={isTeamSearchOpen} onOpenChange={onTeamSearchOpenChange}>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              role="combobox"
-              aria-expanded={isTeamSearchOpen}
-              aria-label="搜索并高亮队伍"
-              className="w-full justify-between sm:w-[220px]"
-              disabled={!analysis || teams.length === 0}
-            >
-              <span className="truncate">
-                {selectedTeam
-                  ? `队伍 ${selectedTeam.teamId} · ${selectedTeam.players.length} 人`
-                  : "搜索高亮队伍"}
-              </span>
-              <ChevronsUpDown data-icon="inline-end" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            className="w-[320px] max-w-[calc(100vw-2rem)] p-0"
-            align="end"
-          >
-            <Command>
-              <CommandInput placeholder="搜索队伍 ID 或选手名" />
-              <CommandList>
-                <CommandEmpty>没有匹配的队伍</CommandEmpty>
-                <CommandGroup>
-                  {teams.map((team) => (
-                    <CommandItem
-                      key={team.teamId}
-                      value={`队伍 ${team.teamId} ${team.players.map(playerDisplayName).join(" ")}`}
-                      onSelect={() => {
-                        onSelectTeam(team.teamId);
-                        onTeamSearchOpenChange(false);
-                      }}
-                    >
-                      <Check
-                        className={cn(
-                          selectedTeamId === team.teamId
-                            ? "opacity-100"
-                            : "opacity-0",
-                        )}
-                      />
-                      <div className="min-w-0">
-                        <div className="font-medium">
-                          队伍 {team.teamId} · {team.players.length} 人
-                        </div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {team.players.map(playerDisplayName).join(" / ")}
-                        </div>
-                      </div>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
-        <Select
+        <Selector
+          label="选择对局"
+          isLabelHidden
+          placeholder="选择对局"
+          value={selectedMatchId}
+          onChange={onSelectMatch}
+          containerClassName="w-full sm:w-[300px]"
+          options={squadMatches.map((match) => ({ value: match.match_id, label: matchTitle(match) }))}
+        />
+        <Selector
+          key={selectedMatchId}
+          label="搜索并高亮队伍"
+          isLabelHidden
+          hasSearch
+          placeholder="搜索高亮队伍"
+          searchPlaceholder="搜索队伍 ID 或选手名"
+          emptySearchText="没有匹配的队伍"
+          containerClassName="w-full sm:w-[220px]"
+          value={selectedTeamId}
+          onChange={onSelectTeam}
+          isDisabled={!analysis || teams.length === 0}
+          options={teams.map((team) => ({
+            value: team.teamId,
+            label: `队伍 ${team.teamId} · ${team.players.length} 人 · ${team.players.map(playerDisplayName).join(" / ")}`,
+          }))}
+          renderValue={(option) => option.label?.split(" · ").slice(0, 2).join(" · ")}
+        />
+        <Selector
+          label="固定关注选手"
+          isLabelHidden
+          placeholder={isPinnedPlayerUnavailable ? "关注选手不在本场" : "固定关注选手"}
           value={selectedPlayer?.player_id ?? ""}
-          onValueChange={(playerId) => {
+          onChange={(playerId) => {
             const player = analysis?.players.find((item) => item.player_id === playerId);
             if (player) onSelectPlayer(player);
           }}
-          disabled={!analysis || analysis.players.length === 0}
-        >
-          <SelectTrigger className="w-full sm:w-[220px]">
-            <SelectValue
-              placeholder={
-                isPinnedPlayerUnavailable
-                  ? "关注选手不在本场"
-                  : "固定关注选手"
-              }
-            />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {(analysis?.players ?? []).map((player) => (
-                <SelectItem key={player.player_id} value={player.player_id}>
-                  {playerDisplayName(player)} · 队伍 {player.team_id}
-                  {(playerStats[player.player_id]?.deadAt ?? null) !== null ? " · 已淘汰" : ""}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <Button variant="outline" onClick={onRefresh} disabled={isLoading}>
-          {isLoading ? (
-            <Loader2 data-icon="inline-start" className="animate-spin" />
-          ) : (
-            <RefreshCw data-icon="inline-start" />
-          )}
-          刷新
-        </Button>
+          isDisabled={!analysis || analysis.players.length === 0}
+          containerClassName="w-full sm:w-[220px]"
+          options={(analysis?.players ?? []).map((player) => ({
+            value: player.player_id,
+            label: `${playerDisplayName(player)} · 队伍 ${player.team_id}${(playerStats[player.player_id]?.deadAt ?? null) !== null ? " · 已淘汰" : ""}`,
+          }))}
+        />
+        <Button
+          onClick={onRefresh}
+          label="刷新"
+          variant="secondary"
+          isDisabled={isLoading}
+          icon={
+            isLoading ? (
+              <Loader2 data-icon="inline-start" className="animate-spin" />
+            ) : (
+              <RefreshCw data-icon="inline-start" />
+            )
+          }
+        />
       </div>
     </div>
   );
@@ -1012,7 +935,6 @@ export function PlayerMatchAnalysis() {
   const [error, setError] = useState<string | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
   const [decodedHighResUrl, setDecodedHighResUrl] = useState<string | null>(null);
-  const [isTeamSearchOpen, setIsTeamSearchOpen] = useState(false);
   const [isMapAutoFocusing, setIsMapAutoFocusing] = useState(false);
   const [mapFocusNotice, setMapFocusNotice] = useState<MapFocusNotice | null>(null);
   const mapFocusAnimationTimerRef = useRef<number | null>(null);
@@ -1673,13 +1595,13 @@ export function PlayerMatchAnalysis() {
       const pt = pointToView(event.point as { x: number; y: number }, worldSize);
       let nearestCluster = null;
       let minDistance = Infinity;
-      clusters.forEach(cluster => {
+      for (const cluster of clusters) {
         const d = Math.hypot(cluster.point.x - pt.x, cluster.point.y - pt.y);
         if (d < minDistance) {
           minDistance = d;
           nearestCluster = cluster;
         }
-      });
+      }
       
       if (nearestCluster && minDistance < CLUSTER_DISTANCE) {
         nearestCluster.events.push(event);
@@ -1727,7 +1649,6 @@ export function PlayerMatchAnalysis() {
     setMapTransform({ x: 0, y: 0, scale: 1 });
     setIsMapDragging(false);
     setMapDragStart(null);
-    setIsTeamSearchOpen(false);
   }, [selectedMatchId]);
 
   useEffect(() => {
@@ -2067,7 +1988,7 @@ export function PlayerMatchAnalysis() {
   }, [focusMapPoints, showMapFocusNotice]);
 
   return (
-    <div className="dark flex h-full w-full flex-col gap-3 overflow-hidden bg-background p-3 text-foreground">
+    <div className="flex h-full w-full flex-col gap-3 overflow-hidden bg-body p-3 text-primary">
       <ReplayAnalysisToolbar
         analysis={analysis}
         aliveTeamCount={aliveTeamCount}
@@ -2075,48 +1996,39 @@ export function PlayerMatchAnalysis() {
         squadMatches={squadMatches}
         selectedMatchId={selectedMatchId}
         teams={teams}
-        selectedTeam={selectedTeam}
         selectedTeamId={selectedTeamId}
         selectedPlayer={selectedPlayer}
         playerStats={playerStats}
         isPinnedPlayerUnavailable={isPinnedPlayerUnavailable}
-        isTeamSearchOpen={isTeamSearchOpen}
         isLoading={isLoading}
         onSelectMatch={setSelectedMatchId}
-        onTeamSearchOpenChange={setIsTeamSearchOpen}
         onSelectTeam={selectAndFocusTeam}
         onSelectPlayer={selectAndFocusPlayer}
         onRefresh={refreshMatches}
       />
 
       {error && (
-        <Alert variant="destructive" className="shrink-0">
-          <AlertTriangle />
-          <AlertTitle>数据加载失败</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <Banner className="shrink-0" status="error" role="alert" title="数据加载失败" description={error} />
       )}
 
       <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
-      <Card className="flex min-h-0 flex-col overflow-hidden border-border bg-card shadow-sm">
-        <CardHeader className="shrink-0 gap-3 border-b border-border px-3 py-2.5">
+      <Card padding={0} className="flex flex-col gap-4 min-h-0 overflow-hidden border-border bg-card shadow-sm">
+        <header className="grid pt-5 shrink-0 gap-3 border-b border-border px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
-              <CardTitle className="text-sm">回放控制</CardTitle>
-              <CardDescription className="truncate">
+              <h3 className="font-semibold text-sm">回放控制</h3>
+              <p className="text-sm text-secondary truncate">
                 {activeMatch ? matchTitle(activeMatch) : "请选择已解析对局"}
-              </CardDescription>
+              </p>
             </div>
             <div className="flex items-center gap-2">
-              {currentCircle && <Badge variant="secondary">阶段 {currentCircle.phase}</Badge>}
-              <Badge variant="outline">{formatPlaybackTime(playbackTime)}</Badge>
+              {currentCircle && <Badge variant="neutral" label={<>阶段 {currentCircle.phase}</>} />}
+              <Badge variant="neutral" label={formatPlaybackTime(playbackTime)} />
             </div>
           </div>
           {analysis && (
             <div className="flex items-center gap-3">
               <Button
-                variant="outline"
-                size="icon"
                 className="shrink-0"
                 onClick={() => {
                   if (!isPlaying && playbackTime >= maxPlaybackTime) {
@@ -2124,21 +2036,25 @@ export function PlayerMatchAnalysis() {
                   }
                   setIsPlaying(!isPlaying);
                 }}
-                aria-label={isPlaying ? "暂停回放" : "播放回放"}
-              >
-                {isPlaying ? <Pause /> : <Play />}
-              </Button>
+                label={isPlaying ? "暂停回放" : "播放回放"}
+                variant="secondary"
+                size="sm"
+                icon={isPlaying ? <Pause /> : <Play />}
+                isIconOnly
+              />
               <div className="relative flex h-8 flex-1 items-center px-1">
                 <Slider
-                  value={[playbackTime]}
+                  label="回放进度"
+                  isLabelHidden
+                  width="100%"
                   min={0}
                   max={maxPlaybackTime}
                   step={0.25}
-                  onValueChange={(values) => {
+                  value={playbackTime}
+                  onChange={(value: number) => {
                     setIsPlaying(false);
-                    setPlaybackTime(values[0]);
+                    setPlaybackTime(value);
                   }}
-                  className="cursor-grab active:cursor-grabbing"
                 />
                 <div className="pointer-events-none absolute inset-x-1 top-1/2 -translate-y-1/2">
                   {analysis.circles.map((circle) => {
@@ -2155,28 +2071,23 @@ export function PlayerMatchAnalysis() {
                   })}
                 </div>
               </div>
-              <span className="w-12 shrink-0 text-xs tabular-nums text-muted-foreground">
+              <span className="w-12 shrink-0 text-xs tabular-nums text-secondary">
                 {formatPlaybackTime(maxPlaybackTime)}
               </span>
-              <Select value={playbackSpeed.toString()} onValueChange={(value) => setPlaybackSpeed(Number(value))}>
-                <SelectTrigger className="w-[76px] shrink-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {PLAYBACK_SPEEDS.map((speed) => (
-                      <SelectItem key={speed} value={String(speed)}>
-                        {speed}x
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <Selector
+                label="播放倍速"
+                isLabelHidden
+                placeholder="播放倍速"
+                value={playbackSpeed.toString()}
+                onChange={(value) => setPlaybackSpeed(Number(value))}
+                containerClassName="w-[76px] shrink-0"
+                options={PLAYBACK_SPEEDS.map((speed) => ({ value: String(speed), label: `${speed}x` }))}
+              />
             </div>
           )}
-        </CardHeader>
-        <CardContent className="min-h-0 flex-1 p-0">
-          <TooltipProvider delayDuration={100}>
+        </header>
+        <div className="px-5 pb-5 min-h-0 flex-1 p-0">
+
             <div
               ref={mapContainerRef}
               className="relative flex h-full min-h-0 cursor-grab items-center justify-center overflow-hidden bg-muted active:cursor-grabbing"
@@ -2478,30 +2389,24 @@ export function PlayerMatchAnalysis() {
                       const color = playerColor(eventTeamPlayerId(event, selectedTeamId), selectedTeam);
                       const label = `${event.actor_player_name || "未知"} 淘汰了 ${event.victim_player_name || "未知"}`;
                       return (
-                        <Tooltip key={cluster.id}>
-                          <TooltipTrigger asChild>
-                            <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
+                        <g key={cluster.id} transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
                               <circle cx="0" cy="0" r="10" fill="rgba(244,63,94,0.3)" stroke={color} strokeWidth="1.5" />
                               <Skull x="-7" y="-7" width="14" height="14" color="#fff" style={{ filter: `drop-shadow(0px 0px 3px ${color})` }} />
+                              <foreignObject x="-14" y="-14" width="28" height="28">
+                                <Tooltip placement="above" delay={100} content={<p className="font-medium">{label}</p>}>
+                                  <div tabIndex={0} aria-label={label} className="size-full" />
+                                </Tooltip>
+                              </foreignObject>
                             </g>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="border-red-500/30 bg-black/90 text-red-50">
-                            <p className="font-medium">{label}</p>
-                          </TooltipContent>
-                        </Tooltip>
                       );
                     } else {
                       return (
-                        <Tooltip key={cluster.id}>
-                          <TooltipTrigger asChild>
-                            <g transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
+                        <g key={cluster.id} transform={`translate(${cluster.point.x}, ${cluster.point.y}) scale(${invScale})`} className="cursor-pointer" pointerEvents="bounding-box">
                               <circle cx="0" cy="0" r="12" fill="rgba(244,63,94,0.4)" stroke="rgba(244,63,94,1)" strokeWidth="1.5" />
                               <circle cx="0" cy="0" r="16" fill="none" stroke="rgba(244,63,94,1)" strokeWidth="1.5" strokeDasharray="3 3" className="animate-[spin_4s_linear_infinite]" opacity="0.8" />
                               <text x="0" y="3.5" fontSize="10" fontWeight="bold" fill="#fff" textAnchor="middle">{cluster.events.length}</text>
-                            </g>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="border-red-500/30 bg-black/90 text-white">
-                            <div className="flex flex-col gap-1">
+                              <foreignObject x="-14" y="-14" width="28" height="28">
+                                <Tooltip placement="above" delay={100} content={<div className="flex flex-col gap-1">
                               {cluster.events.map((event) => (
                                 <p key={event.id} className="text-xs">
                                   <span className="opacity-80">{event.actor_player_name || "未知"}</span>
@@ -2509,9 +2414,11 @@ export function PlayerMatchAnalysis() {
                                   <span className="opacity-80">{event.victim_player_name || "未知"}</span>
                                 </p>
                               ))}
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
+                            </div>}>
+                                  <div tabIndex={0} aria-label={`${cluster.events.length} 条淘汰记录`} className="size-full" />
+                                </Tooltip>
+                              </foreignObject>
+                            </g>
                       );
                     }
                   })}
@@ -2729,97 +2636,75 @@ export function PlayerMatchAnalysis() {
                 }}
               >
                 <div
-                  className="mr-1 flex cursor-grab items-center justify-center rounded px-0.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:cursor-grabbing"
+                  className="mr-1 flex cursor-grab items-center justify-center rounded px-0.5 py-1.5 text-secondary transition-colors hover:bg-muted hover:text-primary active:cursor-grabbing"
                   onMouseDown={handleLayersMouseDown}
                   aria-label="拖动面板"
                 >
                   <GripVertical className="size-4" />
                 </div>
-                <ToggleGroup
-                  type="multiple"
-                  value={layers}
-                  onValueChange={(value) => setLayers(value as LayerId[])}
-                  className="flex gap-1"
-                >
-                  <ToggleGroupItem value="route" aria-label="路线" className="h-8 px-2 text-xs">
-                    <Route className="mr-1.5 size-3.5" />
-                    路线
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="combat" aria-label="交战" className="h-8 px-2 text-xs">
-                    <Swords className="mr-1.5 size-3.5" />
-                    交战
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="eliminations" aria-label="淘汰" className="h-8 px-2 text-xs">
-                    <Skull className="mr-1.5 size-3.5" />
-                    淘汰
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="zones" aria-label="安全区" className="h-8 px-2 text-xs">
-                    <Shield className="mr-1.5 size-3.5" />
-                    安全区
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="flightPath" aria-label="航线" className="h-8 px-2 text-xs">
-                    <Plane className="mr-1.5 size-3.5" />
-                    航线
-                  </ToggleGroupItem>
-                </ToggleGroup>
-                <Button
-                  type="button"
-                  variant={showKillFeed ? "secondary" : "ghost"}
-                  className="ml-1 h-8 px-2 text-xs"
-                  aria-label={showKillFeed ? "隐藏淘汰信息" : "显示淘汰信息"}
-                  aria-pressed={showKillFeed}
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onClick={() => setShowKillFeed((current) => !current)}
-                >
-                  {showKillFeed ? (
+                <div role="group" aria-label="地图图层" className="flex gap-1">
+                  {layerControls.map(({ id, label, icon: Icon }) => (
+                    <ToggleButton
+                      key={id}
+                      label={label}
+                      icon={<Icon />}
+                      size="sm"
+                      isPressed={layers.includes(id)}
+                      onPressedChange={(pressed) =>
+                        setLayers((current) =>
+                          pressed ? [...current, id] : current.filter((layer) => layer !== id),
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+                <Button type="button" className="ml-1 h-8 px-2 text-xs" aria-pressed={showKillFeed} onMouseDown={(event) => event.stopPropagation()} onClick={() => setShowKillFeed((current) => !current)} label={showKillFeed ? "隐藏淘汰信息" : "显示淘汰信息"} variant={showKillFeed ? "secondary" : "ghost"} icon={showKillFeed ? (
                     <Eye className="mr-1.5 size-3.5" />
                   ) : (
                     <EyeOff className="mr-1.5 size-3.5" />
-                  )}
-                  战报
-                </Button>
+                  )}>战报</Button>
               </div>
 
               <div className="absolute right-3 top-3 flex items-center gap-1 rounded border border-border bg-card/90 p-1 shadow-sm backdrop-blur-sm">
                 <Button
-                  variant="ghost"
-                  size="icon"
                   className="size-8"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={() => zoomMap(mapTransform.scale * 1.25)}
-                  aria-label="放大地图"
-                >
-                  <ZoomIn className="size-4" />
-                </Button>
-                <Button
+                  label="放大地图"
                   variant="ghost"
-                  size="icon"
+                  size="sm"
+                  icon={<ZoomIn className="size-4" />}
+                  isIconOnly
+                />
+                <Button
                   className="size-8"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={() => zoomMap(mapTransform.scale / 1.25)}
-                  aria-label="缩小地图"
-                >
-                  <ZoomOut className="size-4" />
-                </Button>
-                <Button
+                  label="缩小地图"
                   variant="ghost"
-                  size="icon"
+                  size="sm"
+                  icon={<ZoomOut className="size-4" />}
+                  isIconOnly
+                />
+                <Button
                   className="size-8"
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={() => setMapTransform({ x: 0, y: 0, scale: 1 })}
-                  aria-label="重置地图视图"
-                >
-                  <RotateCcw className="size-4" />
-                </Button>
+                  label="重置地图视图"
+                  variant="ghost"
+                  size="sm"
+                  icon={<RotateCcw className="size-4" />}
+                  isIconOnly
+                />
               </div>
 
-              <div className="absolute bottom-3 left-3 rounded border border-border bg-card/90 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+              <div className="absolute bottom-3 left-3 rounded border border-border bg-card/90 px-2 py-1 text-xs text-secondary shadow-sm backdrop-blur-sm">
                 {Math.round(mapTransform.scale * 100)}%
               </div>
 
               {isLoadingAnalysis && (
-                <div className="absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-sm">
-                  <div className="flex items-center gap-2 rounded border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
+                <div className="absolute inset-0 flex items-center justify-center bg-body/70 backdrop-blur-sm">
+                  <div className="flex items-center gap-2 rounded border border-border bg-card px-4 py-3 text-sm text-secondary shadow-sm">
                     <Loader2 className="size-4 animate-spin" />
                     正在加载分析
                   </div>
@@ -2827,7 +2712,7 @@ export function PlayerMatchAnalysis() {
               )}
 
               {!isLoadingAnalysis && analysis && analysis.positions.length === 0 && analysis.life_events.length === 0 && (
-                <div className="absolute rounded border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
+                <div className="absolute rounded border border-border bg-card px-4 py-3 text-sm text-secondary shadow-sm">
                   暂无可视化轨迹数据
                 </div>
               )}
@@ -2836,7 +2721,7 @@ export function PlayerMatchAnalysis() {
                 <div className="pointer-events-none absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-2 rounded border border-border bg-card/90 px-3 py-1.5 text-xs shadow-sm backdrop-blur-sm">
                   <Radio className="size-3.5 text-primary" />
                   <span className="font-semibold tabular-nums">TEAMS {aliveTeamCount}</span>
-                  <span className="text-muted-foreground">/</span>
+                  <span className="text-secondary">/</span>
                   <span className="font-semibold tabular-nums">ALIVE {alivePlayerCount}</span>
                 </div>
               )}
@@ -2853,16 +2738,16 @@ export function PlayerMatchAnalysis() {
                     </span>
                     <Button
                       type="button"
-                      variant="ghost"
-                      size="icon"
                       className="size-6"
-                      aria-label="收起淘汰信息"
-                      title="收起淘汰信息"
                       onMouseDown={(event) => event.stopPropagation()}
                       onClick={() => setShowKillFeed(false)}
-                    >
-                      <EyeOff className="size-3.5" />
-                    </Button>
+                      label="收起淘汰信息"
+                      variant="ghost"
+                      size="sm"
+                      tooltip="收起淘汰信息"
+                      icon={<EyeOff className="size-3.5" />}
+                      isIconOnly
+                    />
                   </div>
                   {recentKillFeed.map((event) => {
                     const eventColor = teamColor(
@@ -2876,9 +2761,10 @@ export function PlayerMatchAnalysis() {
                         style={{ borderLeftColor: eventColor, borderLeftWidth: 3 }}
                       >
                         <span className="truncate font-medium">{replayEventLabel(event)}</span>
-                        <Badge variant={isEliminationEvent(event) ? "destructive" : "secondary"}>
-                          {isEliminationEvent(event) ? "淘汰" : "击倒"}
-                        </Badge>
+                        <Badge
+                          variant={isEliminationEvent(event) ? "error" : "neutral"}
+                          label={isEliminationEvent(event) ? "淘汰" : "击倒"}
+                        />
                       </div>
                     );
                   })}
@@ -2886,19 +2772,19 @@ export function PlayerMatchAnalysis() {
               )}
 
             </div>
-          </TooltipProvider>
-        </CardContent>
+
+        </div>
       </Card>
 
-      <Card className="flex min-h-0 flex-col overflow-hidden border-border bg-card shadow-sm">
-        <CardHeader className="shrink-0 gap-1 border-b border-border px-3 py-3">
+      <Card padding={0} className="flex flex-col gap-4 min-h-0 overflow-hidden border-border bg-card shadow-sm">
+        <header className="grid pt-5 shrink-0 gap-1 border-b border-border px-3 py-3">
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-sm">战队实时排行</CardTitle>
-            <Badge variant="outline">{teams.length} 队</Badge>
+            <h3 className="font-semibold text-sm">战队实时排行</h3>
+            <Badge variant="neutral" label={<>{teams.length} 队</>} />
           </div>
-          <CardDescription>玩家 / 淘汰 / 击倒 / 伤害</CardDescription>
-        </CardHeader>
-        <CardContent className="min-h-0 flex-1 p-0">
+          <p className="text-sm text-secondary">玩家 / 淘汰 / 击倒 / 伤害</p>
+        </header>
+        <div className="px-5 pb-5 min-h-0 flex-1 p-0">
           <TeamReplayList
             teamRows={teamRows}
             playerStats={playerStats}
@@ -2907,7 +2793,7 @@ export function PlayerMatchAnalysis() {
             onSelectTeam={selectAndFocusTeam}
             onSelectPlayer={selectAndFocusPlayer}
           />
-        </CardContent>
+        </div>
       </Card>
       </div>
     </div>

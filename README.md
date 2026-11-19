@@ -5,7 +5,7 @@
 ## 技术栈
 
 - 后端：FastAPI + SQLite
-- 前端：React + Vite + TypeScript
+- 前端采用 React 19、Vite 和 TypeScript。侧栏和全部业务页面共用 Astryx 组件、Neutral 深色主题和简体中文控件。
 - 配置：根目录 `config/`，运行时由后端统一读取
 - 数据库：默认 `data/pubg_zone_predictor.sqlite3`，通过迁移脚本初始化
 - 本地数据：默认写入 `data/`，不提交到 git
@@ -81,6 +81,11 @@ npm run dev:frontend
 
 前端地址：<http://127.0.0.1:5173>
 
+
+在侧栏选择“交手对手”，输入 Steam 游戏昵称，可分析最近 15 或 20 局。双方造成过伤害、击倒或淘汰即计入交手，同一局按账号去重。战绩按比赛所属赛季和模式查询。普通局以击杀数除以败场估算 KD，排位局使用实际死亡数。页面同时显示交手真人数和战绩覆盖人数。
+
+官方近期列表覆盖最近 14 天，本地存档可补充更早的比赛。在线查询需配置后端 `PUBG_API_KEY`。页面先显示逐局交手记录，再补齐战绩和生存等级，并在限流时显示等待时间。
+
 ## 本地纵切联调流程
 
 P10 后，前端工作台只通过 FastAPI 完成核心本地纵切：
@@ -101,6 +106,7 @@ P10 后，前端工作台只通过 FastAPI 完成核心本地纵切：
 ```bash
 npm run db:migrate
 npm run test:backend
+npm --prefix frontend run typecheck
 npm run build:frontend
 ```
 

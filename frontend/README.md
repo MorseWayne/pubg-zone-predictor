@@ -1,11 +1,5 @@
+# PUBG 回放中心前端
 
-  # PUBG Zone Predictor Design
+界面使用 React、Astryx 和 Tailwind CSS，由 Vite 构建。页面通过同源的 `/api` 访问 FastAPI 后端。
 
-  This is a code bundle for PUBG Zone Predictor Design. The original project is available at https://www.figma.com/design/jq9JP6iQsvDnP1MEogfOvh/PUBG-Zone-Predictor-Design.
-
-  ## Running the code
-
-  Run `npm i` to install the dependencies.
-
-  Run `npm run dev` to start the development server.
-  
+在仓库根目录运行 `make dev` 可同时启动前后端。运行 `npm --prefix frontend run typecheck` 检查类型，运行 `make build` 生成 `frontend/dist/`。首次安装和数据库初始化见[项目说明](../README.md)。

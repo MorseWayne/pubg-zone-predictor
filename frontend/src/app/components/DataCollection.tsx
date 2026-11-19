@@ -1,4 +1,17 @@
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Card } from "@astryxdesign/core/Card";
+import { Badge } from "@astryxdesign/core/Badge";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Item } from "@astryxdesign/core/Item";
+import { NumberInput } from "@astryxdesign/core/NumberInput";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { AlertDialog } from "@astryxdesign/core/AlertDialog";
+import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from "@astryxdesign/core/Table";
 import { useEffect, useMemo, useState } from "react";
+import { cn } from "../../lib/utils";
 import { useNavigate } from "react-router";
 import {
   AlertCircle,
@@ -19,46 +32,6 @@ import {
   X,
 } from "lucide-react";
 import { api, apiErrorMessage, IngestJob, IngestMatch, PlayerSearchResult } from "../api";
-import { Alert, AlertDescription } from "./ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "./ui/alert-dialog";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "./ui/card";
-import { Checkbox } from "./ui/checkbox";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Progress } from "./ui/progress";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "./ui/table";
-import { cn } from "./ui/utils";
 
 type TaskStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
 type MatchSortKey = "match_id" | "map_name" | "created_at" | "telemetry_parse_status" | "sample_count";
@@ -215,6 +188,7 @@ function matchSortValue(match: IngestMatch, sortKey: MatchSortKey): string | num
 
 export function DataCollection() {
   const navigate = useNavigate();
+  const [confirmClear, setConfirmClear] = useState(false);
   const [initialCollectionState] = useState(readPersistedCollectionState);
   const [limit, setLimit] = useState(initialCollectionState.limit ?? 20);
   const [playerQuery, setPlayerQuery] = useState(initialCollectionState.playerQuery ?? "");
@@ -686,6 +660,7 @@ export function DataCollection() {
   };
 
   const handleDeleteAllMatches = async () => {
+    setConfirmClear(false);
     const matchIds = matches.map((match) => match.match_id);
     if (matchIds.length === 0) return;
     setError(null);
@@ -741,29 +716,31 @@ export function DataCollection() {
   };
 
   return (
-    <div className="dark flex h-full w-full flex-col gap-6 overflow-y-auto bg-background p-6 text-foreground lg:flex-row">
+    <div className="flex h-full w-full flex-col gap-6 overflow-y-auto bg-body p-6 text-primary lg:flex-row">
       <div className="flex w-full shrink-0 flex-col gap-6 lg:w-96">
-        <Card className="border-border bg-card shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
+        <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+          <header className="grid gap-1.5 px-5 pt-5">
+            <h3 className="font-semibold flex items-center gap-2 text-lg">
               <Database className="size-5 text-blue-400" /> 发起采集任务
-            </CardTitle>
-          </CardHeader>
+            </h3>
+          </header>
 
-          <CardContent className="flex flex-col gap-5">
+          <div className="px-5 pb-5 flex flex-col gap-5">
             <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs leading-5 text-blue-100">
               统一采集完整回放数据：玩家轨迹、载具状态、伤害/击倒/淘汰事件、航线与安全区。
             </div>
 
             <div className="flex flex-col gap-2">
-                <Label htmlFor="player-search">搜索添加玩家</Label>
-                <div className="flex gap-2">
+
+                <div className="flex items-end gap-2">
                   <div className="relative min-w-0 flex-1">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
+
+                    <TextInput
+                      label="搜索添加玩家"
+                      startIcon={Search}
                       id="player-search"
                       value={playerQuery}
-                      onChange={(event) => setPlayerQuery(event.target.value)}
+                      onChange={setPlayerQuery}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
@@ -771,134 +748,147 @@ export function DataCollection() {
                         }
                       }}
                       placeholder="输入玩家名"
-                      className="pl-9"
                     />
                   </div>
                   <Button
                     type="button"
-                    variant="outline"
                     onClick={() => void handleSearchPlayers()}
-                    disabled={!canSearchPlayer || isSearchingPlayer}
                     className="shrink-0"
-                  >
-                    {isSearchingPlayer ? <Loader2 className="size-4 animate-spin" /> : "搜索"}
-                  </Button>
+                    label="搜索"
+                    variant="secondary"
+                    isDisabled={!canSearchPlayer || isSearchingPlayer}
+                    isLoading={isSearchingPlayer}
+                  />
                 </div>
                 {playerCandidates.length > 0 && (
                   <div className="rounded border border-border bg-muted/20 p-2">
-                    <div className="mb-2 text-xs text-muted-foreground">匹配结果</div>
+                    <div className="mb-2 text-xs text-secondary">匹配结果</div>
                     <div className="flex flex-col gap-2">
                       {playerCandidates.map((player) => (
-                        <button
+                        <Item
                           key={player.player_id}
-                          type="button"
+                          density="compact"
+                          label={player.player_name}
+                          description={`${player.platform} · 近期 ${player.recent_match_count} 场`}
+                          endContent="选择"
                           onClick={() => handleSelectPlayer(player)}
-                          className="flex items-center justify-between gap-3 rounded border border-border bg-background px-3 py-2 text-left text-sm hover:border-blue-500 hover:bg-blue-500/10"
-                        >
-                          <span className="min-w-0">
-                            <span className="block truncate font-medium">{player.player_name}</span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {player.platform} · 近期 {player.recent_match_count} 场
-                            </span>
-                          </span>
-                          <span className="shrink-0 text-xs text-blue-400">选择</span>
-                        </button>
+                        />
                       ))}
                     </div>
                   </div>
                 )}
                 <div className="flex min-h-9 flex-wrap gap-2">
                   {selectedPlayerNames.map((name) => (
-                    <Badge key={name} variant="secondary" className="gap-1 rounded px-2 py-1">
-                      <span className="max-w-40 truncate">{name}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemovePlayer(name)}
-                        className="rounded text-muted-foreground hover:text-foreground"
-                        aria-label={`移除 ${name}`}
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    </Badge>
+                    <Badge
+                      key={name}
+                      variant="neutral"
+                      className="gap-1 rounded px-2 py-1"
+                      label={
+                        <>
+                          <span className="max-w-40 truncate">{name}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            isIconOnly
+                            icon={<X />}
+                            label={`移除 ${name}`}
+                            onClick={() => handleRemovePlayer(name)}
+                          />
+                        </>
+                      }
+                    />
                   ))}
                 </div>
                 {playerSearchMessage && <div className="text-xs text-yellow-500">{playerSearchMessage}</div>}
-                <div className="text-xs text-muted-foreground">已选择 {selectedPlayerNames.length} / 10，平台 steam，模式 squad。</div>
+                <div className="text-xs text-secondary">已选择 {selectedPlayerNames.length} / 10，平台 steam，模式 squad。</div>
             </div>
 
             <div className="flex flex-col gap-2">
-              <Label htmlFor="sample-limit">每个玩家最多采集（场次）</Label>
-              <Input
+
+              <NumberInput
+                label="每个玩家最多采集（场次）"
+                isIntegerOnly
                 id="sample-limit"
-                type="number"
                 min={1}
                 max={100}
                 value={limit}
-                onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+                onChange={(count) => setLimit(Math.max(1, Math.min(100, count)))}
               />
-              <div className="text-xs text-muted-foreground">
+              <div className="text-xs text-secondary">
                 固定使用完整回放规格，每 5 秒保留位置采样；重复对局会自动跳过。
               </div>
             </div>
 
             <Button
-              disabled={isRestoringJob || taskStatus === "running" || selectedPlayerNames.length === 0}
               onClick={handleStart}
               className="h-11 w-full"
-            >
-              <Play className="fill-current" data-icon="inline-start" /> 开始采集
-            </Button>
+              label="开始采集"
+              variant="primary"
+              isDisabled={isRestoringJob || taskStatus === "running" || selectedPlayerNames.length === 0}
+              icon={<Play className="fill-current" data-icon="inline-start" />}
+            />
 
             {error && (
-              <Alert variant="destructive">
-                <AlertCircle />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
+              <Banner status="error" role="alert" title={error} />
             )}
-          </CardContent>
+          </div>
         </Card>
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-6">
-        <Card className="border-border bg-card shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between gap-3">
-            <CardTitle className="text-lg">当前任务</CardTitle>
+        <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+          <header className="px-5 pt-5 flex flex-row items-center justify-between gap-3">
+            <h3 className="font-semibold text-lg">当前任务</h3>
             <div className="flex items-center gap-2">
               {taskStatus === "failed" && (
-                <Button onClick={handleRetry} variant="outline" size="sm">
-                  <RotateCcw data-icon="inline-start" /> 重试
-                </Button>
+                <Button
+                  onClick={handleRetry}
+                  label="重试"
+                  variant="secondary"
+                  size="sm"
+                  icon={<RotateCcw data-icon="inline-start" />}
+                />
               )}
               {taskStatus === "running" && (
-                <Button onClick={handleStop} variant="destructive" size="sm">
-                  <Square className="fill-current" data-icon="inline-start" /> 终止
-                </Button>
+                <Button
+                  onClick={handleStop}
+                  label="终止"
+                  variant="destructive"
+                  size="sm"
+                  icon={<Square className="fill-current" data-icon="inline-start" />}
+                />
               )}
             </div>
-          </CardHeader>
+          </header>
 
-          <CardContent>
+          <div className="px-5 pb-5">
             {isRestoringJob && !currentJob ? (
-              <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-8 text-sm text-muted-foreground">
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border py-8 text-sm text-secondary">
                 <Loader2 className="size-4 animate-spin" />
                 正在恢复上次采集任务...
               </div>
             ) : !currentJob ? (
-              <div className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border py-8 text-center text-sm text-secondary">
                 暂无活动中的采集任务。
               </div>
             ) : (
               <div className="flex flex-col gap-4">
                 <div className="flex justify-between gap-3 text-sm">
-                  <span className="min-w-0 text-muted-foreground">
+                  <span className="min-w-0 text-secondary">
                     任务ID: <span className="font-mono">{currentJob.id}</span>
                   </span>
-                  <Badge variant="secondary" className="shrink-0">
-                    {statusLabel(currentJob.status)} · {progress}%
-                  </Badge>
+                  <Badge
+                    variant="neutral"
+                    className="shrink-0"
+                    label={
+                      <>
+                        {statusLabel(currentJob.status)} · {progress}%
+                      </>
+                    }
+                  />
                 </div>
-                <Progress value={progress} />
-                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                <ProgressBar value={progress} label="进度" isLabelHidden hasValueLabel={false} />
+                <div className="flex flex-wrap gap-4 text-xs text-secondary">
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="size-4 text-green-500" /> {currentJob.success_count} / {currentJob.total_count || limit} 场次
                   </div>
@@ -907,76 +897,84 @@ export function DataCollection() {
                   </div>
                 </div>
                 {currentJob.status === "failed" && currentJob.error_message && (
-                  <Alert variant="destructive">
-                    <AlertCircle />
-                    <AlertDescription>
-                      {currentJob.error_message}
-                      {currentJob.error_code ? ` (${currentJob.error_code})` : ""}
-                    </AlertDescription>
-                  </Alert>
+                  <Banner
+                    status="error"
+                    role="alert"
+                    title={
+                      <>
+                        {currentJob.error_message}
+                        {currentJob.error_code ? ` (${currentJob.error_code})` : ""}
+                      </>
+                    }
+                  />
                 )}
                 {currentJob.warnings.length > 0 && (
-                  <Alert>
-                    <AlertCircle />
-                    <AlertDescription>{currentJob.warnings.slice(0, 3).join("；")}</AlertDescription>
-                  </Alert>
+                  <Banner status="info" title={currentJob.warnings.slice(0, 3).join("；")} />
                 )}
               </div>
             )}
-          </CardContent>
+          </div>
         </Card>
 
-        <Card className="border-border bg-card shadow-sm">
-          <CardHeader className="flex flex-col gap-3">
+        <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+          <header className="px-5 pt-5 flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle className="flex items-center gap-2 text-lg">
+              <h3 className="font-semibold flex items-center gap-2 text-lg">
                 <Clock3 className="size-5 text-blue-400" /> 历史采集任务
-              </CardTitle>
+              </h3>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   onClick={() => void handleRetrySelectedJobs()}
-                  variant="outline"
+                  label={`重试失败 ${selectedFailedJobIds.length || ""}`}
+                  variant="secondary"
                   size="sm"
-                  disabled={selectedFailedJobIds.length === 0}
-                >
-                  <RotateCcw data-icon="inline-start" /> 重试失败 {selectedFailedJobIds.length || ""}
-                </Button>
+                  isDisabled={selectedFailedJobIds.length === 0}
+                  icon={<RotateCcw data-icon="inline-start" />}
+                />
                 <Button
                   onClick={() => void handleStopSelectedJobs()}
-                  variant="outline"
+                  label={`终止运行中  ${selectedRunningJobIds.length || ""}`}
+                  variant="secondary"
                   size="sm"
-                  disabled={selectedRunningJobIds.length === 0}
-                >
-                  <Square className="fill-current" data-icon="inline-start" /> 终止运行中{" "}
-                  {selectedRunningJobIds.length || ""}
-                </Button>
+                  isDisabled={selectedRunningJobIds.length === 0}
+                  icon={<Square className="fill-current" data-icon="inline-start" />}
+                />
                 <Button
                   onClick={() => void handleDeleteSelectedJobs()}
+                  label={`清理选中 ${selectedTerminalJobIds.length || ""}`}
                   variant="destructive"
                   size="sm"
-                  disabled={selectedTerminalJobIds.length === 0}
-                >
-                  <Trash2 data-icon="inline-start" /> 清理选中 {selectedTerminalJobIds.length || ""}
-                </Button>
-                <Button onClick={() => void refreshJobs()} variant="ghost" size="icon" title="刷新任务">
-                  <RotateCcw className={cn(loadingJobs && "animate-spin")} />
-                </Button>
+                  isDisabled={selectedTerminalJobIds.length === 0}
+                  icon={<Trash2 data-icon="inline-start" />}
+                />
+                <Button
+                  onClick={() => void refreshJobs()}
+                  label="刷新任务"
+                  variant="ghost"
+                  size="sm"
+                  tooltip="刷新任务"
+                  icon={<RotateCcw className={cn(loadingJobs && "animate-spin")} />}
+                  isIconOnly
+                />
               </div>
             </div>
             {jobs.length > 0 && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Checkbox
-                  checked={allVisibleJobsSelected ? true : selectedVisibleJobCount > 0 ? "indeterminate" : false}
-                  onCheckedChange={(checked) => handleToggleVisibleJobs(checked === true)}
-                  aria-label="选择全部历史任务"
+              <div className="flex items-center gap-2 text-sm text-secondary">
+                <CheckboxInput
+                  label="选择全部历史任务"
+                  isLabelHidden
+                  value={
+                    allVisibleJobsSelected ? true : selectedVisibleJobCount > 0 ? "indeterminate" : false
+                  }
+                  onChange={(checked) => handleToggleVisibleJobs(checked === true)}
                 />
                 <span>已选择 {selectedJobCount} 个任务</span>
               </div>
             )}
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
+          </header>
+          <div className="px-5 pb-5 flex flex-col gap-3">
             {jobs.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border py-6 text-center text-sm text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border py-6 text-center text-sm text-secondary">
                 暂无历史采集任务。
               </div>
             ) : (
@@ -991,10 +989,11 @@ export function DataCollection() {
                     )}
                   >
                     <div className="flex items-start gap-3">
-                      <Checkbox
-                        checked={selectedJobIds.has(job.id)}
-                        onCheckedChange={(checked) => handleToggleJob(job.id, checked === true)}
-                        aria-label={`选择任务 ${job.id}`}
+                      <CheckboxInput
+                        label={`选择任务 ${job.id}`}
+                        isLabelHidden
+                        value={selectedJobIds.has(job.id)}
+                        onChange={(checked) => handleToggleJob(job.id, checked === true)}
                         className="mt-1"
                       />
                       <div className="min-w-0 flex-1">
@@ -1002,42 +1001,55 @@ export function DataCollection() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="font-medium">{jobTypeLabel(job.job_type)}</span>
-                              <Badge variant="secondary" className="shrink-0">
-                                {statusLabel(job.status)} · {itemProgress}%
-                              </Badge>
+                              <Badge
+                                variant="neutral"
+                                className="shrink-0"
+                                label={
+                                  <>
+                                    {statusLabel(job.status)} · {itemProgress}%
+                                  </>
+                                }
+                              />
                             </div>
-                            <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{job.id}</div>
-                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                            <div className="mt-1 truncate font-mono text-xs text-secondary">{job.id}</div>
+                            <div className="mt-1 truncate text-xs text-secondary">
                               {job.source_ref ?? "无来源信息"} · {compactDate(job.started_at)}
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            <Button onClick={() => handleSelectJob(job)} variant="outline" size="sm">
-                              查看
-                            </Button>
+                            <Button onClick={() => handleSelectJob(job)} label="查看" variant="secondary" size="sm" />
                             {job.status === "failed" && (
-                              <Button onClick={() => void handleRetryJob(job.id)} variant="outline" size="sm">
-                                <RotateCcw data-icon="inline-start" /> 重试
-                              </Button>
+                              <Button
+                                onClick={() => void handleRetryJob(job.id)}
+                                label="重试"
+                                variant="secondary"
+                                size="sm"
+                                icon={<RotateCcw data-icon="inline-start" />}
+                              />
                             )}
                             {job.status === "running" ? (
-                              <Button onClick={() => void handleStopJob(job.id)} variant="destructive" size="sm">
-                                <Square className="fill-current" data-icon="inline-start" /> 终止
-                              </Button>
+                              <Button
+                                onClick={() => void handleStopJob(job.id)}
+                                label="终止"
+                                variant="destructive"
+                                size="sm"
+                                icon={<Square className="fill-current" data-icon="inline-start" />}
+                              />
                             ) : (
                               <Button
                                 onClick={() => void handleDeleteJob(job.id)}
+                                label="清理任务"
                                 variant="ghost"
-                                size="icon"
-                                title="清理任务"
-                              >
-                                <Trash2 />
-                              </Button>
+                                size="sm"
+                                tooltip="清理任务"
+                                icon={<Trash2 />}
+                                isIconOnly
+                              />
                             )}
                           </div>
                         </div>
-                        <Progress value={itemProgress} className="mt-3" />
-                        <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                        <ProgressBar value={itemProgress} className="mt-3" label="进度" isLabelHidden hasValueLabel={false} />
+                        <div className="mt-3 flex flex-wrap gap-4 text-xs text-secondary">
                           <span>{job.success_count} 成功 / {job.total_count || "?"} 总数</span>
                           <span>{job.skipped_count} 跳过</span>
                           <span>{job.failed_count} 失败</span>
@@ -1045,7 +1057,7 @@ export function DataCollection() {
                           {job.finished_at && <span>结束 {compactDate(job.finished_at)}</span>}
                         </div>
                         {job.status === "failed" && job.error_message && (
-                          <div className="mt-2 text-xs text-destructive">{job.error_message}</div>
+                          <div className="mt-2 text-xs text-error">{job.error_message}</div>
                         )}
                         {job.warnings.length > 0 && (
                           <div className="mt-2 text-xs text-yellow-500">{job.warnings.slice(0, 2).join("；")}</div>
@@ -1056,254 +1068,248 @@ export function DataCollection() {
                 );
               })
             )}
-          </CardContent>
+          </div>
         </Card>
 
-        <Card className="flex min-h-[300px] flex-1 flex-col border-border bg-card shadow-sm">
-          <CardHeader className="flex flex-col gap-4 border-b border-border">
+        <Card padding={0} className="flex flex-col gap-4 min-h-[300px] flex-1 border-border bg-card shadow-sm">
+          <header className="px-5 pt-5 flex flex-col gap-4 border-b border-border">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle className="text-lg">已采集对局列表</CardTitle>
+              <h3 className="font-semibold text-lg">已采集对局列表</h3>
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
                   onClick={handleToggleAllMatches}
-                  variant="outline"
+                  label={allMatchesSelected ? "取消全选" : `全部选中 ${matches.length}`}
+                  variant="secondary"
                   size="sm"
-                  disabled={matches.length === 0}
-                >
-                  <ListChecks data-icon="inline-start" />
-                  {allMatchesSelected ? "取消全选" : `全部选中 ${matches.length}`}
-                </Button>
+                  isDisabled={matches.length === 0}
+                  icon={<ListChecks data-icon="inline-start" />}
+                />
                 <Button
                   onClick={() => void handleDeleteSelectedMatches()}
+                  label={`删除选中 ${selectedMatchCount || ""}`}
                   variant="destructive"
                   size="sm"
-                  disabled={selectedMatchCount === 0}
-                >
-                  <Trash2 data-icon="inline-start" /> 删除选中 {selectedMatchCount || ""}
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      disabled={matches.length === 0}
-                    >
-                      <Trash2 data-icon="inline-start" />
-                      清空全部
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>确认清空全部已采集对局？</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        将删除当前加载的 {matches.length} 场对局及其位置、事件和本地 telemetry
-                        缓存。此操作无法撤销。
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>取消</AlertDialogCancel>
-                      <AlertDialogAction asChild>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          onClick={() => void handleDeleteAllMatches()}
-                        >
-                          确认清空
-                        </Button>
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-                <Button onClick={() => void refreshMatches()} variant="ghost" size="icon" title="刷新">
-                  {loadingMatches ? <RotateCcw className="animate-spin" /> : <Filter />}
-                </Button>
+                  isDisabled={selectedMatchCount === 0}
+                  icon={<Trash2 data-icon="inline-start" />}
+                />
+                <>
+                  <Button
+                    label="清空全部"
+                    variant="destructive"
+                    size="sm"
+                    icon={<Trash2 />}
+                    isDisabled={matches.length === 0}
+                    onClick={() => setConfirmClear(true)}
+                  />
+                  <AlertDialog
+                    isOpen={confirmClear}
+                    onOpenChange={setConfirmClear}
+                    title="确认清空全部已采集对局？"
+                    description={`将删除当前加载的 ${matches.length} 场对局及其位置、事件和本地 telemetry 缓存。此操作无法撤销。`}
+                    cancelLabel="取消"
+                    actionLabel="确认清空"
+                    actionVariant="destructive"
+                    onAction={handleDeleteAllMatches}
+                  />
+                </>
+                <Button
+                  onClick={() => void refreshMatches()}
+                  label="刷新"
+                  variant="ghost"
+                  size="sm"
+                  tooltip="刷新"
+                  icon={loadingMatches ? <RotateCcw className="animate-spin" /> : <Filter />}
+                  isIconOnly
+                />
               </div>
             </div>
             <div className="grid gap-3 md:grid-cols-[minmax(180px,1fr)_180px_160px]">
               <div className="relative min-w-0">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
+
+                <TextInput
+                  label="搜索对局"
+                  isLabelHidden
+                  startIcon={Search}
                   value={matchSearch}
-                  onChange={(event) => setMatchSearch(event.target.value)}
+                  onChange={setMatchSearch}
                   placeholder="搜索对局、地图、模式"
-                  className="pl-9"
                 />
               </div>
-              <Select value={matchMapFilter} onValueChange={setMatchMapFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="地图筛选" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部地图</SelectItem>
-                  {matchMapOptions.map((mapName) => (
-                    <SelectItem key={mapName} value={mapName}>
-                      {mapDisplayName(mapName)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
+              <Selector
+                label="地图筛选"
+                isLabelHidden
+                placeholder="地图筛选"
+                value={matchMapFilter}
+                onChange={setMatchMapFilter}
+                options={[
+                  { value: "all", label: "全部地图" },
+                  ...matchMapOptions.map((map) => ({ value: map, label: mapDisplayName(map) })),
+                ]}
+              />
+              <Selector
+                label="状态筛选"
+                isLabelHidden
+                placeholder="状态筛选"
                 value={matchStatusFilter}
-                onValueChange={(value) => setMatchStatusFilter(value as MatchStatusFilter)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="状态筛选" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部状态</SelectItem>
-                  <SelectItem value="completed">已完成</SelectItem>
-                  <SelectItem value="pending">处理中</SelectItem>
-                  <SelectItem value="failed">失败</SelectItem>
-                </SelectContent>
-              </Select>
+                onChange={(value) => setMatchStatusFilter(value as MatchStatusFilter)}
+                options={[
+                  { value: "all", label: "全部状态" },
+                  { value: "completed", label: "已完成" },
+                  { value: "pending", label: "处理中" },
+                  { value: "failed", label: "失败" },
+                ]}
+              />
             </div>
-          </CardHeader>
-          <CardContent className="flex-1 p-0">
+          </header>
+          <div className="px-5 pb-5 flex-1 p-0">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12 px-5">
-                    <Checkbox
-                      checked={allVisibleSelected ? true : selectedVisibleCount > 0 ? "indeterminate" : false}
-                      onCheckedChange={(checked) => handleToggleVisibleMatches(checked === true)}
-                      aria-label="选择当前筛选结果"
+                <TableRow isHeaderRow>
+                  <TableHeaderCell className="w-12 px-5">
+                    <CheckboxInput
+                      label="选择当前筛选结果"
+                      isLabelHidden
+                      value={
+                        allVisibleSelected ? true : selectedVisibleCount > 0 ? "indeterminate" : false
+                      }
+                      onChange={(checked) => handleToggleVisibleMatches(checked === true)}
                     />
-                  </TableHead>
-                  <TableHead className="px-5">
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-5">
                     <Button
                       type="button"
-                      variant="ghost"
-                      size="sm"
                       onClick={() => handleSortMatches("match_id")}
                       className="-ml-3 h-8 gap-1 px-2"
-                      title={`按对局ID${sortDirectionLabel(matchSortDirection)}`}
-                    >
-                      对局ID {sortIcon("match_id")}
-                    </Button>
-                  </TableHead>
-                  <TableHead className="px-5">
-                    <Button
-                      type="button"
+                      label="对局ID"
                       variant="ghost"
                       size="sm"
+                      tooltip={`按对局ID${sortDirectionLabel(matchSortDirection)}`}
+                      endContent={sortIcon("match_id")}
+                    />
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-5">
+                    <Button
+                      type="button"
                       onClick={() => handleSortMatches("map_name")}
                       className="-ml-3 h-8 gap-1 px-2"
-                      title={`按地图/模式${sortDirectionLabel(matchSortDirection)}`}
-                    >
-                      地图 / 模式 {sortIcon("map_name")}
-                    </Button>
-                  </TableHead>
-                  <TableHead className="px-5">
-                    <Button
-                      type="button"
+                      label="地图 / 模式"
                       variant="ghost"
                       size="sm"
+                      tooltip={`按地图/模式${sortDirectionLabel(matchSortDirection)}`}
+                      endContent={sortIcon("map_name")}
+                    />
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-5">
+                    <Button
+                      type="button"
                       onClick={() => handleSortMatches("created_at")}
                       className="-ml-3 h-8 gap-1 px-2"
-                      title={`按时间${sortDirectionLabel(matchSortDirection)}`}
-                    >
-                      时间 {sortIcon("created_at")}
-                    </Button>
-                  </TableHead>
-                  <TableHead className="px-5">
-                    <Button
-                      type="button"
+                      label="时间"
                       variant="ghost"
                       size="sm"
+                      tooltip={`按时间${sortDirectionLabel(matchSortDirection)}`}
+                      endContent={sortIcon("created_at")}
+                    />
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-5">
+                    <Button
+                      type="button"
                       onClick={() => handleSortMatches("telemetry_parse_status")}
                       className="-ml-3 h-8 gap-1 px-2"
-                      title={`按遥测状态${sortDirectionLabel(matchSortDirection)}`}
-                    >
-                      遥测数据 {sortIcon("telemetry_parse_status")}
-                    </Button>
-                  </TableHead>
-                  <TableHead className="px-5">
-                    <Button
-                      type="button"
+                      label="遥测数据"
                       variant="ghost"
                       size="sm"
+                      tooltip={`按遥测状态${sortDirectionLabel(matchSortDirection)}`}
+                      endContent={sortIcon("telemetry_parse_status")}
+                    />
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-5">
+                    <Button
+                      type="button"
                       onClick={() => handleSortMatches("sample_count")}
                       className="-ml-3 h-8 gap-1 px-2"
-                      title={`按样本数${sortDirectionLabel(matchSortDirection)}`}
-                    >
-                      样本数 {sortIcon("sample_count")}
-                    </Button>
-                  </TableHead>
-                  <TableHead className="px-5 text-right">操作</TableHead>
+                      label="样本数"
+                      variant="ghost"
+                      size="sm"
+                      tooltip={`按样本数${sortDirectionLabel(matchSortDirection)}`}
+                      endContent={sortIcon("sample_count")}
+                    />
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-5 text-right">操作</TableHeaderCell>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredMatches.map((match) => (
                   <TableRow key={match.match_id}>
                     <TableCell className="px-5">
-                      <Checkbox
-                        checked={selectedMatchIds.has(match.match_id)}
-                        onCheckedChange={(checked) => handleToggleMatch(match.match_id, checked === true)}
-                        aria-label={`选择 ${match.match_id}`}
+                      <CheckboxInput
+                        label={`选择 ${match.match_id}`}
+                        isLabelHidden
+                        value={selectedMatchIds.has(match.match_id)}
+                        onChange={(checked) => handleToggleMatch(match.match_id, checked === true)}
                       />
                     </TableCell>
-                    <TableCell className="px-5 font-mono text-muted-foreground">{match.match_id}</TableCell>
+                    <TableCell className="px-5 font-mono text-secondary">{match.match_id}</TableCell>
                     <TableCell className="px-5">
                       <div className="font-medium">{mapDisplayName(match.map_name)}</div>
-                      <div className="text-xs text-muted-foreground">
+                      <div className="text-xs text-secondary">
                         {match.map_name && mapDisplayName(match.map_name) !== match.map_name
                           ? `${match.map_name} · `
                           : ""}
                         {match.game_mode ?? "未知模式"}
                       </div>
                     </TableCell>
-                    <TableCell className="px-5 text-sm text-muted-foreground">{compactDate(match.created_at)}</TableCell>
+                    <TableCell className="px-5 text-sm text-secondary">{compactDate(match.created_at)}</TableCell>
                     <TableCell className="px-5">
                       <Badge
-                        variant={match.telemetry_parse_status === "failed" ? "destructive" : "secondary"}
+                        variant={match.telemetry_parse_status === "failed" ? "error" : "neutral"}
                         className={cn(
-                          match.telemetry_parse_status === "completed" && "bg-green-500/10 text-green-400",
+                          match.telemetry_parse_status === "completed" &&
+                            "bg-green-500/10 text-green-400",
                           match.telemetry_parse_status !== "completed" &&
                             match.telemetry_parse_status !== "failed" &&
                             "bg-yellow-500/10 text-yellow-500",
                         )}
-                      >
-                        {statusLabel(match.telemetry_parse_status)}
-                      </Badge>
+                        label={statusLabel(match.telemetry_parse_status)}
+                      />
                     </TableCell>
                     <TableCell className="px-5">{matchSampleCount(match).toLocaleString()}</TableCell>
                     <TableCell className="px-5 text-right">
                       <div className="flex justify-end gap-1">
                         <Button
                           type="button"
-                          variant="ghost"
-                          size="sm"
                           onClick={() =>
                             navigate(`/analysis?matches=${encodeURIComponent(match.match_id)}`)
                           }
-                        >
-                          <Play data-icon="inline-start" />
-                          回放
-                        </Button>
+                          label="回放"
+                          variant="ghost"
+                          size="sm"
+                          icon={<Play data-icon="inline-start" />}
+                        />
                         <Button
                           onClick={() => handleDeleteMatch(match.match_id)}
+                          label="删除"
                           variant="ghost"
-                          size="icon"
-                          title="删除"
-                        >
-                          <Trash2 />
-                        </Button>
+                          size="sm"
+                          tooltip="删除"
+                          icon={<Trash2 />}
+                          isIconOnly
+                        />
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
                 {filteredMatches.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="px-5 py-10 text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="px-5 py-10 text-center text-secondary">
                       {matches.length === 0 ? "还没有已入库对局。" : "没有匹配当前筛选条件的对局。"}
                     </TableCell>
                   </TableRow>
                 )}
               </TableBody>
             </Table>
-          </CardContent>
+          </div>
         </Card>
       </div>
     </div>

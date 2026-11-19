@@ -1,3 +1,4 @@
-This Figma Make file includes components from [shadcn/ui](https://ui.shadcn.com/) used under [MIT license](https://github.com/shadcn-ui/ui/blob/main/LICENSE.md).
+# 界面组件与图标
 
-This Figma Make file includes photos from [Unsplash](https://unsplash.com) used under [license](https://unsplash.com/license).
+- 界面组件和 Neutral 主题来自 [Astryx](https://github.com/meta/astryx)，使用 MIT 许可证。
+- 图标来自 [Lucide](https://github.com/lucide-icons/lucide)，使用 ISC 许可证。其中源自 Feather 的部分使用 MIT 许可证。

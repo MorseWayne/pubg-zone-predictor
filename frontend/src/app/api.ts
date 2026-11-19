@@ -1,3 +1,29 @@
+export type OpponentMatch = {
+  match_id: string;
+  created_at: string | null;
+  map_name: string;
+  game_mode: string;
+  match_type: string;
+};
+
+export type OpponentHistory = {
+  player_id: string;
+  player_name: string;
+  matches: OpponentMatch[];
+  warnings: string[];
+};
+
+export type Encounter = {
+  player_id: string;
+  name: string;
+  kind: "human" | "bot" | "unknown";
+  actions: string[];
+};
+
+export type EncounterList = { season: string | null; opponents: Encounter[] };
+export type OpponentStats = { rounds: number; kd: number | null; adr: number | null; rank: string | null };
+export type Mastery = { tier: number | null; level: number | null };
+
 export type ApiPoint = { x: number; y: number };
 
 export type MapConfig = {
@@ -441,6 +467,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  opponentHistory: (name: string, limit: number, signal: AbortSignal) =>
+    apiRequest<OpponentHistory>(`/api/opponents/recent${toQuery({ name, limit })}`, { signal }),
+  matchEncounters: (match: string, player: string, signal: AbortSignal) =>
+    apiRequest<EncounterList>(
+      `/api/opponents/matches/${encodeURIComponent(match)}${toQuery({ player_id: player })}`, { signal },
+    ),
+  opponentStats: (season: string, mode: string, ranked: boolean, ids: string[], signal: AbortSignal) =>
+    apiRequest<Record<string, OpponentStats | null>>("/api/opponents/stats", {
+      method: "POST", signal, body: JSON.stringify({ season, mode, ranked, player_ids: ids }),
+    }),
+  opponentMastery: (id: string, signal: AbortSignal) =>
+    apiRequest<Mastery>(`/api/opponents/mastery/${encodeURIComponent(id)}`, { signal }),
   getPersonalTrend: async (payload: { player_id: string; match_limit: number }) =>
     apiRequest<PersonalTrend>("/api/ingest/players/personal-trend", {
       method: "POST",

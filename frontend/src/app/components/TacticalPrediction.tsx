@@ -1,10 +1,15 @@
+import { Banner } from "@astryxdesign/core/Banner";
+import { Item } from "@astryxdesign/core/Item";
+import { Button } from "@astryxdesign/core/Button";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Slider } from "@astryxdesign/core/Slider";
+import { Switch } from "@astryxdesign/core/Switch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ChevronRight,
   Crosshair,
   MapPin,
-  Play,
   Route as RouteIcon,
   Settings2,
   ShieldAlert,
@@ -14,12 +19,6 @@ import {
 import { api, apiErrorMessage, MapConfig, PredictResponse, ZonePhaseConfig } from "../api";
 import { formatPubgDistance } from "../pubgUnits";
 import { MapView } from "./MapView";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
-import { Slider } from "./ui/slider";
-import { Button } from "./ui/button";
-import { Switch } from "./ui/switch";
-import { Label } from "./ui/label";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 
 type MapMode = "center" | "team";
 type PredictionState = "idle" | "loading" | "success" | "error";
@@ -283,17 +282,18 @@ export function TacticalPrediction() {
             <Settings2 className="w-4 h-4" /> 环境设置
           </label>
           <div className="grid grid-cols-2 gap-2">
-            <ToggleGroup type="single" value={selectedMap} onValueChange={(val) => { if (val) { setSelectedMap(val); setPrediction(null); setPredState("idle"); } }} className="grid grid-cols-2 gap-2 col-span-2">
-              {maps.map((map) => (
-                <ToggleGroupItem
-                  key={map.map_id}
-                  value={map.map_id}
-                  className={`h-10 px-3 rounded text-sm font-medium transition-all border ${selectedMap === map.map_id ? "bg-orange-500/20 border-orange-500 text-orange-400" : "bg-neutral-800/50 border-neutral-700 text-neutral-300 hover:border-neutral-500"}`}
-                >
-                  {map.display_name}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
+            <Selector
+              label="地图"
+              isLabelHidden
+              containerClassName="col-span-2"
+              value={selectedMap}
+              onChange={(value) => {
+                setSelectedMap(value);
+                setPrediction(null);
+                setPredState("idle");
+              }}
+              options={maps.map((item) => ({ value: item.map_id, label: item.display_name }))}
+            />
           </div>
 
           <div className="pt-2">
@@ -302,16 +302,18 @@ export function TacticalPrediction() {
               <span className="text-sm font-bold text-orange-400">阶段 {zoneStage}</span>
             </div>
             <Slider
+              label="当前安全区"
+              isLabelHidden
+              width="100%"
               min={Math.min(...supportedPhases)}
               max={maxPhase}
               step={1}
-              value={[zoneStage]}
-              onValueChange={(vals) => {
-                setZoneStage(vals[0]);
+              value={zoneStage}
+              onChange={(value: number) => {
+                setZoneStage(value);
                 setPrediction(null);
                 setPredState("idle");
               }}
-              className="w-full mt-3"
             />
           </div>
         </section>
@@ -321,43 +323,16 @@ export function TacticalPrediction() {
             <MapPin className="w-4 h-4" /> 定位
           </label>
           <div className="flex flex-col gap-2">
-            <Button
-              variant="outline"
+            <Item label="圈中心" startContent={<Crosshair />} isSelected={mapMode === "center"}
+              description={zoneCenter ? `${Math.round(zoneCenter.x)}, ${Math.round(zoneCenter.y)}` : "点击地图设置"}
               onClick={() => setMapMode("center")}
-              className={`h-auto flex items-center justify-start gap-3 p-3 rounded border text-left transition-all ${mapMode === "center" ? "bg-blue-500/10 border-blue-500 text-blue-400 hover:bg-blue-500/20 hover:text-blue-400" : "bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"}`}
-            >
-              <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0">
-                <Crosshair className="w-4 h-4 text-blue-400" />
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <div className="font-medium text-sm">圈中心</div>
-                <div className="text-xs opacity-70 truncate">{zoneCenter ? `${Math.round(zoneCenter.x)}, ${Math.round(zoneCenter.y)}` : "点击地图设置"}</div>
-              </div>
-              {zoneCenter && (
-                <div onClick={(e) => { e.stopPropagation(); setZoneCenter(null); }} className="p-1 hover:bg-black/20 rounded z-10">
-                  <X className="w-4 h-4 opacity-50 hover:opacity-100" />
-                </div>
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
+              endContent={zoneCenter && <Button label="清除圈中心" isIconOnly icon={<X />} variant="ghost"
+                onClick={event => { event.stopPropagation(); setZoneCenter(null); }} />} />
+            <Item label="队伍位置" startContent={<MapPin />} isSelected={mapMode === "team"}
+              description={teamPos ? `${Math.round(teamPos.x)}, ${Math.round(teamPos.y)}` : "点击地图设置"}
               onClick={() => setMapMode("team")}
-              className={`h-auto flex items-center justify-start gap-3 p-3 rounded border text-left transition-all ${mapMode === "team" ? "bg-green-500/10 border-green-500 text-green-400 hover:bg-green-500/20 hover:text-green-400" : "bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"}`}
-            >
-              <div className="w-8 h-8 rounded-full bg-green-500/20 flex items-center justify-center shrink-0">
-                <MapPin className="w-4 h-4 text-green-400" />
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <div className="font-medium text-sm">队伍位置</div>
-                <div className="text-xs opacity-70 truncate">{teamPos ? `${Math.round(teamPos.x)}, ${Math.round(teamPos.y)}` : "点击地图设置"}</div>
-              </div>
-              {teamPos && (
-                <div onClick={(e) => { e.stopPropagation(); setTeamPos(null); }} className="p-1 hover:bg-black/20 rounded z-10">
-                  <X className="w-4 h-4 opacity-50 hover:opacity-100" />
-                </div>
-              )}
-            </Button>
+              endContent={teamPos && <Button label="清除队伍位置" isIconOnly icon={<X />} variant="ghost"
+                onClick={event => { event.stopPropagation(); setTeamPos(null); }} />} />
           </div>
         </section>
 
@@ -366,52 +341,44 @@ export function TacticalPrediction() {
             <RouteIcon className="w-4 h-4" /> 策略
           </label>
           <div className="grid grid-cols-2 gap-2">
-            <ToggleGroup type="single" value={strategy} onValueChange={(val) => { if (val) { setStrategy(val); setPrediction(null); setPredState("idle"); } }} className="grid grid-cols-2 gap-2 col-span-2">
-              {strategyOptions.map((item) => (
-                <ToggleGroupItem
-                  key={item.id}
-                  value={item.id}
-                  className={`h-10 px-3 rounded text-xs font-medium transition-all border ${strategy === item.id ? "bg-orange-500/20 border-orange-500 text-orange-400" : "bg-neutral-800/50 border-neutral-700 text-neutral-300 hover:border-neutral-500"}`}
-                >
-                  {item.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
+            <Selector
+              label="策略"
+              isLabelHidden
+              containerClassName="col-span-2"
+              value={strategy}
+              onChange={(value) => {
+                setStrategy(value);
+                setPrediction(null);
+                setPredState("idle");
+              }}
+              options={strategyOptions.map((item) => ({ value: item.id, label: item.label }))}
+            />
           </div>
 
           <div className="flex items-center space-x-2 mt-4">
-            <Switch
-              id="smart-explain"
-              checked={smartExplain}
-              onCheckedChange={setSmartExplain}
-              className="data-[state=checked]:bg-orange-500"
-            />
-            <Label htmlFor="smart-explain" className="text-sm text-neutral-300 cursor-pointer hover:text-white transition-colors">
-              智能风险解析
-            </Label>
+            <Switch label="智能风险解析" value={smartExplain} onChange={setSmartExplain} />
           </div>
         </section>
 
         {error && (
-          <Alert variant="destructive" className="bg-red-500/10 border-red-500/20 text-red-200">
-            <ShieldAlert className="h-4 w-4" />
-            <AlertTitle>错误</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+          <Banner
+            className="bg-red-500/10 border-red-500/20 text-red-200"
+            status="error"
+            role="alert"
+            title="错误"
+            description={error}
+          />
         )}
 
         <div className="mt-auto pt-4 border-t border-neutral-800">
           <Button
-            disabled={!isReady || predState === "loading"}
             onClick={handleGenerate}
             className={`w-full h-12 text-base font-bold flex items-center justify-center gap-2 transition-all ${!isReady ? "bg-neutral-800 text-neutral-500 cursor-not-allowed hover:bg-neutral-800" : predState === "loading" ? "bg-orange-600/50 text-white cursor-wait hover:bg-orange-600/50" : "bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/50 hover:shadow-orange-500/20 hover:-translate-y-0.5"}`}
-          >
-            {predState === "loading" ? (
-              <div className="w-5 h-5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-            ) : (
-              <><Play className="w-4 h-4 fill-current" /> 生成预测</>
-            )}
-          </Button>
+            label="生成预测"
+            variant="primary"
+            isDisabled={!isReady || predState === "loading"}
+            isLoading={predState === "loading"}
+          />
           {!isReady && <p className="text-xs text-center text-red-400 mt-2">请先设置圈中心和队伍位置</p>}
         </div>
       </div>

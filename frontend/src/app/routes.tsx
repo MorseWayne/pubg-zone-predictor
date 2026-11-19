@@ -1,6 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router";
 import { Root } from "./components/Root";
-import { PlayerMatchAnalysis } from "./components/PlayerMatchAnalysis";
 
 export const router = createBrowserRouter([
   {
@@ -15,7 +14,11 @@ export const router = createBrowserRouter([
           return { Component: DataCollection };
         },
       },
-      { path: "analysis", Component: PlayerMatchAnalysis },
+      {
+        path: "analysis",
+        lazy: async () => ({ Component: (await import("./components/PlayerMatchAnalysis")).PlayerMatchAnalysis }),
+      },
+      { path: "opponents", lazy: async () => ({ Component: (await import("./components/OpponentAnalysis")).OpponentAnalysis }) },
       {
         path: "personal-trend",
         lazy: async () => {

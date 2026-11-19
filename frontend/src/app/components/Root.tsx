@@ -1,46 +1,53 @@
-import { Outlet, NavLink } from "react-router";
-import { Database, RadioTower, Route, Users, TrendingUp } from "lucide-react";
+import { Link, Outlet, useLocation } from "react-router";
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { SideNav, SideNavItem } from "@astryxdesign/core/SideNav";
+import { Database, RadioTower, Route, Swords, TrendingUp, Users } from "lucide-react";
+
+const pages = [
+  { href: "/analysis", label: "对局回放", icon: Route },
+  { href: "/collection", label: "数据采集", icon: Database },
+  { href: "/opponents", label: "交手对手", icon: Swords },
+  { href: "/personal-trend", label: "个人历史", icon: TrendingUp },
+  { href: "/team-dashboard", label: "团队看板", icon: Users },
+];
 
 export function Root() {
-  const navClass = ({ isActive }: { isActive: boolean }) =>
-    [
-      "flex w-full items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors hover:bg-neutral-800 hover:text-neutral-200",
-      isActive ? "border border-orange-500/20 bg-orange-500/10 text-orange-400" : "text-neutral-400",
-    ].join(" ");
-
+  const { pathname } = useLocation();
+  const navigation = (
+    <SideNav
+      aria-label="主导航"
+      className="w-52 shrink-0 lg:w-64"
+      header={
+        <h1 className="flex items-center gap-3 px-3 py-4 text-lg font-bold">
+          <RadioTower aria-hidden="true" />
+          PUBG 回放中心
+        </h1>
+      }
+      footer={
+        <div className="flex items-center gap-2 px-3 py-2 text-xs text-secondary">
+          <span className="size-2 rounded-full bg-success" />
+          遥测服务：在线
+        </div>
+      }
+    >
+      {pages.map(({ href, label, icon }) => (
+        <SideNavItem
+          key={href}
+          as={Link}
+          href={href}
+          label={label}
+          icon={icon}
+          isSelected={pathname === href}
+          aria-current={pathname === href ? "page" : undefined}
+        />
+      ))}
+    </SideNav>
+  );
   return (
-    <div className="flex h-screen bg-neutral-950 text-neutral-100 font-sans overflow-hidden">
-      <nav className="w-64 border-r border-neutral-800 bg-neutral-900/50 flex flex-col backdrop-blur-sm z-10 shrink-0">
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-8 h-8 rounded bg-orange-500/20 text-orange-500 flex items-center justify-center">
-            <RadioTower className="w-5 h-5" />
-          </div>
-          <h1 className="text-lg font-bold tracking-wider">PUBG<span className="text-orange-500">回放中心</span></h1>
-        </div>
-        <div className="flex flex-col gap-2 px-4 mt-4">
-          <NavLink to="/analysis" className={navClass}>
-            <Route className="mr-3 size-4" /> 对局回放
-          </NavLink>
-          <NavLink to="/collection" className={navClass}>
-            <Database className="mr-3 size-4" /> 数据采集
-          </NavLink>
-          <NavLink to="/personal-trend" className={navClass}>
-            <TrendingUp className="mr-3 size-4" /> 个人历史
-          </NavLink>
-          <NavLink to="/team-dashboard" className={navClass}>
-            <Users className="mr-3 size-4" /> 团队看板
-          </NavLink>
-        </div>
-        <div className="mt-auto p-4 border-t border-neutral-800">
-          <div className="flex items-center gap-3 px-2 py-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-xs text-neutral-500 font-medium">遥测服务：在线</span>
-          </div>
-        </div>
-      </nav>
-      <main className="flex-1 relative bg-neutral-950 h-full flex flex-col min-w-0">
+    <AppShell variant="section" height="fill" contentPadding={0} sideNav={navigation}>
+      <div className="relative flex h-full min-h-0 min-w-0 flex-col">
         <Outlet />
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

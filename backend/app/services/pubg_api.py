@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +45,33 @@ class PubgApiClient:
             params={"filter[playerNames]": ",".join(names)},
         )
 
+    def get_season_batch(
+        self,
+        platform: str,
+        season: str,
+        mode: str,
+        ids: list[str],
+    ) -> dict[str, Any]:
+        return self._get_json(
+            f"/shards/{_path_segment(platform)}/seasons/{_path_segment(season)}"
+            f"/gameMode/{_path_segment(mode)}/players",
+            authenticated=True,
+            params={"filter[playerIds]": ",".join(ids)},
+        )
+
+    def get_ranked_stats(self, platform: str, season: str, player_id: str) -> dict[str, Any]:
+        return self._get_json(
+            f"/shards/{_path_segment(platform)}/players/{_path_segment(player_id)}"
+            f"/seasons/{_path_segment(season)}/ranked",
+            authenticated=True,
+        )
+
+    def get_survival_mastery(self, platform: str, player_id: str) -> dict[str, Any]:
+        return self._get_json(
+            f"/shards/{_path_segment(platform)}/players/{_path_segment(player_id)}/survival_mastery",
+            authenticated=True,
+        )
+
     def get_match(self, match_id: str, platform: str) -> dict[str, Any]:
         return self._get_json(
             f"/shards/{_path_segment(platform)}/matches/{_path_segment(match_id)}",
@@ -84,6 +112,15 @@ class PubgApiClient:
         with self._client() as client:
             try:
                 response = client.get(path, headers=headers, params=params)
+                if response.status_code == 429:
+                    reset = response.headers.get("X-RateLimit-Reset", "")
+                    wait = int(reset) - int(time.time()) + 1 if reset.isdigit() else 60
+                    raise AppError(
+                        "PUBG_RATE_LIMIT",
+                        "PUBG API 配额暂时用尽",
+                        429,
+                        {"retry_after": max(1, min(3600, wait))},
+                    )
                 response.raise_for_status()
                 payload = response.json()
             except httpx.HTTPError as exc:
@@ -91,7 +128,13 @@ class PubgApiClient:
                     code="PUBG_API_REQUEST_FAILED",
                     message="PUBG API request failed",
                     status_code=502,
-                    details={"path": path, "reason": str(exc)},
+                    details={
+                        "path": path,
+                        "reason": str(exc),
+                        "upstream_status": exc.response.status_code
+                        if isinstance(exc, httpx.HTTPStatusError)
+                        else None,
+                    },
                 ) from exc
             except ValueError as exc:
                 raise AppError(
