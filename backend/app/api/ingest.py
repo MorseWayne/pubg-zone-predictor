@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Iterator
+from datetime import date
+from functools import lru_cache
+from pathlib import Path as FilePath
+from threading import Lock
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
@@ -27,7 +31,9 @@ from app.services.ingest import (
     TeamDashboardMatch,
     TeamDashboardPlayer,
 )
+from app.services.player_history import recent_matches
 from app.services.pubg_api import PubgApiClient
+from app.services.pubg_cache import PubgCache
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -48,11 +54,22 @@ def get_database_connection(settings: SettingsDep) -> Iterator[sqlite3.Connectio
 DatabaseDep = Annotated[sqlite3.Connection, Depends(get_database_connection)]
 
 
+_cache_init_lock = Lock()
+
+
+@lru_cache(maxsize=8)
+def _pubg_cache(database_path: FilePath, origin: str) -> PubgCache:
+    return PubgCache(database_path.with_suffix(".pubg-cache.sqlite3"), origin)
+
+
 def get_pubg_client(settings: SettingsDep) -> PubgApiClient:
+    with _cache_init_lock:
+        cache = _pubg_cache(settings.database_path.resolve(), settings.pubg_api_base_url)
     return PubgApiClient(
         api_key=settings.pubg_api_key,
         base_url=settings.pubg_api_base_url,
         timeout_seconds=settings.pubg_api_timeout_seconds,
+        cache=cache,
     )
 
 
@@ -98,15 +115,30 @@ class DeleteMatchesRequest(BaseModel):
     match_ids: list[str] = Field(min_length=1, max_length=200)
 
 
-class TeamDashboardRequest(BaseModel):
+class PlayerWindowRequest(BaseModel):
+    match_ids: list[str] | None = Field(default=None, max_length=20)
     player_id: str = Field(min_length=1, max_length=80)
+    match_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if self.match_date is not None and self.match_ids is not None:
+            raise ValueError("指定日期和最近对局列表只能选择一种")
+        return self
+
+    def selected_ids(self, service: IngestService) -> list[str] | None:
+        if self.match_date is not None:
+            return service.player_day_match_ids(self.player_id, self.match_date)
+        return self.match_ids
+
+
+class TeamDashboardRequest(PlayerWindowRequest):
     teammate_ids: list[str] = Field(default_factory=list, max_length=3)
     match_limit: int = Field(default=20, ge=1, le=100)
     teammate_candidate_limit: int = Field(default=50, ge=1, le=100)
 
 
-class PersonalTrendRequest(BaseModel):
-    player_id: str = Field(min_length=1, max_length=80)
+class PersonalTrendRequest(PlayerWindowRequest):
     match_limit: int = Field(default=20, ge=4, le=100)
 
 
@@ -125,11 +157,7 @@ def get_sample_ingest_runner(settings: SettingsDep) -> SampleIngestRunner:
     ) -> None:
         connection = connect_database(settings.database_path)
         try:
-            pubg_client = PubgApiClient(
-                api_key=settings.pubg_api_key,
-                base_url=settings.pubg_api_base_url,
-                timeout_seconds=settings.pubg_api_timeout_seconds,
-            )
+            pubg_client = get_pubg_client(settings)
             service = IngestService(
                 connection=connection,
                 pubg_client=pubg_client,
@@ -164,11 +192,7 @@ def get_player_ingest_runner(settings: SettingsDep) -> PlayerIngestRunner:
     ) -> None:
         connection = connect_database(settings.database_path)
         try:
-            pubg_client = PubgApiClient(
-                api_key=settings.pubg_api_key,
-                base_url=settings.pubg_api_base_url,
-                timeout_seconds=settings.pubg_api_timeout_seconds,
-            )
+            pubg_client = get_pubg_client(settings)
             service = IngestService(
                 connection=connection,
                 pubg_client=pubg_client,
@@ -287,12 +311,17 @@ def get_team_dashboard(
     request: TeamDashboardRequest,
     ingest_service: IngestServiceDep,
 ) -> dict[str, object]:
+    ids = request.selected_ids(ingest_service)
+    day_count = len(ids) if request.match_date is not None and ids is not None else None
     return _team_dashboard_response(
         ingest_service.get_team_dashboard(
             request.player_id,
             teammate_ids=request.teammate_ids,
-            match_limit=request.match_limit,
-            teammate_candidate_limit=request.teammate_candidate_limit,
+            match_limit=request.match_limit if day_count is None else day_count,
+            match_ids=ids,
+            teammate_candidate_limit=request.teammate_candidate_limit
+            if day_count is None
+            else day_count,
         )
     )
 
@@ -302,10 +331,14 @@ def get_personal_trend(
     request: PersonalTrendRequest,
     ingest_service: IngestServiceDep,
 ) -> dict[str, object]:
+    ids = request.selected_ids(ingest_service)
     return _personal_trend_response(
         ingest_service.get_personal_trend(
             request.player_id,
-            match_limit=request.match_limit,
+            match_limit=len(ids)
+            if request.match_date is not None and ids is not None
+            else request.match_limit,
+            match_ids=ids,
         )
     )
 
@@ -317,10 +350,16 @@ def search_players(
     query: str = Query(min_length=1, max_length=64),
 ) -> dict[str, object]:
     try:
-        payload = pubg_client.get_players_by_names(platform, [query])
+        if query.startswith("account."):
+            account = pubg_client.get_player_by_id(platform, query)
+            payload = {"data": [account["data"]]} if account.get("data") else {"data": []}
+        else:
+            payload = pubg_client.get_players_by_names(platform, [query])
     except AppError as exc:
         reason = str(exc.details.get("reason", ""))
-        if exc.code == "PUBG_API_REQUEST_FAILED" and "404" in reason:
+        if exc.details.get("upstream_status") == 404 or (
+            exc.code == "PUBG_API_REQUEST_FAILED" and "404" in reason
+        ):
             return {"players": []}
         raise
     players = payload.get("data", [])
@@ -349,12 +388,36 @@ def parse_match_telemetry(
     return _job_response(ingest_service.parse_match_telemetry(match_id))
 
 
+@router.get("/players/recent")
+def player_history(
+    connection: DatabaseDep,
+    pubg_client: PubgClientDep,
+    query: Annotated[str, Query(min_length=1, max_length=80, pattern=r"^[^,\s/]+$")],
+    match_date: date | None = None,
+    refresh: bool = False,
+):
+    return recent_matches(
+        connection, pubg_client, query, 20, match_date=match_date, refresh=refresh
+    )
+
+
+@router.post("/matches/{match_id}/prepare")
+def prepare_player_match(
+    match_id: Annotated[str, Path(pattern=r"^[a-zA-Z0-9_-]{1,80}$")],
+    player_id: Annotated[str, Query(pattern=r"^account\.[a-zA-Z0-9_-]{1,64}$")],
+    ingest_service: IngestServiceDep,
+):
+    return _match_response(ingest_service.prepare_history_match(match_id, player_id))
+
+
 @router.get("/matches")
 def list_matches(
     ingest_service: IngestServiceDep,
     limit: int = Query(default=50, ge=1, le=200),
+    player_id: str | None = Query(None, max_length=80),
+    match_date: date | None = None,
 ) -> dict[str, object]:
-    matches = ingest_service.list_matches(limit=limit)
+    matches = ingest_service.list_matches(limit=limit, player_id=player_id, match_date=match_date)
     return {"matches": [_match_response(match) for match in matches]}
 
 
@@ -559,6 +622,7 @@ def _match_response(match: IngestMatchAsset) -> dict[str, object]:
         "telemetry_parse_profile": match.telemetry_parse_profile,
         "telemetry_position_interval_seconds": match.telemetry_position_interval_seconds,
         "telemetry_parsed_at": match.telemetry_parsed_at,
+        "replay_ready": match.replay_ready,
         "circle_phase_count": match.circle_phase_count,
         "position_sample_count": match.position_sample_count,
         "life_event_count": match.life_event_count,

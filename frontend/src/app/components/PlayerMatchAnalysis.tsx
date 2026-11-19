@@ -16,13 +16,14 @@ import {
   useRef,
   useState,
 } from "react";
+import { MATCH_TIME_ZONE } from "../matchRange";
+import { usePlayerWorkspace } from "../playerWorkspace";
 import { useSearchParams } from "react-router";
 import {
   Eye,
   EyeOff,
   Loader2,
   MapPinned,
-  RefreshCw,
   RotateCcw,
   Route,
   Shield,
@@ -200,7 +201,7 @@ function markerWidthForLabel(label: string) {
 
 function matchTitle(match: IngestMatch) {
   const mapName = match.map_name?.replace(/_Main$/, "") ?? "未知地图";
-  const createdAt = match.created_at ? new Date(match.created_at).toLocaleString("zh-CN", { hour12: false }) : "未知时间";
+  const createdAt = match.created_at ? new Date(match.created_at).toLocaleString("zh-CN", { hour12: false, timeZone: MATCH_TIME_ZONE }) : "未知时间";
   return `${mapName} · ${createdAt}`;
 }
 
@@ -216,9 +217,9 @@ function playerDisplayName(player: MatchAnalysisPlayer) {
 }
 
 function mapForMatch(match: IngestMatch | null, maps: MapConfig[]) {
-  if (!match?.map_name) return maps[0] ?? null;
+  if (!match?.map_name) return null;
   const alias = MAP_NAME_ALIASES[match.map_name];
-  return maps.find((map) => map.map_id === alias) ?? maps.find((map) => map.display_name === match.map_name) ?? maps[0] ?? null;
+  return maps.find((map) => map.map_id === alias) ?? maps.find((map) => map.display_name === match.map_name) ?? null;
 }
 
 function playerColor(playerId: string | null | undefined, team: TeamSummary | undefined) {
@@ -586,10 +587,6 @@ function groundedPositionSegments(positions: MatchAnalysisPosition[], worldSize:
   return segments;
 }
 
-function isSquadMatch(match: IngestMatch) {
-  return match.game_mode === "squad" || match.game_mode === "squad-fpp";
-}
-
 function teamSummaries(players: MatchAnalysisPlayer[]) {
   const grouped = players.reduce<Record<string, MatchAnalysisPlayer[]>>((groups, player) => {
     groups[player.team_id] = [...(groups[player.team_id] ?? []), player];
@@ -738,34 +735,30 @@ const ReplayAnalysisToolbar = memo(function ReplayAnalysisToolbar({
   analysis,
   aliveTeamCount,
   alivePlayerCount,
-  squadMatches,
+  replayMatches,
   selectedMatchId,
   teams,
   selectedTeamId,
   selectedPlayer,
   playerStats,
   isPinnedPlayerUnavailable,
-  isLoading,
   onSelectMatch,
   onSelectTeam,
   onSelectPlayer,
-  onRefresh,
 }: {
   analysis: MatchAnalysis | null;
   aliveTeamCount: number;
   alivePlayerCount: number;
-  squadMatches: IngestMatch[];
+  replayMatches: IngestMatch[];
   selectedMatchId: string;
   teams: TeamSummary[];
   selectedTeamId: string;
   selectedPlayer: MatchAnalysisPlayer | null;
   playerStats: Record<string, PlayerReplayStats>;
   isPinnedPlayerUnavailable: boolean;
-  isLoading: boolean;
   onSelectMatch: (matchId: string) => void;
   onSelectTeam: (teamId: string) => void;
   onSelectPlayer: (player: MatchAnalysisPlayer) => void;
-  onRefresh: () => void;
 }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-1">
@@ -794,7 +787,7 @@ const ReplayAnalysisToolbar = memo(function ReplayAnalysisToolbar({
           value={selectedMatchId}
           onChange={onSelectMatch}
           containerClassName="w-full sm:w-[300px]"
-          options={squadMatches.map((match) => ({ value: match.match_id, label: matchTitle(match) }))}
+          options={replayMatches.map((match) => ({ value: match.match_id, label: matchTitle(match) }))}
         />
         <Selector
           key={selectedMatchId}
@@ -830,50 +823,22 @@ const ReplayAnalysisToolbar = memo(function ReplayAnalysisToolbar({
             label: `${playerDisplayName(player)} · 队伍 ${player.team_id}${(playerStats[player.player_id]?.deadAt ?? null) !== null ? " · 已淘汰" : ""}`,
           }))}
         />
-        <Button
-          onClick={onRefresh}
-          label="刷新"
-          variant="secondary"
-          isDisabled={isLoading}
-          icon={
-            isLoading ? (
-              <Loader2 data-icon="inline-start" className="animate-spin" />
-            ) : (
-              <RefreshCw data-icon="inline-start" />
-            )
-          }
-        />
+
       </div>
     </div>
   );
 });
 
-export function PlayerMatchAnalysis() {
+export function PlayerMatchAnalysis({ archiveId }: { archiveId?: string } = {}) {
+  const { player, matches, syncing, rangeLabel, matchDate } = usePlayerWorkspace();
   const [searchParams, setSearchParams] = useSearchParams();
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [maps, setMaps] = useState<MapConfig[]>([]);
-  const [matches, setMatches] = useState<IngestMatch[]>([]);
-  const [selectedMatchId, setSelectedMatchId] = useState(() => {
-    if (typeof window !== "undefined") {
-      return searchParams.get("matches") || localStorage.getItem("pzp_analysis_selectedMatchId") || "";
-    }
-    return "";
-  });
-  
+  const [choice, setChoice] = useState(() => searchParams.get("matches") ?? "");
+  const selectedMatchId = archiveId ?? (matches.some(m => m.match_id === choice) ? choice : matches[0]?.match_id ?? "");
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
-  
-  const [selectedTeamId, setSelectedTeamId] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("pzp_analysis_selectedTeamId") || "";
-    }
-    return "";
-  });
-  const [selectedPlayerId, setSelectedPlayerId] = useState(() => {
-    if (typeof window !== "undefined") {
-      return searchParams.get("player") || localStorage.getItem("pzp_analysis_selectedPlayerId") || "";
-    }
-    return "";
-  });
+  const [selectedTeamId, setSelectedTeamId] = useState("");
+  const [selectedPlayerId, setSelectedPlayerId] = useState(player.player_id);
 
   const [layers, setLayers] = useState<LayerId[]>(() => {
     if (typeof window !== "undefined") {
@@ -891,31 +856,6 @@ export function PlayerMatchAnalysis() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("pzp_analysis_selectedMatchId", selectedMatchId);
-    }
-    if (!selectedMatchId) return;
-    setSearchParams((current) => {
-      if (current.get("matches") === selectedMatchId) return current;
-      const next = new URLSearchParams(current);
-      next.set("matches", selectedMatchId);
-      return next;
-    }, { replace: true });
-  }, [selectedMatchId]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("pzp_analysis_selectedTeamId", selectedTeamId);
-    }
-  }, [selectedTeamId]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("pzp_analysis_selectedPlayerId", selectedPlayerId);
-    }
-  }, [selectedPlayerId]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
       localStorage.setItem("pzp_analysis_layers", JSON.stringify(layers));
     }
   }, [layers]);
@@ -930,7 +870,6 @@ export function PlayerMatchAnalysis() {
   });
   const [isMapDragging, setIsMapDragging] = useState(false);
   const [mapDragStart, setMapDragStart] = useState<MapDragStart | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
@@ -1036,18 +975,8 @@ export function PlayerMatchAnalysis() {
     };
   }, [isLayersDragging]);
 
-  const squadMatches = useMemo(() => matches.filter(isSquadMatch), [matches]);
-  const parsedMatches = useMemo(
-    () =>
-      squadMatches.filter(
-        (match) =>
-          match.telemetry_parse_status === "completed" &&
-          (match.position_sample_count > 0 || match.life_event_count > 0 || match.circle_phase_count > 0),
-      ),
-    [squadMatches],
-  );
-  const activeMatch =
-    analysis?.match ?? parsedMatches.find((match) => match.match_id === selectedMatchId) ?? squadMatches[0] ?? null;
+  const replayMatches = archiveId ? (analysis ? [analysis.match] : []) : matches;
+  const activeMatch = analysis?.match ?? replayMatches.find(m => m.match_id === selectedMatchId) ?? null;
   const activeMap = mapForMatch(activeMatch, maps);
   const worldSize = activeMap?.world_size ?? 816000;
 
@@ -1611,34 +1540,12 @@ export function PlayerMatchAnalysis() {
     });
     return clusters;
   }, [analysis, layers, eliminationEvents, mapTransform.scale, worldSize]);
-  const refreshMatches = useCallback(async () => {
-    setError(null);
-    setIsLoading(true);
-    try {
-      const [mapsResponse, matchesResponse] = await Promise.all([api.listMaps(), api.listMatches(200)]);
-      const nextMatches = matchesResponse.matches;
-      const nextSquadMatches = nextMatches.filter(isSquadMatch);
-      const nextParsedMatches = nextSquadMatches.filter(
-        (match) =>
-          match.telemetry_parse_status === "completed" &&
-          (match.position_sample_count > 0 || match.life_event_count > 0 || match.circle_phase_count > 0),
-      );
-      setMaps(mapsResponse.maps);
-      setMatches(nextMatches);
-      setSelectedMatchId((current) => {
-        if (nextSquadMatches.some((match) => match.match_id === current)) return current;
-        return nextParsedMatches[0]?.match_id || nextSquadMatches[0]?.match_id || "";
-      });
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void refreshMatches();
-  }, [refreshMatches]);
+    let cancelled = false;
+    api.listMaps().then(result => { if (!cancelled) setMaps(result.maps); })
+      .catch(err => { if (!cancelled) setError(apiErrorMessage(err)); });
+    return () => { cancelled = true; };
+  }, []);
 
   const isInitialMount = useRef(true);
   useEffect(() => {
@@ -1652,7 +1559,8 @@ export function PlayerMatchAnalysis() {
   }, [selectedMatchId]);
 
   useEffect(() => {
-    if (!selectedMatchId) return;
+    setAnalysis(null);
+    if (!selectedMatchId) { setIsLoadingAnalysis(false); return; }
     let cancelled = false;
     const loadAnalysis = async () => {
       setIsLoadingAnalysis(true);
@@ -1661,7 +1569,7 @@ export function PlayerMatchAnalysis() {
         const payload = await api.getMatchAnalysis(selectedMatchId);
         if (cancelled) return;
         setAnalysis(payload);
-        const requestedPlayer = searchParams.get("player") || selectedPlayerId;
+        const requestedPlayer = player.player_id;
         const requestedPlayerRecord = payload.players.find(
           (player) =>
             player.player_id === requestedPlayer ||
@@ -1677,10 +1585,9 @@ export function PlayerMatchAnalysis() {
           }
           return nextTeams[0]?.teamId ?? "";
         });
-        setSelectedPlayerId((current) => {
+        setSelectedPlayerId(() => {
           if (requestedPlayerRecord) return requestedPlayerRecord.player_id;
-          if (current) return current;
-          return payload.players[0]?.player_id ?? "";
+          return archiveId ? payload.players[0]?.player_id ?? "" : requestedPlayer;
         });
       } catch (err) {
         if (!cancelled) {
@@ -1696,23 +1603,6 @@ export function PlayerMatchAnalysis() {
       cancelled = true;
     };
   }, [selectedMatchId]);
-
-  useEffect(() => {
-    if (!selectedPlayer) return;
-    setSearchParams((current) => {
-      const playerParam = playerDisplayName(selectedPlayer);
-      if (
-        current.get("matches") === selectedMatchId &&
-        current.get("player") === playerParam
-      ) {
-        return current;
-      }
-      const next = new URLSearchParams(current);
-      next.set("matches", selectedMatchId);
-      next.set("player", playerParam);
-      return next;
-    }, { replace: true });
-  }, [selectedMatchId, selectedPlayer, setSearchParams]);
 
   const zoomMap = (nextScale: number, originX?: number, originY?: number) => {
     const container = mapContainerRef.current;
@@ -1993,20 +1883,23 @@ export function PlayerMatchAnalysis() {
         analysis={analysis}
         aliveTeamCount={aliveTeamCount}
         alivePlayerCount={alivePlayerCount}
-        squadMatches={squadMatches}
+        replayMatches={replayMatches}
         selectedMatchId={selectedMatchId}
         teams={teams}
         selectedTeamId={selectedTeamId}
         selectedPlayer={selectedPlayer}
         playerStats={playerStats}
         isPinnedPlayerUnavailable={isPinnedPlayerUnavailable}
-        isLoading={isLoading}
-        onSelectMatch={setSelectedMatchId}
+        onSelectMatch={id => {
+          setChoice(id);
+          if (!archiveId) setSearchParams({ matches: id }, { replace: true });
+        }}
         onSelectTeam={selectAndFocusTeam}
         onSelectPlayer={selectAndFocusPlayer}
-        onRefresh={refreshMatches}
       />
 
+      {!archiveId && !matches.length && <Banner status="info"
+        title={syncing ? `正在同步当前玩家的对局：${rangeLabel}` : matchDate ? `${matchDate} 没有可回放的对局` : "该玩家暂无可回放的对局"} />}
       {error && (
         <Banner className="shrink-0" status="error" role="alert" title="数据加载失败" description={error} />
       )}
@@ -2711,6 +2604,11 @@ export function PlayerMatchAnalysis() {
                 </div>
               )}
 
+              {analysis && !activeMap && (
+                <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-card px-2 py-1 text-xs">
+                  {analysis.match.map_name} · 暂无底图
+                </span>
+              )}
               {!isLoadingAnalysis && analysis && analysis.positions.length === 0 && analysis.life_events.length === 0 && (
                 <div className="absolute rounded border border-border bg-card px-4 py-3 text-sm text-secondary shadow-sm">
                   暂无可视化轨迹数据

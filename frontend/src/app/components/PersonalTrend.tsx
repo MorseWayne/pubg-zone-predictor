@@ -1,22 +1,16 @@
 import { Banner } from "@astryxdesign/core/Banner";
-import { Button } from "@astryxdesign/core/Button";
-import { Selector } from "@astryxdesign/core/Selector";
+import { usePlayerWorkspace } from "../playerWorkspace";
+import { formatMatchDate, statsWindow } from "../matchRange";
 import { Card } from "@astryxdesign/core/Card";
 import { Skeleton } from "@astryxdesign/core/Skeleton";
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from "@astryxdesign/core/Table";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, Loader2, RefreshCw, TrendingUp, Trophy } from "lucide-react";
-import { api, apiErrorMessage, LocalPlayer, PersonalTrend as PersonalTrendData, PersonalTrendWindow } from "../api";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, TrendingUp, Trophy } from "lucide-react";
+import { api, apiErrorMessage, PersonalTrend as PersonalTrendData, PersonalTrendWindow } from "../api";
 
-const MATCH_LIMIT = 20;
 
-function playerLabel(player: Pick<LocalPlayer, "player_id" | "player_name">) {
-  return player.player_name || player.player_id.replace(/^account\./, "");
-}
 
-function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleDateString("zh-CN") : "未知";
-}
+
 
 function formatDelta(value: number | null, digits = 0) {
   if (value === null) return "-";
@@ -82,43 +76,18 @@ function LoadingCards() {
 }
 
 export function PersonalTrend() {
-  const [players, setPlayers] = useState<LocalPlayer[]>([]);
-  const [selectedPlayerId, setSelectedPlayerId] = useState(() => localStorage.getItem("pzp_personal_player") || "");
+  const { player, statMatchIds, syncing, matchDate, rangeLabel } = usePlayerWorkspace();
+  const selectedPlayerId = player.player_id;
   const [trend, setTrend] = useState<PersonalTrendData | null>(null);
-  const [isLoadingPlayers, setIsLoadingPlayers] = useState(true);
   const [isLoadingTrend, setIsLoadingTrend] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasPlayers = players.length > 0;
 
   const meta = useMemo(() => trendMeta(trend?.trend ?? "insufficient_data"), [trend]);
 
-  const refreshPlayers = async () => {
-    setError(null);
-    setIsLoadingPlayers(true);
-    try {
-      const payload = await api.listLocalPlayers(100);
-      setPlayers(payload.players);
-      setSelectedPlayerId((current) => {
-        if (payload.players.some((player) => player.player_id === current)) return current;
-        return payload.players[0]?.player_id || "";
-      });
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setIsLoadingPlayers(false);
-    }
-  };
-
   useEffect(() => {
-    void refreshPlayers();
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem("pzp_personal_player", selectedPlayerId);
-  }, [selectedPlayerId]);
-
-  useEffect(() => {
-    if (!selectedPlayerId) {
+    if (!statMatchIds.length) {
+      setError(null);
+      setIsLoadingTrend(false);
       setTrend(null);
       return;
     }
@@ -127,7 +96,7 @@ export function PersonalTrend() {
       setIsLoadingTrend(true);
       setError(null);
       try {
-        const payload = await api.getPersonalTrend({ player_id: selectedPlayerId, match_limit: MATCH_LIMIT });
+        const payload = await api.getPersonalTrend({ player_id: selectedPlayerId, ...statsWindow(matchDate, statMatchIds) });
         if (!cancelled) setTrend(payload);
       } catch (err) {
         if (!cancelled) {
@@ -142,7 +111,7 @@ export function PersonalTrend() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPlayerId]);
+  }, [selectedPlayerId, statMatchIds, matchDate]);
 
   const TrendIcon = meta.icon;
 
@@ -155,46 +124,18 @@ export function PersonalTrend() {
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold text-primary">个人历史分析</h1>
-            <p className="truncate text-xs text-secondary">比较早期样本和最近样本，判断个人真实数据是否进步或下滑</p>
+            <p className="truncate text-xs text-secondary">{player.player_name} · 对比{rangeLabel}中的早期和近期样本</p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Selector
-            label="选择个人"
-            isLabelHidden
-            placeholder="选择个人"
-            value={selectedPlayerId}
-            onChange={setSelectedPlayerId}
-            isDisabled={isLoadingPlayers || !hasPlayers}
-            containerClassName="w-[280px]"
-            options={players.map((player) => ({
-              value: player.player_id,
-              label: `${playerLabel(player)} · ${player.match_count} 场`,
-            }))}
-          />
-          <Button
-            onClick={refreshPlayers}
-            label="刷新"
-            variant="secondary"
-            isDisabled={isLoadingPlayers}
-            icon={
-              isLoadingPlayers ? (
-                <Loader2 data-icon="inline-start" className="animate-spin" />
-              ) : (
-                <RefreshCw data-icon="inline-start" />
-              )
-            }
-          />
-        </div>
+
       </div>
 
       {error && (
         <Banner status="error" role="alert" title="个人历史加载失败" description={error} />
       )}
 
-      {!isLoadingPlayers && !hasPlayers && (
-        <Banner status="info" title="还没有本地玩家数据" description="先在“数据采集”里按玩家采集真实对局，再回到这里看个人变化。" />
-      )}
+      {!statMatchIds.length && <Banner status="info"
+        title={syncing ? "正在准备当前玩家的对局" : matchDate ? `${matchDate} 没有可分析的对局` : "该玩家暂无可分析的近期对局"} />}
 
       {isLoadingTrend ? (
         <LoadingCards />
@@ -207,7 +148,7 @@ export function PersonalTrend() {
                   <TrendIcon className={`size-4 ${meta.className}`} /> 变化判断
                 </div>
                 <div className={`text-2xl font-bold tracking-tight ${meta.className}`}>{meta.label}</div>
-                <div className="text-xs text-secondary">样本：最近 {trend.matches.length} 场</div>
+                <div className="text-xs text-secondary">样本：{trend.matches.length} 场</div>
               </div>
             </Card>
             <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
@@ -246,7 +187,7 @@ export function PersonalTrend() {
 
           <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
             <header className="grid gap-1.5 px-4 pt-4">
-              <h3 className="font-semibold text-sm">最近个人对局</h3>
+              <h3 className="font-semibold text-sm">个人对局</h3>
             </header>
             <div className="pb-5 px-4">
               <Table>
@@ -264,7 +205,7 @@ export function PersonalTrend() {
                 <TableBody>
                   {trend.matches.map((match) => (
                     <TableRow key={match.match_id}>
-                      <TableCell>{formatDate(match.created_at)}</TableCell>
+                      <TableCell>{formatMatchDate(match.created_at, !!matchDate)}</TableCell>
                       <TableCell>{match.map_name.replace(/_Main$/, "")}</TableCell>
                       <TableCell className="text-right tabular-nums">{match.team_rank ?? "-"}</TableCell>
                       <TableCell className="text-right tabular-nums">{match.kills}</TableCell>

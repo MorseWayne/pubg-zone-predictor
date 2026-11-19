@@ -3,126 +3,21 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
-from functools import lru_cache
+from contextlib import nullcontext
 from pathlib import Path
 
 from app.core.errors import AppError
-from app.services.ingest import IngestService
+from app.services.player_history import PLATFORM, remote_match
 from app.services.pubg_api import PubgApiClient
+from app.services.pubg_cache import MASTERY_TTL, MATCH_TTL, SEASON_TTL
+from app.services.telemetry_files import file_stamp, load_telemetry
 
-PLATFORM = "steam"
 SEASON = re.compile(r"^match\.bro\.(?:official|competitive|ranked)\.(pc-2018-\d+)\.")
 KILL_TYPES = {"LogPlayerKill", "LogPlayerKillV2"}
 
 
-@dataclass(frozen=True)
-class Match:
-    match_id: str
-    created_at: str
-    map_name: str
-    game_mode: str
-    match_type: str
-    telemetry_url: str | None
-
-    def public(self) -> dict:
-        values = asdict(self)
-        del values["telemetry_url"]
-        return values
-
-
-@lru_cache(maxsize=512)
-def remote_match(client: PubgApiClient, match_id: str) -> Match:
-    payload = client.get_match(match_id, PLATFORM)
-    attrs = IngestService._match_attributes(payload)
-    return Match(
-        match_id,
-        attrs.get("createdAt") or "",
-        attrs.get("mapName") or "",
-        attrs.get("gameMode") or "",
-        attrs.get("matchType") or "",
-        IngestService._telemetry_url(payload),
-    )
-
-
-def recent_matches(db: sqlite3.Connection, client: PubgApiClient, name: str, limit: int) -> dict:
-    warnings = []
-    refs = []
-    try:
-        payload = client.get_players_by_names(PLATFORM, [name])
-        player = next(
-            (
-                p
-                for p in payload.get("data", [])
-                if p["attributes"]["name"].casefold() == name.casefold()
-            ),
-            None,
-        )
-        if not player:
-            raise AppError("PLAYER_NOT_FOUND", "未找到这个 Steam 选手", 404)
-        player_id = player["id"]
-        name = player["attributes"]["name"]
-        refs = IngestService._match_refs(player)
-    except AppError as exc:
-        local = db.execute(
-            """
-            SELECT DISTINCT r.player_id FROM match_rosters r JOIN matches m USING(match_id)
-            WHERE r.player_name = ? COLLATE NOCASE AND m.shard_id = 'steam'
-              AND r.player_id LIKE 'account.%'
-        """,
-            (name,),
-        ).fetchall()
-        if len(local) != 1:
-            if exc.details.get("upstream_status") == 404:
-                raise AppError("PLAYER_NOT_FOUND", "未找到这个 Steam 选手", 404) from exc
-            raise
-        player_id = local[0][0]
-        warnings.append("未能核对官方近期列表，当前仅包含此昵称在本地存档的对局。")
-
-    rows = db.execute(
-        """
-        SELECT m.match_id, m.created_at, m.map_name, m.game_mode, m.match_type, m.telemetry_url
-        FROM matches m JOIN match_rosters r USING(match_id)
-        WHERE r.player_id = ? AND m.shard_id = 'steam'
-        ORDER BY m.created_at DESC, m.match_id DESC LIMIT ?
-    """,
-        (player_id, limit),
-    ).fetchall()
-    matches = {r["match_id"]: Match(**dict(r)) for r in rows}
-
-    def lookup(match_id: str) -> Match | None:
-        try:
-            return remote_match(client, match_id)
-        except AppError:
-            return None
-
-    missing = [ref for ref in dict.fromkeys(refs) if ref not in matches]
-    if missing:
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            found = list(pool.map(lookup, missing))
-        failures = found.count(None)
-        if failures:
-            warnings.append(f"有 {failures} 局未取得比赛时间，未纳入排序。")
-        matches.update((m.match_id, m) for m in found if m)
-    ordered = sorted(matches.values(), key=lambda m: (m.created_at or "", m.match_id), reverse=True)
-    selected = ordered[:limit]
-    official_ids = set(refs)
-    archived = sum(m.match_id not in official_ids for m in selected)
-    if refs and archived:
-        warnings.append(f"其中 {archived} 局来自官方近期列表以外的本地存档，期间可能有未存档对局。")
-    elif not refs and selected and not warnings:
-        warnings.append("官方近期列表为空，结果来自本地存档。")
-    return {
-        "player_id": player_id,
-        "player_name": name,
-        "matches": [m.public() for m in selected],
-        "warnings": warnings,
-    }
-
-
-def extract_encounters(events: list[dict], player_id: str) -> dict:
-    opponents: dict[str, dict] = {}
+def _member_encounters(events: list[dict], player_ids: list[str]) -> tuple[str | None, dict]:
+    by_member: dict[str, dict] = {player_id: {} for player_id in player_ids}
     season = None
     start = next((i for i, e in enumerate(events) if e.get("_T") == "LogMatchStart"), 0)
     for index, event in enumerate(events):
@@ -144,11 +39,7 @@ def extract_encounters(events: list[dict], player_id: str) -> dict:
         else:
             continue
         victim = event.get("victim")
-        if (
-            not actor
-            or not victim
-            or player_id not in (actor.get("accountId"), victim.get("accountId"))
-        ):
+        if not actor or not victim:
             continue
         if (
             actor.get("teamId") is None
@@ -156,30 +47,84 @@ def extract_encounters(events: list[dict], player_id: str) -> dict:
             or actor["teamId"] == victim["teamId"]
         ):
             continue
-        outgoing = actor.get("accountId") == player_id
-        other = victim if outgoing else actor
-        other_id = other.get("accountId") or ""
-        is_bot = other_id.startswith("ai.") or str(other.get("type", "")).lower() in {"ai", "bot"}
-        if not other_id or other_id == player_id:
+        actor_id, victim_id = actor.get("accountId"), victim.get("accountId")
+        if actor_id == victim_id:
             continue
-        category = "bot" if is_bot else "human" if other_id.startswith("account.") else "unknown"
-        opponent = opponents.setdefault(
-            other_id,
-            {
-                "player_id": other_id,
-                "name": other.get("name") or other_id,
-                "kind": category,
-                "actions": [],
-            },
-        )
-        label = ("out_" if outgoing else "in_") + action
-        if label not in opponent["actions"]:
-            opponent["actions"].append(label)
-    return {"season": season, "opponents": list(opponents.values())}
+        if actor_id in by_member:
+            _add_opponent(by_member[actor_id], victim, f"out_{action}")
+        if victim_id in by_member:
+            _add_opponent(by_member[victim_id], actor, f"in_{action}")
+    return season, by_member
+
+
+def _add_opponent(opponents: dict, other: dict, action: str) -> None:
+    other_id = other.get("accountId") or ""
+    if not other_id:
+        return
+    is_bot = other_id.startswith("ai.") or str(other.get("type", "")).lower() in {"ai", "bot"}
+    category = "bot" if is_bot else "human" if other_id.startswith("account.") else "unknown"
+    opponent = opponents.setdefault(
+        other_id,
+        {
+            "player_id": other_id,
+            "name": other.get("name") or other_id,
+            "kind": category,
+            "actions": [],
+        },
+    )
+    if action not in opponent["actions"]:
+        opponent["actions"].append(action)
+
+
+def extract_encounters(events: list[dict], player_id: str) -> dict:
+    season, members = _member_encounters(events, [player_id])
+    return {"season": season, "opponents": list(members[player_id].values())}
 
 
 def match_encounters(
     db: sqlite3.Connection, client: PubgApiClient, cache_dir: Path, match_id: str, player_id: str
+) -> dict:
+    return _match_members(db, client, cache_dir, match_id, [player_id])[player_id]
+
+
+def team_encounters(
+    db: sqlite3.Connection,
+    client: PubgApiClient,
+    cache_dir: Path,
+    match_id: str,
+    player_ids: list[str],
+) -> dict:
+    match = db.execute(
+        """
+        SELECT m.game_mode, m.match_type FROM match_rosters r JOIN matches m USING(match_id)
+        WHERE r.match_id = ? AND m.shard_id = 'steam' AND r.team_id != 'unknown'
+          AND m.game_mode IN ('duo', 'duo-fpp', 'squad', 'squad-fpp')
+          AND r.player_id IN (SELECT value FROM json_each(?))
+        GROUP BY r.team_id HAVING COUNT(DISTINCT r.player_id) = ?
+    """,
+        (match_id, json.dumps(player_ids), len(player_ids)),
+    ).fetchone()
+    if not match:
+        raise AppError("NO_SHARED_TEAM", "所选成员未在这场对局中全员同队出场", 400)
+    members = _match_members(db, client, cache_dir, match_id, player_ids)
+    season = members[player_ids[0]]["season"]
+    return {
+        "season": season,
+        "game_mode": match["game_mode"],
+        "match_type": match["match_type"],
+        "opponents": {
+            member: [other["player_id"] for other in row["opponents"] if other["kind"] == "human"]
+            for member, row in members.items()
+        },
+    }
+
+
+def _match_members(
+    db: sqlite3.Connection,
+    client: PubgApiClient,
+    cache_dir: Path,
+    match_id: str,
+    player_ids: list[str],
 ) -> dict:
     row = db.execute(
         """
@@ -188,25 +133,39 @@ def match_encounters(
     """,
         (match_id,),
     ).fetchone()
-    paths = [cache_dir / f"{match_id}.json"]
-    if row and row["cache_path"]:
-        paths.insert(0, Path(row["cache_path"]))
-    path = next((p for p in paths if p.is_file()), None)
-    if path:
-        raw = path.read_bytes()
-    else:
+    path = cache_dir / f"{match_id}.json"
+    if row and row["cache_path"] and Path(row["cache_path"]).is_file():
+        path = Path(row["cache_path"])
+
+    def download() -> bytes:
         url = row["telemetry_url"] if row else None
         url = url or remote_match(client, match_id).telemetry_url
         if not url:
             raise AppError("NO_TELEMETRY", "这场对局没有可用遥测", 404)
-        raw = client.download_telemetry(url)
-    try:
-        events = json.loads(raw)
-    except ValueError as exc:
-        raise AppError("INVALID_TELEMETRY", "无法读取对局遥测", 502) from exc
-    if not isinstance(events, list) or not events:
-        raise AppError("INVALID_TELEMETRY", "缺少对局遥测事件", 502)
-    return extract_encounters([e for e in events if isinstance(e, dict)], player_id)
+        return client.download_telemetry(url)
+
+    cache = client.cache
+    prefix = f"{PLATFORM}/encounters/v1/{match_id}/"
+    lock = cache.match_locks[hash(match_id) % len(cache.match_locks)] if cache else nullcontext()
+    with lock:
+        stamp = file_stamp(path.stat()) if path.is_file() else None
+        found = cache.read(prefix + stamp, player_ids) if cache and stamp else {}
+        missing = [pid for pid in player_ids if pid not in found]
+        if not missing:
+            return found
+        _, events, actual_stamp = load_telemetry(path, download)
+        if actual_stamp != stamp:
+            found = {}
+            missing = player_ids
+        season, members = _member_encounters([e for e in events if isinstance(e, dict)], missing)
+        fetched = {
+            pid: {"season": season, "opponents": list(opponents.values())}
+            for pid, opponents in members.items()
+        }
+        if cache:
+            cache.write(prefix + actual_stamp, fetched, MATCH_TTL)
+        found.update(fetched)
+        return found
 
 
 def summarize_stats(data: dict, ranked: bool) -> dict | None:
@@ -225,19 +184,81 @@ def summarize_stats(data: dict, ranked: bool) -> dict | None:
     }
 
 
+def _season_resource(season: str, mode: str, ranked: bool) -> str:
+    # Ranked returns every mode for one player; ordinary stats are batched by mode.
+    return f"{PLATFORM}/ranked/{season}" if ranked else f"{PLATFORM}/season/{season}/{mode}"
+
+
 def season_stats(
-    client: PubgApiClient, season: str, mode: str, ranked: bool, ids: list[str]
+    client: PubgApiClient,
+    season: str,
+    mode: str,
+    ranked: bool,
+    ids: list[str],
+    *,
+    cached_only: bool = False,
 ) -> dict:
-    if ranked:
-        payload = client.get_ranked_stats(PLATFORM, season, ids[0])
-        data = payload["data"]["attributes"].get("rankedGameModeStats", {})
-        return {ids[0]: summarize_stats(data.get(mode) or {}, True)}
-    payload = client.get_season_batch(PLATFORM, season, mode, ids)
-    rows = payload["data"]
-    results = {}
-    for row in rows if isinstance(rows, list) else [rows]:
-        account = row["relationships"]["player"]["data"]["id"]
-        if account in ids:
-            stats = row["attributes"].get("gameModeStats", {})
-            results[account] = summarize_stats(stats.get(mode) or {}, False)
-    return results
+    def fetch(missing: list[str]) -> dict:
+        try:
+            if ranked:
+                pid = missing[0]
+                response = client.get_ranked_stats(PLATFORM, season, pid)
+                modes = response["data"]["attributes"].get("rankedGameModeStats") or {}
+                return {
+                    pid: {
+                        m: summarize_stats(stats, True)
+                        for m, stats in modes.items()
+                        if stats and stats.get("roundsPlayed")
+                    }
+                }
+            response = client.get_season_batch(PLATFORM, season, mode, missing)
+        except AppError as exc:
+            if client.cache or exc.details.get("upstream_status") != 404:
+                raise
+            return {}
+        rows = response["data"]
+        results = {}
+        for row in rows if isinstance(rows, list) else [rows]:
+            pid = row["relationships"]["player"]["data"]["id"]
+            if pid in missing:
+                data = (row["attributes"].get("gameModeStats") or {}).get(mode) or {}
+                summary = summarize_stats(data, False)
+                results[pid] = {mode: summary} if summary is not None else {}
+        return results
+
+    resource = _season_resource(season, mode, ranked)
+    if cached_only:
+        values = client.cache.read(resource, ids) if client.cache else {}
+    elif client.cache:
+        values = client.cache.resolve(resource, ids, SEASON_TTL, fetch)
+    else:
+        values = fetch(ids)
+    # A cache-only lookup distinguishes a known absence (null) from a miss (no key).
+    return {
+        pid: modes.get(mode) if modes else None
+        for pid, modes in values.items()
+        if cached_only or modes is not None
+    }
+
+
+MASTERY_RESOURCE = f"{PLATFORM}/mastery"
+
+
+def survival_mastery(client: PubgApiClient, player_id: str) -> dict:
+    def fetch(_ids: list[str]) -> dict:
+        try:
+            payload = client.get_survival_mastery(PLATFORM, player_id)
+        except AppError as exc:
+            if exc.details.get("upstream_status") != 404:
+                raise
+            return {}
+        attrs = payload["data"]["attributes"]
+        level = {"tier": attrs.get("tier"), "level": attrs.get("level")}
+        return {player_id: level if any(v is not None for v in level.values()) else None}
+
+    rows = (
+        client.cache.resolve(MASTERY_RESOURCE, [player_id], MASTERY_TTL, fetch)
+        if client.cache
+        else fetch([player_id])
+    )
+    return rows.get(player_id) or {"tier": None, "level": None}

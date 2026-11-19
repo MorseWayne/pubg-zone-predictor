@@ -1,18 +1,20 @@
 import { Banner } from "@astryxdesign/core/Banner";
-import { Button } from "@astryxdesign/core/Button";
-import { Selector } from "@astryxdesign/core/Selector";
+import { usePlayerWorkspace } from "../playerWorkspace";
+import { formatMatchDate, statsWindow, HISTORY_LIMIT } from "../matchRange";
 import { Card } from "@astryxdesign/core/Card";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { TeamOpponentComparison } from "./TeamOpponentComparison";
 import { Skeleton } from "@astryxdesign/core/Skeleton";
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from "@astryxdesign/core/Table";
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, Loader2, RefreshCw, Shield, Skull, Swords, Trophy, Users } from "lucide-react";
+import { BarChart3, Shield, Skull, Swords, Trophy, Users } from "lucide-react";
 import { api, apiErrorMessage, LocalPlayer, TeamDashboard as TeamDashboardData, TeamDashboardPlayer } from "../api";
 
 const SERIES = ["#3987e5", "#199e70", "#c98500", "#008300"];
 const MAX_TEAMMATES = 3;
-const TEAMMATE_CANDIDATE_LIMIT = 50;
-const MATCH_LIMIT = 20;
+
+
 
 type StatCardProps = {
   icon: typeof Trophy;
@@ -25,9 +27,7 @@ function playerLabel(player: Pick<LocalPlayer, "player_id" | "player_name">) {
   return player.player_name || player.player_id.replace(/^account\./, "");
 }
 
-function formatDate(value: string | null) {
-  return value ? new Date(value).toLocaleDateString("zh-CN") : "未知";
-}
+
 
 function pct(value: number, total: number) {
   return total > 0 ? Math.round((value / total) * 100) : 0;
@@ -70,7 +70,7 @@ function TeamBarChart({ players }: { players: TeamDashboardPlayer[] }) {
     <div className="space-y-4" role="img" aria-label="队友伤害和击杀对比图">
       {players.map((player, index) => {
         const color = SERIES[index] ?? SERIES[SERIES.length - 1];
-        const damageWidth = `${Math.max(3, (player.damage / maxDamage) * 100)}%`;
+        const damageWidth = `${Math.max(player.damage > 0 ? 3 : 0, (player.damage / maxDamage) * 100)}%`;
         const killsWidth = `${Math.max(player.kills > 0 ? 3 : 0, (player.kills / maxKills) * 100)}%`;
         return (
           <div
@@ -113,57 +113,20 @@ function LoadingCards() {
 }
 
 export function TeamDashboard() {
-  const [players, setPlayers] = useState<LocalPlayer[]>([]);
-  const [selectedPlayerId, setSelectedPlayerId] = useState(() => localStorage.getItem("pzp_team_player") || "");
-  const [selectedTeammates, setSelectedTeammates] = useState<string[]>(() => {
-    const saved = localStorage.getItem("pzp_team_teammates");
-    if (!saved) return [];
-    try {
-      return JSON.parse(saved);
-    } catch {
-      return [];
-    }
-  });
+  const { player, statMatchIds, syncing, matchDate, rangeLabel } = usePlayerWorkspace();
+  const selectedPlayerId = player.player_id;
+  const [selectedTeammates, setSelectedTeammates] = useState<string[]>([]);
+  const [teammateQuery, setTeammateQuery] = useState("");
   const [dashboard, setDashboard] = useState<TeamDashboardData | null>(null);
-  const [isLoadingPlayers, setIsLoadingPlayers] = useState(true);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedIds = useMemo(
-    () => dashboard?.selected_players.map((player) => player.player_id) ?? [],
-    [dashboard],
-  );
   const totals = useMemo(() => teamTotals(dashboard?.selected_players ?? []), [dashboard]);
-  const hasPlayers = players.length > 0;
-
-  const refreshPlayers = async () => {
-    setError(null);
-    setIsLoadingPlayers(true);
-    try {
-      const payload = await api.listLocalPlayers(100);
-      setPlayers(payload.players);
-      setSelectedPlayerId((current) => {
-        if (payload.players.some((player) => player.player_id === current)) return current;
-        return payload.players[0]?.player_id || "";
-      });
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setIsLoadingPlayers(false);
-    }
-  };
 
   useEffect(() => {
-    void refreshPlayers();
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem("pzp_team_player", selectedPlayerId);
-    localStorage.setItem("pzp_team_teammates", JSON.stringify(selectedTeammates));
-  }, [selectedPlayerId, selectedTeammates]);
-
-  useEffect(() => {
-    if (!selectedPlayerId) {
+    if (!statMatchIds.length) {
+      setError(null);
+      setIsLoadingDashboard(false);
       setDashboard(null);
       return;
     }
@@ -175,15 +138,16 @@ export function TeamDashboard() {
         const payload = await api.getTeamDashboard({
           player_id: selectedPlayerId,
           teammate_ids: selectedTeammates,
-          match_limit: MATCH_LIMIT,
-          teammate_candidate_limit: TEAMMATE_CANDIDATE_LIMIT,
+          ...statsWindow(matchDate, statMatchIds),
+          teammate_candidate_limit: matchDate ? undefined : HISTORY_LIMIT,
         });
         if (cancelled) return;
         setDashboard(payload);
-        setSelectedTeammates((current) => {
-          if (current.length > 0) return current.filter((id) => payload.teammates.some((player) => player.player_id === id));
-          return payload.teammates.slice(0, MAX_TEAMMATES).map((player) => player.player_id);
+        setSelectedTeammates(current => {
+          const available = current.filter(id => payload.teammates.some(p => p.player_id === id));
+          return available.length === current.length ? current : available;
         });
+
       } catch (err) {
         if (!cancelled) {
           setDashboard(null);
@@ -197,7 +161,7 @@ export function TeamDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPlayerId, selectedTeammates.join("|")]);
+  }, [selectedPlayerId, selectedTeammates.join("|"), statMatchIds, matchDate]);
 
   const toggleTeammate = (playerId: string) => {
     setSelectedTeammates((current) => {
@@ -206,6 +170,12 @@ export function TeamDashboard() {
       return [...current, playerId];
     });
   };
+
+  const teammates = (dashboard?.teammates ?? []).filter(p => p.player_id.startsWith("account."));
+  const query = teammateQuery.trim().toLowerCase();
+  const visibleTeammates = teammates.filter(p => selectedTeammates.includes(p.player_id) ||
+    playerLabel(p).toLowerCase().includes(query) || p.player_id.toLowerCase().includes(query));
+  const comparing = selectedTeammates.length > 0;
 
   return (
     <div className="flex h-full w-full flex-col gap-4 overflow-auto bg-body p-4 text-primary">
@@ -216,76 +186,49 @@ export function TeamDashboard() {
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold text-primary">团队数据看板</h1>
-            <p className="truncate text-xs text-secondary">从个人最近 50 场四排筛队友，选择 20 场统计协同表现</p>
+            <p className="truncate text-xs text-secondary">{player.player_name} · {rangeLabel}中的组队表现，勾选队友可横向对比全员同队场次</p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Selector
-            label="选择个人"
-            isLabelHidden
-            placeholder="选择个人"
-            value={selectedPlayerId}
-            onChange={(value) => {
-              setSelectedPlayerId(value);
-              setSelectedTeammates([]);
-            }}
-            isDisabled={isLoadingPlayers || !hasPlayers}
-            containerClassName="w-[280px]"
-            options={players.map((player) => ({
-              value: player.player_id,
-              label: `${playerLabel(player)} · ${player.match_count} 场`,
-            }))}
-          />
-          <Button
-            onClick={refreshPlayers}
-            label="刷新"
-            variant="secondary"
-            isDisabled={isLoadingPlayers}
-            icon={
-              isLoadingPlayers ? (
-                <Loader2 data-icon="inline-start" className="animate-spin" />
-              ) : (
-                <RefreshCw data-icon="inline-start" />
-              )
-            }
-          />
-        </div>
+
       </div>
 
       {error && (
         <Banner status="error" role="alert" title="团队数据加载失败" description={error} />
       )}
 
-      {!isLoadingPlayers && !hasPlayers && (
-        <Banner status="info" title="还没有本地玩家数据" description="先在“数据采集”里按玩家采集 squad/squad-fpp 对局，再回到这里看团队分析。" />
-      )}
+      {!statMatchIds.length && <Banner status="info"
+        title={syncing ? "正在准备当前玩家的对局" : matchDate ? `${matchDate} 没有可分析的对局` : "该玩家暂无可分析的近期对局"} />}
 
       {isLoadingDashboard ? (
         <LoadingCards />
       ) : dashboard ? (
         <>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-            <StatCard icon={Shield} label="统计场次" value={`${totals.matches}`} sublabel="最近 20 场同队样本" />
+          {dashboard.matches.length > 0 && <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <StatCard icon={Shield} label="统计场次" value={`${totals.matches}`} sublabel={`${rangeLabel}中的组队样本`} />
             <StatCard icon={Trophy} label="吃鸡 / 前三" value={`${pct(totals.wins, totals.matches)}% / ${pct(totals.top3, totals.matches)}%`} sublabel={`${totals.wins} 胜 · ${totals.top3} 次前三`} />
-            <StatCard icon={Skull} label="团队淘汰" value={`${totals.kills}`} sublabel={`KD ${totals.deaths > 0 ? (totals.kills / totals.deaths).toFixed(1) : totals.kills.toFixed(1)}`} />
+            <StatCard icon={Skull} label="团队淘汰" value={`${totals.kills}`} sublabel={`KD ${totals.deaths > 0 ? (totals.kills / totals.deaths).toFixed(1) : "—"}`} />
             <StatCard icon={Swords} label="团队伤害" value={`${Math.round(totals.damage)}`} sublabel={`场均 ${totals.matches > 0 ? Math.round(totals.damage / totals.matches) : 0}`} />
-          </div>
+          </div>}
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
             <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
               <header className="grid gap-1.5 px-4 pt-4">
-                <h3 className="font-semibold text-sm">最近 50 场四排队友</h3>
+                <h3 className="font-semibold text-sm">选择对比队员</h3>
               </header>
               <div className="pb-5 space-y-2 px-4">
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <div className="text-xs text-secondary">个人</div>
                   <div className="mt-1 font-semibold text-primary">{playerLabel(dashboard.primary_player)}</div>
                 </div>
-                {dashboard.teammates.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-border p-4 text-sm text-secondary">最近对局里还没识别到同队队友。</div>
+                <p className="text-xs text-secondary">从{rangeLabel}的队友中勾选 1–3 人，与当前玩家比较。</p>
+                {teammates.length > 0 && <TextInput label="查找队友" isLabelHidden
+                  placeholder="搜索队友昵称或账号 ID" value={teammateQuery} onChange={setTeammateQuery} />}
+                {query && teammates.length > 0 && !visibleTeammates.length && <p className="text-sm text-secondary">没有匹配的队友。</p>}
+                {teammates.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border p-4 text-sm text-secondary">这个范围内还没识别到同队队友。</div>
                 ) : (
-                  dashboard.teammates.map((player) => {
-                    const checked = selectedIds.includes(player.player_id);
+                  <div className="flex max-h-80 flex-col gap-2 overflow-y-auto">{visibleTeammates.map((player) => {
+                    const checked = selectedTeammates.includes(player.player_id);
                     const disabled = !checked && selectedTeammates.length >= MAX_TEAMMATES;
                     return (
                       <CheckboxInput
@@ -297,21 +240,28 @@ export function TeamDashboard() {
                         onChange={() => toggleTeammate(player.player_id)}
                       />
                     );
-                  })
+                  })}</div>
                 )}
               </div>
             </Card>
 
-            <div className="grid min-w-0 grid-cols-1 gap-4 2xl:grid-cols-2">
-              <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
+            <div className="grid min-w-0 content-start gap-4">
+              {dashboard.matches.length > 0 && <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
                 <header className="grid gap-1.5 px-4 pt-4">
                   <h3 className="font-semibold flex items-center gap-2 text-sm"><BarChart3 className="size-4" /> 输出对比</h3>
                 </header>
                 <div className="pb-5 px-4">
                   <TeamBarChart players={dashboard.selected_players} />
                 </div>
-              </Card>
+              </Card>}
 
+              {comparing ? (
+                <TeamOpponentComparison
+                  key={JSON.stringify([dashboard.selected_players.map(p => p.player_id), dashboard.matches.map(m => m.match_id)])}
+                  members={dashboard.selected_players}
+                  matchIds={dashboard.matches.map(m => m.match_id)}
+                />
+              ) : (
               <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
                 <header className="grid gap-1.5 px-4 pt-4">
                   <h3 className="font-semibold text-sm">成员明细</h3>
@@ -348,12 +298,13 @@ export function TeamDashboard() {
                   </Table>
                 </div>
               </Card>
+              )}
             </div>
           </div>
 
           <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
             <header className="grid gap-1.5 px-4 pt-4">
-              <h3 className="font-semibold text-sm">最近同队对局</h3>
+              <h3 className="font-semibold text-sm">同队对局</h3>
             </header>
             <div className="pb-5 px-4">
               <Table>
@@ -370,7 +321,7 @@ export function TeamDashboard() {
                 <TableBody>
                   {dashboard.matches.map((match) => (
                     <TableRow key={match.match_id}>
-                      <TableCell>{formatDate(match.created_at)}</TableCell>
+                      <TableCell>{formatMatchDate(match.created_at, !!matchDate)}</TableCell>
                       <TableCell>{match.map_name.replace(/_Main$/, "")}</TableCell>
                       <TableCell className="max-w-[420px] truncate">{match.players.map(playerLabel).join(" / ")}</TableCell>
                       <TableCell className="text-right tabular-nums">{match.team_rank ?? "-"}</TableCell>

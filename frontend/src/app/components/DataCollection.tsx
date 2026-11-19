@@ -10,9 +10,11 @@ import { NumberInput } from "@astryxdesign/core/NumberInput";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from "@astryxdesign/core/Table";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { mapDisplayName } from "../matchDisplay";
 import { cn } from "../../lib/utils";
-import { useNavigate } from "react-router";
+import { usePlayerWorkspace } from "../playerWorkspace";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   AlertCircle,
   ArrowDown,
@@ -41,23 +43,13 @@ type MatchStatusFilter = "all" | "completed" | "failed" | "pending";
 const DATA_COLLECTION_STORAGE_KEY = "pubg-zone-predictor:data-collection";
 const REPLAY_PARSE_PROFILE = "full";
 const REPLAY_POSITION_INTERVAL_SECONDS = 5;
-const PUBG_MAP_DISPLAY_NAMES: Record<string, string> = {
-  Baltic_Main: "Erangel",
-  Erangel_Main: "Erangel",
-  Chimera_Main: "Paramo",
-  Desert_Main: "Miramar",
-  Savage_Main: "Sanhok",
-  DihorOtok_Main: "Vikendi",
-  Summerland_Main: "Karakin",
-  Tiger_Main: "Taego",
-  Kiki_Main: "Deston",
-  Neon_Main: "Rondo",
-};
+
 
 type PersistedCollectionState = {
   limit?: number;
   playerQuery?: string;
   selectedPlayerNames?: string[];
+  ownerId?: string;
   currentJobId?: string | null;
   matchSearch?: string;
   matchMapFilter?: string;
@@ -97,6 +89,7 @@ function readPersistedCollectionState(): PersistedCollectionState {
     if (!rawValue) return {};
     const parsedValue = JSON.parse(rawValue) as Record<string, unknown>;
     return {
+      ownerId: typeof parsedValue.ownerId === "string" ? parsedValue.ownerId : undefined,
       limit: clampLimit(parsedValue.limit),
       playerQuery: typeof parsedValue.playerQuery === "string" ? parsedValue.playerQuery : undefined,
       selectedPlayerNames: Array.isArray(parsedValue.selectedPlayerNames)
@@ -145,10 +138,7 @@ function matchSampleCount(match: IngestMatch) {
   return match.circle_phase_count + match.position_sample_count + match.life_event_count;
 }
 
-function mapDisplayName(mapName: string | null) {
-  if (!mapName) return "未知地图";
-  return PUBG_MAP_DISPLAY_NAMES[mapName] ?? mapName.replace(/_Main$/, "");
-}
+
 
 function jobTypeLabel(jobType: string) {
   if (jobType === "sample_matches") return "随机样本";
@@ -186,14 +176,35 @@ function matchSortValue(match: IngestMatch, sortKey: MatchSortKey): string | num
   return match.match_id.toLowerCase();
 }
 
+const ArchivedReplay = lazy(async () => ({
+  default: (await import("./PlayerMatchAnalysis")).PlayerMatchAnalysis,
+}));
+
 export function DataCollection() {
+  const [params, setParams] = useSearchParams();
+  const archiveId = params.get("replay");
+  if (archiveId) return <>
+    <div className="flex items-center gap-3 p-2 text-sm">
+      <Button label="返回数据采集" onClick={() => setParams({})} size="sm" />
+      采集记录回放
+    </div>
+    <Suspense fallback={<p role="status">正在打开回放…</p>}>
+      <ArchivedReplay key={archiveId} archiveId={archiveId} />
+    </Suspense>
+  </>;
+  return <CollectionForm />;
+}
+
+function CollectionForm() {
+  const { player } = usePlayerWorkspace();
   const navigate = useNavigate();
   const [confirmClear, setConfirmClear] = useState(false);
   const [initialCollectionState] = useState(readPersistedCollectionState);
   const [limit, setLimit] = useState(initialCollectionState.limit ?? 20);
   const [playerQuery, setPlayerQuery] = useState(initialCollectionState.playerQuery ?? "");
   const [selectedPlayerNames, setSelectedPlayerNames] = useState<string[]>(
-    initialCollectionState.selectedPlayerNames ?? [],
+    initialCollectionState.ownerId && initialCollectionState.ownerId !== player.player_id
+      ? [player.player_name] : initialCollectionState.selectedPlayerNames ?? [player.player_name],
   );
   const [playerCandidates, setPlayerCandidates] = useState<PlayerSearchResult[]>([]);
   const [isSearchingPlayer, setIsSearchingPlayer] = useState(false);
@@ -336,6 +347,7 @@ export function DataCollection() {
 
   useEffect(() => {
     writePersistedCollectionState({
+      ownerId: player.player_id,
       limit,
       playerQuery,
       selectedPlayerNames,
@@ -456,7 +468,7 @@ export function DataCollection() {
       const job = await api.startPlayerIngest({
         platform: "steam",
         playerNames: selectedPlayerNames,
-        gameMode: "squad",
+        gameMode: "all",
         maxMatchesPerPlayer: limit,
         parseProfile: REPLAY_PARSE_PROFILE,
         positionIntervalSeconds: REPLAY_POSITION_INTERVAL_SECONDS,
@@ -800,7 +812,7 @@ export function DataCollection() {
                   ))}
                 </div>
                 {playerSearchMessage && <div className="text-xs text-yellow-500">{playerSearchMessage}</div>}
-                <div className="text-xs text-secondary">已选择 {selectedPlayerNames.length} / 10，平台 steam，模式 squad。</div>
+                <div className="text-xs text-secondary">已选择 {selectedPlayerNames.length} / 10，Steam，各玩家按最近对局采集，包含排位。</div>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -1280,7 +1292,7 @@ export function DataCollection() {
                         <Button
                           type="button"
                           onClick={() =>
-                            navigate(`/analysis?matches=${encodeURIComponent(match.match_id)}`)
+                            navigate(`/collection?replay=${encodeURIComponent(match.match_id)}`)
                           }
                           label="回放"
                           variant="ghost"

@@ -1,0 +1,63 @@
+.opp-strength {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+.opp-median,
+.opp-distribution {
+  padding: 1.25rem 1.5rem;
+}
+.opp-median {
+  background: linear-gradient(112deg, rgb(45 212 191 / 0.08), transparent 78%);
+}
+.opp-directory {
+  container-type: inline-size;
+}
+.opp-columns,
+.opp-row {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.5fr) minmax(10rem, 1.4fr) minmax(4rem, 0.55fr) minmax(
+      5rem,
+      0.7fr
+    ) minmax(8rem, 1fr);
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.8rem 1rem;
+}
+.opp-stat {
+  font-size: 0.875rem;
+}
+.opp-stat small,
+.opp-mobile-label {
+  display: block;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+.opp-mobile-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+}
+@container (max-width: 47rem) {
+  .opp-columns {
+    display: none;
+  }
+  .opp-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+  .opp-identity {
+    grid-column: 1 / -1;
+  }
+  .opp-outcomes {
+    grid-column: 1 / -1;
+  }
+  .opp-mobile-label {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+    margin-bottom: 0.2rem;
+  }
+}

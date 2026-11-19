@@ -222,7 +222,9 @@ class FakeIngestService:
             ),
         ]
 
-    def list_matches(self, *, limit: int) -> list[IngestMatchAsset]:
+    def list_matches(
+        self, *, limit: int, player_id: str | None = None, match_date=None
+    ) -> list[IngestMatchAsset]:
         assert limit == 25
         return [
             IngestMatchAsset(
@@ -265,6 +267,7 @@ class FakeIngestService:
         teammate_ids: list[str],
         match_limit: int,
         teammate_candidate_limit: int,
+        match_ids: list[str] | None = None,
     ) -> TeamDashboard:
         assert player_id == "account.1"
         assert teammate_ids == ["account.2"]
@@ -319,7 +322,9 @@ class FakeIngestService:
             ],
         )
 
-    def get_personal_trend(self, player_id: str, *, match_limit: int) -> PersonalTrend:
+    def get_personal_trend(
+        self, player_id: str, *, match_limit: int, match_ids: list[str] | None = None,
+    ) -> PersonalTrend:
         assert player_id == "account.1"
         assert match_limit == 20
         early = PersonalTrendWindow(

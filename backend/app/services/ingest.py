@@ -5,15 +5,24 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import quote, unquote
 from uuid import uuid4
 
 from app.core.errors import AppError
 from app.db.repository import SQLiteRepository
-from app.services.pubg_api import PubgApiClient
+from app.services.player_history import PLATFORM, archived_matches, recent_matches, remote_match
+from app.services.pubg_api import (
+    PubgApiClient,
+    entity_attributes,
+    entity_match_refs,
+    match_attributes,
+    match_telemetry_url,
+)
+from app.services.telemetry_files import load_telemetry
 from app.services.telemetry_parser import (
     PARSE_PROFILE_FULL,
     PARSE_PROFILE_HOTSPOT_LIGHT,
@@ -37,6 +46,14 @@ KNOCKDOWN_EVENT_TYPE = "LogPlayerMakeGroggy"
 DAMAGE_EVENT_TYPE = "LogPlayerTakeDamage"
 EXCLUDED_SAMPLE_MATCH_TYPES = {"custom", "competitive"}
 logger = logging.getLogger(__name__)
+_replay_prepare_lock = Lock()
+
+
+_REPLAY_STATE_COLUMNS = """
+    ta.replay_schema_version,
+    EXISTS (SELECT 1 FROM player_life_events e WHERE e.match_id=m.match_id
+            AND e.event_type='LogPlayerTakeDamage' AND e.damage IS NULL) AS missing_damage
+"""
 
 
 @dataclass(frozen=True)
@@ -77,6 +94,20 @@ class IngestMatchAsset:
     circle_phase_count: int
     position_sample_count: int
     life_event_count: int
+    replay_schema_version: int = 0
+    missing_damage: bool = False
+
+    @property
+    def replay_ready(self) -> bool:
+        return (
+            self.telemetry_parse_status == "completed"
+            and self.telemetry_parse_profile == ANALYSIS_PARSE_PROFILE
+            and self.telemetry_position_interval_seconds == ANALYSIS_POSITION_INTERVAL_SECONDS
+            and (self.position_sample_count > 0 or self.life_event_count > 0)
+            and self.replay_schema_version >= ANALYSIS_REPLAY_SCHEMA_VERSION
+            and not self.missing_damage
+        )
+
 
 
 @dataclass(frozen=True)
@@ -256,9 +287,31 @@ class IngestService:
     def __post_init__(self) -> None:
         self.repo = SQLiteRepository(self.connection)
 
-    def list_matches(self, *, limit: int = 50) -> list[IngestMatchAsset]:
+    def player_day_match_ids(self, player_id: str, match_date: date) -> list[str]:
+        return [
+            m.match_id for m in archived_matches(self.connection, player_id, match_date=match_date)
+        ]
+
+    def list_matches(
+        self, *, limit: int = 50, player_id: str | None = None, match_date: date | None = None
+    ) -> list[IngestMatchAsset]:
+        roster = (
+            "JOIN match_rosters r ON r.match_id = m.match_id AND r.player_id = ? "
+            "AND m.shard_id = 'steam'"
+            if player_id
+            else ""
+        )
+        day_filter = ""
+        params: tuple = (player_id,) if player_id else ()
+        if match_date is not None:
+            if not player_id:
+                raise AppError("PLAYER_REQUIRED", "按日期查看对局需要指定玩家", 422)
+            ids = self.player_day_match_ids(player_id, match_date)
+            day_filter = "WHERE m.match_id IN (SELECT value FROM json_each(?))"
+            params += (json.dumps(ids),)
+            limit = len(ids)
         rows = self.repo.fetch_all(
-            """
+            f"""
             SELECT
                 m.match_id,
                 m.map_name,
@@ -275,6 +328,7 @@ class IngestService:
                 ta.parse_profile AS telemetry_parse_profile,
                 ta.position_interval_seconds AS telemetry_position_interval_seconds,
                 ta.parsed_at AS telemetry_parsed_at,
+                {_REPLAY_STATE_COLUMNS},
                 (
                     SELECT COUNT(*)
                     FROM circle_phases cp
@@ -291,11 +345,13 @@ class IngestService:
                     WHERE le.match_id = m.match_id
                 ) AS life_event_count
             FROM matches m
+            {roster}
             LEFT JOIN telemetry_assets ta ON ta.match_id = m.match_id
-            ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+            {day_filter}
+            ORDER BY julianday(m.created_at) DESC, m.match_id DESC
             LIMIT ?
             """,
-            (limit,),
+            (*params, limit),
         )
         return [self._match_asset(row) for row in rows]
 
@@ -336,28 +392,32 @@ class IngestService:
         teammate_ids: list[str] | None = None,
         match_limit: int = TEAM_DASHBOARD_MATCH_LIMIT,
         teammate_candidate_limit: int = TEAMMATE_CANDIDATE_LIMIT,
+        match_ids: list[str] | None = None,
     ) -> TeamDashboard:
         primary_player = self._get_local_player(player_id)
         teammates = self._team_dashboard_teammates(
             player_id,
             match_limit=teammate_candidate_limit,
+            match_ids=match_ids,
         )
         selected_teammate_ids = self._normalize_team_dashboard_teammates(
             teammate_ids,
             player_id,
         )
-        if not selected_teammate_ids:
+        if match_ids is None and not selected_teammate_ids:
             selected_teammate_ids = [
                 teammate.player_id
                 for teammate in teammates[:MAX_TEAM_DASHBOARD_TEAMMATES]
             ]
-        selected_ids = [player_id, *selected_teammate_ids[:MAX_TEAM_DASHBOARD_TEAMMATES]]
+        displayed_teammates = selected_teammate_ids or [p.player_id for p in teammates]
+        selected_ids = [player_id, *displayed_teammates]
         selected_players = self._team_dashboard_player_stats(
             player_id,
             selected_ids,
             match_limit=match_limit,
             teammate_ids=selected_teammate_ids,
             candidate_limit=teammate_candidate_limit,
+            match_ids=match_ids,
         )
         matches = self._team_dashboard_matches(
             player_id,
@@ -365,6 +425,7 @@ class IngestService:
             match_limit=match_limit,
             teammate_ids=selected_teammate_ids,
             candidate_limit=teammate_candidate_limit,
+            match_ids=match_ids,
         )
         return TeamDashboard(
             primary_player=primary_player,
@@ -378,10 +439,11 @@ class IngestService:
         player_id: str,
         *,
         match_limit: int = TEAM_DASHBOARD_MATCH_LIMIT,
+        match_ids: list[str] | None = None,
     ) -> PersonalTrend:
         primary_player = self._get_local_player(player_id)
         rows = self.repo.fetch_all(
-            """
+            f"""
             WITH player_matches AS (
                 SELECT m.match_id, m.map_name, m.game_mode, m.created_at, mr.team_id, mt.team_rank
                 FROM match_rosters mr
@@ -389,35 +451,35 @@ class IngestService:
                 LEFT JOIN match_teams mt
                     ON mt.match_id = mr.match_id
                     AND mt.team_id = mr.team_id
-                WHERE mr.player_id = ?
-                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                WHERE mr.player_id = ? {_window_filter(match_ids)}
+                ORDER BY julianday(m.created_at) DESC, m.match_id DESC
                 LIMIT ?
             ),
             kills AS (
                 SELECT match_id, COUNT(*) AS kills
                 FROM player_life_events
-                WHERE actor_player_id = ?
+                WHERE match_id IN (SELECT match_id FROM player_matches) AND actor_player_id = ?
                     AND event_type IN (?, ?)
                 GROUP BY match_id
             ),
             knocks AS (
                 SELECT match_id, COUNT(*) AS knocks
                 FROM player_life_events
-                WHERE actor_player_id = ?
+                WHERE match_id IN (SELECT match_id FROM player_matches) AND actor_player_id = ?
                     AND event_type = ?
                 GROUP BY match_id
             ),
             deaths AS (
                 SELECT match_id, COUNT(*) AS deaths
                 FROM player_life_events
-                WHERE victim_player_id = ?
+                WHERE match_id IN (SELECT match_id FROM player_matches) AND victim_player_id = ?
                     AND event_type IN (?, ?)
                 GROUP BY match_id
             ),
             damage AS (
                 SELECT match_id, SUM(damage) AS damage
                 FROM player_life_events
-                WHERE actor_player_id = ?
+                WHERE match_id IN (SELECT match_id FROM player_matches) AND actor_player_id = ?
                     AND event_type = ?
                     AND damage IS NOT NULL
                 GROUP BY match_id
@@ -437,10 +499,11 @@ class IngestService:
             LEFT JOIN knocks ON knocks.match_id = pm.match_id
             LEFT JOIN deaths ON deaths.match_id = pm.match_id
             LEFT JOIN damage ON damage.match_id = pm.match_id
-            ORDER BY COALESCE(pm.created_at, '') DESC, pm.match_id DESC
+            ORDER BY julianday(pm.created_at) DESC, pm.match_id DESC
             """,
             (
                 player_id,
+                *_window_params(match_ids),
                 match_limit,
                 player_id,
                 *sorted(ELIMINATION_EVENT_TYPES),
@@ -492,16 +555,17 @@ class IngestService:
         player_id: str,
         *,
         match_limit: int,
+        match_ids: list[str] | None,
     ) -> list[TeamDashboardPlayer]:
         rows = self.repo.fetch_all(
-            """
+            f"""
             WITH primary_matches AS (
                 SELECT m.match_id, mr.team_id, m.created_at
                 FROM match_rosters mr
                 JOIN matches m ON m.match_id = mr.match_id
                 WHERE mr.player_id = ?
-                    AND m.game_mode IN ('squad', 'squad-fpp')
-                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                    {_team_window_filter(match_ids)}
+                ORDER BY julianday(m.created_at) DESC, m.match_id DESC
                 LIMIT ?
             )
             SELECT tr.player_id
@@ -516,9 +580,12 @@ class IngestService:
             """,
             (
                 player_id,
+                *_window_params(match_ids),
                 match_limit,
                 player_id,
-                match_limit,
+                match_limit * MAX_TEAM_DASHBOARD_TEAMMATES
+                if match_ids is not None
+                else match_limit,
             ),
         )
         teammate_ids = [row["player_id"] for row in rows]
@@ -528,6 +595,7 @@ class IngestService:
             match_limit=match_limit,
             teammate_ids=[],
             candidate_limit=match_limit,
+            match_ids=match_ids,
         )
         by_id = {player.player_id: player for player in stats}
         return [by_id[player_id] for player_id in teammate_ids if player_id in by_id]
@@ -540,24 +608,12 @@ class IngestService:
         match_limit: int,
         teammate_ids: list[str],
         candidate_limit: int,
+        match_ids: list[str] | None,
     ) -> list[TeamDashboardPlayer]:
         if not player_ids:
             return []
         placeholders = ", ".join("?" for _ in player_ids)
-        teammate_placeholders = ", ".join("?" for _ in teammate_ids)
-        teammate_filter = (
-            f"""
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM match_rosters selected_teammate
-                    WHERE selected_teammate.match_id = primary_matches.match_id
-                        AND selected_teammate.team_id = primary_matches.team_id
-                        AND selected_teammate.player_id IN ({teammate_placeholders})
-                )
-            """
-            if teammate_ids
-            else ""
-        )
+        teammate_filter = _teammate_filter(teammate_ids, require_all=match_ids is not None)
         rows = self.repo.fetch_all(
             f"""
             WITH primary_matches AS (
@@ -565,8 +621,8 @@ class IngestService:
                 FROM match_rosters mr
                 JOIN matches m ON m.match_id = mr.match_id
                 WHERE mr.player_id = ?
-                    AND m.game_mode IN ('squad', 'squad-fpp')
-                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                    {_team_window_filter(match_ids)}
+                ORDER BY julianday(m.created_at) DESC, m.match_id DESC
                 LIMIT ?
             ),
             stat_matches AS (
@@ -574,35 +630,11 @@ class IngestService:
                 FROM primary_matches
                 {teammate_filter}
                 ORDER BY
-                    COALESCE(primary_matches.created_at, '') DESC,
+                    julianday(primary_matches.created_at) DESC,
                     primary_matches.match_id DESC
                 LIMIT ?
             ),
-            kills AS (
-                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS kills
-                FROM player_life_events
-                WHERE event_type IN (?, ?)
-                GROUP BY match_id, actor_player_id
-            ),
-            knocks AS (
-                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS knocks
-                FROM player_life_events
-                WHERE event_type = ?
-                GROUP BY match_id, actor_player_id
-            ),
-            deaths AS (
-                SELECT match_id, victim_player_id AS player_id, COUNT(*) AS deaths
-                FROM player_life_events
-                WHERE event_type IN (?, ?)
-                GROUP BY match_id, victim_player_id
-            ),
-            damage AS (
-                SELECT match_id, actor_player_id AS player_id, SUM(damage) AS damage
-                FROM player_life_events
-                WHERE event_type = ?
-                    AND damage IS NOT NULL
-                GROUP BY match_id, actor_player_id
-            )
+            {_team_event_totals(match_ids is not None)}
             SELECT
                 tr.player_id,
                 COALESCE(MAX(tr.player_name), tr.player_id) AS player_name,
@@ -610,10 +642,10 @@ class IngestService:
                 SUM(CASE WHEN mt.team_rank = 1 THEN 1 ELSE 0 END) AS wins,
                 SUM(CASE WHEN mt.team_rank <= 3 THEN 1 ELSE 0 END) AS top3,
                 AVG(mt.team_rank) AS avg_rank,
-                COALESCE(SUM(kills.kills), 0) AS kills,
-                COALESCE(SUM(knocks.knocks), 0) AS knocks,
+                COALESCE(SUM(dealt.kills), 0) AS kills,
+                COALESCE(SUM(dealt.knocks), 0) AS knocks,
                 COALESCE(SUM(deaths.deaths), 0) AS deaths,
-                COALESCE(SUM(damage.damage), 0) AS damage
+                COALESCE(SUM(dealt.damage), 0) AS damage
             FROM stat_matches pm
             JOIN match_rosters tr
                 ON tr.match_id = pm.match_id
@@ -621,30 +653,21 @@ class IngestService:
             LEFT JOIN match_teams mt
                 ON mt.match_id = pm.match_id
                 AND mt.team_id = pm.team_id
-            LEFT JOIN kills
-                ON kills.match_id = tr.match_id
-                AND kills.player_id = tr.player_id
-            LEFT JOIN knocks
-                ON knocks.match_id = tr.match_id
-                AND knocks.player_id = tr.player_id
-            LEFT JOIN deaths
-                ON deaths.match_id = tr.match_id
-                AND deaths.player_id = tr.player_id
-            LEFT JOIN damage
-                ON damage.match_id = tr.match_id
-                AND damage.player_id = tr.player_id
+            LEFT JOIN dealt ON dealt.match_id = tr.match_id AND dealt.player_id = tr.player_id
+            LEFT JOIN deaths ON deaths.match_id = tr.match_id AND deaths.player_id = tr.player_id
             WHERE tr.player_id IN ({placeholders})
             GROUP BY tr.player_id
             """,
             (
                 player_id,
+                *_window_params(match_ids),
                 candidate_limit,
                 *teammate_ids,
                 match_limit,
                 *sorted(ELIMINATION_EVENT_TYPES),
                 KNOCKDOWN_EVENT_TYPE,
-                *sorted(ELIMINATION_EVENT_TYPES),
                 DAMAGE_EVENT_TYPE,
+                *sorted(ELIMINATION_EVENT_TYPES),
                 *player_ids,
             ),
         )
@@ -662,24 +685,12 @@ class IngestService:
         match_limit: int,
         teammate_ids: list[str],
         candidate_limit: int,
+        match_ids: list[str] | None,
     ) -> list[TeamDashboardMatch]:
         if not player_ids:
             return []
         placeholders = ", ".join("?" for _ in player_ids)
-        teammate_placeholders = ", ".join("?" for _ in teammate_ids)
-        teammate_filter = (
-            f"""
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM match_rosters selected_teammate
-                    WHERE selected_teammate.match_id = primary_matches.match_id
-                        AND selected_teammate.team_id = primary_matches.team_id
-                        AND selected_teammate.player_id IN ({teammate_placeholders})
-                )
-            """
-            if teammate_ids
-            else ""
-        )
+        teammate_filter = _teammate_filter(teammate_ids, require_all=match_ids is not None)
         rows = self.repo.fetch_all(
             f"""
             WITH primary_matches AS (
@@ -687,8 +698,8 @@ class IngestService:
                 FROM match_rosters mr
                 JOIN matches m ON m.match_id = mr.match_id
                 WHERE mr.player_id = ?
-                    AND m.game_mode IN ('squad', 'squad-fpp')
-                ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC
+                    {_team_window_filter(match_ids)}
+                ORDER BY julianday(m.created_at) DESC, m.match_id DESC
                 LIMIT ?
             ),
             stat_matches AS (
@@ -696,35 +707,11 @@ class IngestService:
                 FROM primary_matches
                 {teammate_filter}
                 ORDER BY
-                    COALESCE(primary_matches.created_at, '') DESC,
+                    julianday(primary_matches.created_at) DESC,
                     primary_matches.match_id DESC
                 LIMIT ?
             ),
-            kills AS (
-                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS kills
-                FROM player_life_events
-                WHERE event_type IN (?, ?)
-                GROUP BY match_id, actor_player_id
-            ),
-            knocks AS (
-                SELECT match_id, actor_player_id AS player_id, COUNT(*) AS knocks
-                FROM player_life_events
-                WHERE event_type = ?
-                GROUP BY match_id, actor_player_id
-            ),
-            deaths AS (
-                SELECT match_id, victim_player_id AS player_id, COUNT(*) AS deaths
-                FROM player_life_events
-                WHERE event_type IN (?, ?)
-                GROUP BY match_id, victim_player_id
-            ),
-            damage AS (
-                SELECT match_id, actor_player_id AS player_id, SUM(damage) AS damage
-                FROM player_life_events
-                WHERE event_type = ?
-                    AND damage IS NOT NULL
-                GROUP BY match_id, actor_player_id
-            )
+            {_team_event_totals(match_ids is not None)}
             SELECT
                 m.match_id,
                 m.map_name,
@@ -735,10 +722,10 @@ class IngestService:
                 mt.team_rank,
                 tr.player_id,
                 tr.player_name,
-                COALESCE(kills.kills, 0) AS kills,
-                COALESCE(knocks.knocks, 0) AS knocks,
+                COALESCE(dealt.kills, 0) AS kills,
+                COALESCE(dealt.knocks, 0) AS knocks,
                 COALESCE(deaths.deaths, 0) AS deaths,
-                COALESCE(damage.damage, 0) AS damage
+                COALESCE(dealt.damage, 0) AS damage
             FROM stat_matches pm
             JOIN matches m ON m.match_id = pm.match_id
             LEFT JOIN match_teams mt
@@ -747,30 +734,21 @@ class IngestService:
             JOIN match_rosters tr
                 ON tr.match_id = pm.match_id
                 AND tr.team_id = pm.team_id
-            LEFT JOIN kills
-                ON kills.match_id = tr.match_id
-                AND kills.player_id = tr.player_id
-            LEFT JOIN knocks
-                ON knocks.match_id = tr.match_id
-                AND knocks.player_id = tr.player_id
-            LEFT JOIN deaths
-                ON deaths.match_id = tr.match_id
-                AND deaths.player_id = tr.player_id
-            LEFT JOIN damage
-                ON damage.match_id = tr.match_id
-                AND damage.player_id = tr.player_id
+            LEFT JOIN dealt ON dealt.match_id = tr.match_id AND dealt.player_id = tr.player_id
+            LEFT JOIN deaths ON deaths.match_id = tr.match_id AND deaths.player_id = tr.player_id
             WHERE tr.player_id IN ({placeholders})
-            ORDER BY COALESCE(m.created_at, '') DESC, m.match_id DESC, tr.player_id
+            ORDER BY julianday(m.created_at) DESC, m.match_id DESC, tr.player_id
             """,
             (
                 player_id,
+                *_window_params(match_ids),
                 candidate_limit,
                 *teammate_ids,
                 match_limit,
                 *sorted(ELIMINATION_EVENT_TYPES),
                 KNOCKDOWN_EVENT_TYPE,
-                *sorted(ELIMINATION_EVENT_TYPES),
                 DAMAGE_EVENT_TYPE,
+                *sorted(ELIMINATION_EVENT_TYPES),
                 *player_ids,
             ),
         )
@@ -976,14 +954,39 @@ class IngestService:
             life_events=[self._analysis_life_event(row) for row in life_event_rows],
         )
 
-    def _ensure_match_analysis_data(self, match_id: str) -> None:
-        match = self._get_match_asset(match_id)
-        has_analysis_data = self._has_match_analysis_data(match)
-        needs_damage_backfill = has_analysis_data and self._has_missing_life_event_damage(match_id)
-        needs_replay_backfill = (
-            has_analysis_data and not self._has_current_replay_schema(match_id)
+    def prepare_history_match(self, match_id: str, player_id: str) -> IngestMatchAsset:
+        stored = self.repo.fetch_one("SELECT shard_id FROM matches WHERE match_id = ?", (match_id,))
+        if stored is None:
+            match = remote_match(self.pubg_client, match_id)
+            self.repo.insert_or_ignore(
+                "matches",
+                {
+                    **match.public(),
+                    "shard_id": PLATFORM,
+                    "telemetry_url": match.telemetry_url,
+                    "ingest_status": "completed" if match.telemetry_url else "skipped",
+                },
+            )
+            self.connection.commit()
+        elif stored["shard_id"] != PLATFORM:
+            raise AppError("PLAYER_MATCH_PLATFORM", "该对局不属于 Steam 平台", 404)
+        self._ensure_match_analysis_data(match_id)
+        roster = self.repo.fetch_one(
+            "SELECT 1 FROM match_rosters WHERE match_id = ? AND player_id = ?",
+            (match_id, player_id),
         )
-        if has_analysis_data and not needs_damage_backfill and not needs_replay_backfill:
+        if not roster:
+            raise AppError("PLAYER_NOT_IN_MATCH", "本局遥测中未找到该玩家", 404)
+        return self._get_match_asset(match_id)
+
+    def _ensure_match_analysis_data(self, match_id: str) -> None:
+        with _replay_prepare_lock:
+            self._prepare_replay(match_id)
+            self.connection.commit()
+
+    def _prepare_replay(self, match_id: str) -> None:
+        match = self._get_match_asset(match_id)
+        if match.replay_ready:
             return
 
         cache_path = self._existing_match_telemetry_cache(match)
@@ -1009,34 +1012,6 @@ class IngestService:
             self.connection.commit()
             raise
         _log_parse_warnings(match_id, parse_result.warnings)
-
-    def _has_missing_life_event_damage(self, match_id: str) -> bool:
-        row = self.repo.fetch_one(
-            """
-            SELECT 1
-            FROM player_life_events
-            WHERE match_id = ?
-                AND event_type = 'LogPlayerTakeDamage'
-                AND damage IS NULL
-            LIMIT 1
-            """,
-            (match_id,),
-        )
-        return row is not None
-
-    def _has_current_replay_schema(self, match_id: str) -> bool:
-        row = self.repo.fetch_one(
-            """
-            SELECT replay_schema_version
-            FROM telemetry_assets
-            WHERE match_id = ?
-            """,
-            (match_id,),
-        )
-        return bool(
-            row
-            and int(row["replay_schema_version"] or 0) >= ANALYSIS_REPLAY_SCHEMA_VERSION
-        )
 
     @staticmethod
     def _existing_match_telemetry_cache(match: IngestMatchAsset) -> Path | None:
@@ -1088,16 +1063,6 @@ class IngestService:
             details={"match_id": match.match_id},
         )
 
-    @staticmethod
-    def _has_match_analysis_data(match: IngestMatchAsset) -> bool:
-        return (
-            match.telemetry_parse_status == "completed"
-            and match.telemetry_parse_profile == ANALYSIS_PARSE_PROFILE
-            and match.telemetry_position_interval_seconds == ANALYSIS_POSITION_INTERVAL_SECONDS
-            and match.circle_phase_count > 0
-            and (match.position_sample_count > 0 or match.life_event_count > 0)
-        )
-
     def list_jobs(self, *, limit: int = 20) -> list[IngestJobResult]:
         rows = self.repo.fetch_all(
             """
@@ -1138,11 +1103,11 @@ class IngestService:
 
         telemetry_cache_deleted = False
         cache_path_value = match["telemetry_cache_path"]
-        if cache_path_value:
-            cache_path = Path(cache_path_value)
-            if cache_path.exists() and cache_path.is_file():
-                cache_path.unlink()
-                telemetry_cache_deleted = True
+        cache_path = (Path(cache_path_value) if cache_path_value
+                      else self.telemetry_cache_dir / f"{match_id}.json")
+        if cache_path.is_file():
+            cache_path.unlink()
+            telemetry_cache_deleted = True
 
         self.repo.execute("DELETE FROM matches WHERE match_id = ?", (match_id,))
         self.connection.commit()
@@ -1175,7 +1140,7 @@ class IngestService:
                     stats["skipped_count"] += 1
                     warnings.append("skipped tournament without id")
                     continue
-                attributes = self._attributes(tournament)
+                attributes = entity_attributes(tournament)
                 self.repo.upsert(
                     "tournaments",
                     {
@@ -1199,7 +1164,7 @@ class IngestService:
         try:
             payload = self.pubg_client.get_tournament(tournament_id)
             tournament = payload.get("data", {}) if isinstance(payload.get("data"), dict) else {}
-            attributes = self._attributes(tournament)
+            attributes = entity_attributes(tournament)
             self.repo.upsert(
                 "tournaments",
                 {
@@ -1211,7 +1176,7 @@ class IngestService:
                 conflict_columns=("id",),
             )
 
-            match_refs = self._match_refs(tournament)
+            match_refs = entity_match_refs(tournament)
             stats = _empty_stats(total_count=len(match_refs))
             for match_id in match_refs:
                 try:
@@ -1405,7 +1370,7 @@ class IngestService:
                         None,
                         match_payload,
                     )
-                    attributes = self._match_attributes(match_payload)
+                    attributes = match_attributes(match_payload)
                     match_game_mode = attributes.get("gameMode")
                     match_type = attributes.get("matchType")
                     if match_game_mode != game_mode:
@@ -1464,6 +1429,16 @@ class IngestService:
         warnings: list[str] = []
         try:
             normalized_names = _normalize_player_names(player_names)
+            if (
+                game_mode == "all"
+                and platform == PLATFORM
+                and parse_profile == ANALYSIS_PARSE_PROFILE
+                and position_interval_seconds == ANALYSIS_POSITION_INTERVAL_SECONDS
+            ):
+                self._collect_recent_histories(
+                    job_id, normalized_names, max_matches_per_player or 20
+                )
+                return
             payload = self.pubg_client.get_players_by_names(platform, normalized_names)
             match_refs = self._player_match_refs(
                 payload,
@@ -1483,16 +1458,16 @@ class IngestService:
                         None,
                         match_payload,
                     )
-                    attributes = self._match_attributes(match_payload)
+                    attributes = match_attributes(match_payload)
                     match_game_mode = attributes.get("gameMode")
                     match_type = attributes.get("matchType")
-                    if match_game_mode != game_mode:
+                    if game_mode != "all" and match_game_mode != game_mode:
                         stats["skipped_count"] += 1
                         warnings.append(
                             f"match '{match_id}' skipped: gameMode is '{match_game_mode}'"
                         )
                         continue
-                    if isinstance(match_type, str) and match_type in EXCLUDED_SAMPLE_MATCH_TYPES:
+                    if game_mode != "all" and match_type in EXCLUDED_SAMPLE_MATCH_TYPES:
                         stats["skipped_count"] += 1
                         warnings.append(f"match '{match_id}' skipped: matchType is '{match_type}'")
                         continue
@@ -1526,6 +1501,38 @@ class IngestService:
             self._complete_job(job_id, stats, warnings=warnings)
         except AppError as exc:
             self._fail_job(job_id, exc.code, exc.message)
+
+    def _collect_recent_histories(self, job_id: str, names: list[str], limit: int) -> None:
+        warnings: list[str] = []
+        targets: dict[str, str] = {}
+        failed_players = 0
+        for name in names:
+            if self._is_job_cancelled(job_id):
+                return
+            try:
+                history = recent_matches(self.connection, self.pubg_client, name, limit)
+                warnings.extend(history["warnings"])
+                for match in history["matches"]:
+                    targets[match["match_id"]] = history["player_id"]
+            except AppError as exc:
+                failed_players += 1
+                warnings.append(f"{name}：{exc.message}")
+        if failed_players == len(names):
+            self._fail_job(job_id, "PLAYER_HISTORY_FAILED", "；".join(warnings))
+            return
+        stats = _empty_stats(total_count=len(targets))
+        self._update_job_progress(job_id, stats, warnings=warnings)
+        for match_id, player_id in targets.items():
+            if self._is_job_cancelled(job_id):
+                return
+            try:
+                self.prepare_history_match(match_id, player_id)
+                stats["success_count"] += 1
+            except AppError as exc:
+                stats["failed_count"] += 1
+                warnings.append(f"{match_id}：{exc.message}")
+            self._update_job_progress(job_id, stats, warnings=warnings)
+        self._complete_job(job_id, stats, warnings=warnings)
 
     def download_match_telemetry(self, match_id: str, *, retry_count: int = 0) -> IngestJobResult:
         job_id = self._create_job("telemetry_download", match_id, retry_count=retry_count)
@@ -1601,11 +1608,22 @@ class IngestService:
         return self.get_job(job_id)
 
     def _cache_match_telemetry(self, match_id: str, telemetry_url: str) -> Path:
-        content = self.pubg_client.download_telemetry(telemetry_url)
-        content_hash = hashlib.sha256(content).hexdigest()
+        asset = self.repo.fetch_one(
+            "SELECT cache_path, content_hash FROM telemetry_assets WHERE match_id = ?", (match_id,)
+        )
         cache_path = self.telemetry_cache_dir / f"{match_id}.json"
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_bytes(content)
+        if asset and asset["cache_path"] and Path(asset["cache_path"]).is_file():
+            cache_path = Path(asset["cache_path"])
+        content, _, _ = load_telemetry(
+            cache_path, lambda: self.pubg_client.download_telemetry(telemetry_url)
+        )
+        content_hash = hashlib.sha256(content).hexdigest()
+        if (
+            asset
+            and asset["cache_path"] == str(cache_path)
+            and asset["content_hash"] == content_hash
+        ):
+            return cache_path
         self.repo.upsert(
             "telemetry_assets",
             {
@@ -1897,18 +1915,6 @@ class IngestService:
         return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
 
     @staticmethod
-    def _attributes(entity: dict[str, Any]) -> dict[str, Any]:
-        attributes = entity.get("attributes", {})
-        return attributes if isinstance(attributes, dict) else {}
-
-    @staticmethod
-    def _match_refs(tournament: dict[str, Any]) -> list[str]:
-        relationships = tournament.get("relationships", {})
-        matches = relationships.get("matches", {}) if isinstance(relationships, dict) else {}
-        data = matches.get("data", []) if isinstance(matches, dict) else []
-        return [item["id"] for item in data if isinstance(item, dict) and item.get("id")]
-
-    @staticmethod
     def _sample_match_refs(payload: dict[str, Any]) -> list[str]:
         data = payload.get("data", {})
         sample_items = data if isinstance(data, list) else [data]
@@ -1934,7 +1940,7 @@ class IngestService:
         seen: set[str] = set()
         match_ids: list[str] = []
         for player in players:
-            refs = IngestService._match_refs(player)
+            refs = entity_match_refs(player)
             if max_matches_per_player is not None:
                 refs = refs[:max_matches_per_player]
             for match_id in refs:
@@ -1951,8 +1957,8 @@ class IngestService:
         payload: dict[str, Any],
     ) -> tuple[dict[str, Any], str | None]:
         match = payload.get("data", {}) if isinstance(payload.get("data"), dict) else {}
-        attributes = IngestService._match_attributes(payload)
-        telemetry_url = IngestService._telemetry_url(payload)
+        attributes = match_attributes(payload)
+        telemetry_url = match_telemetry_url(payload)
         return (
             {
                 "match_id": match.get("id", match_id),
@@ -1969,24 +1975,6 @@ class IngestService:
             },
             telemetry_url,
         )
-
-    @staticmethod
-    def _match_attributes(payload: dict[str, Any]) -> dict[str, Any]:
-        match = payload.get("data", {}) if isinstance(payload.get("data"), dict) else {}
-        return IngestService._attributes(match)
-
-    @staticmethod
-    def _telemetry_url(payload: dict[str, Any]) -> str | None:
-        included = payload.get("included", [])
-        if not isinstance(included, list):
-            return None
-        for entity in included:
-            if not isinstance(entity, dict):
-                continue
-            attributes = entity.get("attributes", {})
-            if isinstance(attributes, dict) and attributes.get("URL"):
-                return attributes["URL"]
-        return None
 
     @staticmethod
     def _local_player(row: sqlite3.Row) -> LocalPlayer:
@@ -2086,6 +2074,8 @@ class IngestService:
                 else None
             ),
             telemetry_parsed_at=row["telemetry_parsed_at"],
+            replay_schema_version=int(row["replay_schema_version"] or 0),
+            missing_damage=bool(row["missing_damage"]),
             circle_phase_count=int(row["circle_phase_count"]),
             position_sample_count=int(row["position_sample_count"]),
             life_event_count=int(row["life_event_count"]),
@@ -2093,7 +2083,7 @@ class IngestService:
 
     def _get_match_asset(self, match_id: str) -> IngestMatchAsset:
         row = self.repo.fetch_one(
-            """
+            f"""
             SELECT
                 m.match_id,
                 m.map_name,
@@ -2110,6 +2100,7 @@ class IngestService:
                 ta.parse_profile AS telemetry_parse_profile,
                 ta.position_interval_seconds AS telemetry_position_interval_seconds,
                 ta.parsed_at AS telemetry_parsed_at,
+                {_REPLAY_STATE_COLUMNS},
                 (
                     SELECT COUNT(*)
                     FROM circle_phases cp
@@ -2453,3 +2444,67 @@ def _log_parse_warnings(match_id: str, warnings: list[str]) -> None:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+def _window_filter(match_ids: list[str] | None) -> str:
+    if match_ids is None:
+        return ""
+    return "AND m.shard_id = 'steam' AND m.match_id IN (SELECT value FROM json_each(?))"
+
+
+def _window_params(match_ids: list[str] | None) -> tuple[str, ...]:
+    return () if match_ids is None else (json.dumps(match_ids),)
+
+
+def _team_window_filter(match_ids: list[str] | None) -> str:
+    if match_ids is None:
+        return "AND m.game_mode IN ('squad', 'squad-fpp')"
+    return _window_filter(match_ids) + (
+        " AND m.game_mode IN ('duo', 'duo-fpp', 'squad', 'squad-fpp') AND mr.team_id != 'unknown'"
+    )
+
+def _teammate_filter(teammate_ids: list[str], *, require_all: bool) -> str:
+    if not teammate_ids:
+        return ""
+    placeholders = ", ".join("?" for _ in teammate_ids)
+    # The legacy dashboard accepts any selected teammate. A player window compares
+    # exactly the same games for everyone, including the primary player's team.
+    shared = (
+        f"GROUP BY tr.team_id HAVING COUNT(DISTINCT tr.player_id) = {len(teammate_ids)}"
+        if require_all else ""
+    )
+    return f"""
+        WHERE EXISTS (
+            SELECT 1 FROM match_rosters tr
+            WHERE tr.match_id = primary_matches.match_id AND tr.team_id = primary_matches.team_id
+                AND tr.player_id IN ({placeholders})
+            {shared}
+        )
+    """
+
+def _team_event_totals(exclude_friendly: bool) -> str:
+    # Only the primary team's outgoing totals are used by the outer roster join.
+    # Deaths still include self, friendly and environmental eliminations.
+    enemy_filter = """
+        WHERE e.victim_player_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM match_rosters friendly
+            WHERE friendly.match_id = pm.match_id AND friendly.team_id = pm.team_id
+                AND friendly.player_id = e.victim_player_id
+        )
+    """ if exclude_friendly else ""
+    return f"""
+        dealt AS (
+            SELECT e.match_id, e.actor_player_id AS player_id,
+                SUM(CASE WHEN e.event_type IN (?, ?) THEN 1 ELSE 0 END) AS kills,
+                SUM(CASE WHEN e.event_type = ? THEN 1 ELSE 0 END) AS knocks,
+                SUM(CASE WHEN e.event_type = ? THEN e.damage ELSE 0 END) AS damage
+            FROM stat_matches pm JOIN player_life_events e ON e.match_id = pm.match_id
+            {enemy_filter}
+            GROUP BY e.match_id, e.actor_player_id
+        ),
+        deaths AS (
+            SELECT match_id, victim_player_id AS player_id, COUNT(*) AS deaths
+            FROM player_life_events
+            WHERE match_id IN (SELECT match_id FROM stat_matches) AND event_type IN (?, ?)
+            GROUP BY match_id, victim_player_id
+        )
+    """

@@ -6,6 +6,7 @@ export type OpponentMatch = {
   match_type: string;
 };
 
+export type OpponentRange = { limit: number } | { match_date: string };
 export type OpponentHistory = {
   player_id: string;
   player_name: string;
@@ -21,6 +22,12 @@ export type Encounter = {
 };
 
 export type EncounterList = { season: string | null; opponents: Encounter[] };
+export type TeamMatchEncounters = {
+  season: string | null;
+  game_mode: string;
+  match_type: string;
+  opponents: Record<string, string[]>;
+};
 export type OpponentStats = { rounds: number; kd: number | null; adr: number | null; rank: string | null };
 export type Mastery = { tier: number | null; level: number | null };
 
@@ -92,6 +99,7 @@ export type IngestMatch = {
   telemetry_parse_profile: string | null;
   telemetry_position_interval_seconds: number | null;
   telemetry_parsed_at: string | null;
+  replay_ready: boolean;
   circle_phase_count: number;
   position_sample_count: number;
   life_event_count: number;
@@ -457,29 +465,49 @@ export const api = {
     ),
   listLocalPlayers: async (limit = 50) =>
     apiRequest<{ players: LocalPlayer[] }>(`/api/ingest/players/local${toQuery({ limit })}`),
+  playerHistory: (query: string, signal?: AbortSignal, matchDate?: string, refresh = false) =>
+    apiRequest<OpponentHistory>(`/api/ingest/players/recent${toQuery({ query, match_date: matchDate, refresh: refresh || undefined })}`, { signal }),
+  playerMatches: (playerId: string, signal: AbortSignal, matchDate?: string) =>
+    apiRequest<{ matches: IngestMatch[] }>(
+      `/api/ingest/matches${toQuery({ player_id: playerId, limit: matchDate ? undefined : 20, match_date: matchDate })}`, { signal }),
+  prepareMatch: (matchId: string, playerId: string, signal: AbortSignal) =>
+    apiRequest<IngestMatch>(
+      `/api/ingest/matches/${encodeURIComponent(matchId)}/prepare${toQuery({ player_id: playerId })}`,
+      { method: "POST", signal }),
   getTeamDashboard: async (payload: {
     player_id: string;
     teammate_ids: string[];
-    match_limit: number;
-    teammate_candidate_limit: number;
+    match_limit?: number;
+    teammate_candidate_limit?: number;
+    match_date?: string;
+    match_ids?: string[];
   }) =>
     apiRequest<TeamDashboard>("/api/ingest/players/team-dashboard", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  opponentHistory: (name: string, limit: number, signal: AbortSignal) =>
-    apiRequest<OpponentHistory>(`/api/opponents/recent${toQuery({ name, limit })}`, { signal }),
+  opponentHistory: (name: string, range: OpponentRange, signal: AbortSignal) =>
+    apiRequest<OpponentHistory>(`/api/opponents/recent${toQuery({ name, ...range })}`, { signal }),
   matchEncounters: (match: string, player: string, signal: AbortSignal) =>
     apiRequest<EncounterList>(
       `/api/opponents/matches/${encodeURIComponent(match)}${toQuery({ player_id: player })}`, { signal },
     ),
+  teamMatchEncounters: (matchId: string, playerIds: string[], signal: AbortSignal) =>
+    apiRequest<TeamMatchEncounters>(`/api/opponents/matches/${encodeURIComponent(matchId)}/team`, {
+      method: "POST", signal, body: JSON.stringify({ player_ids: playerIds }),
+    }),
+  cachedOpponentProfiles: (ids: string[], group: { season: string; mode: string; ranked: boolean } | undefined, signal: AbortSignal) =>
+    apiRequest<{ stats: Record<string, OpponentStats | null>; mastery: Record<string, Mastery> }>(
+      "/api/opponents/profiles/cached", {
+        method: "POST", signal, body: JSON.stringify({ player_ids: ids, ...group }),
+      }),
   opponentStats: (season: string, mode: string, ranked: boolean, ids: string[], signal: AbortSignal) =>
     apiRequest<Record<string, OpponentStats | null>>("/api/opponents/stats", {
       method: "POST", signal, body: JSON.stringify({ season, mode, ranked, player_ids: ids }),
     }),
   opponentMastery: (id: string, signal: AbortSignal) =>
     apiRequest<Mastery>(`/api/opponents/mastery/${encodeURIComponent(id)}`, { signal }),
-  getPersonalTrend: async (payload: { player_id: string; match_limit: number }) =>
+  getPersonalTrend: async (payload: { player_id: string; match_limit?: number; match_date?: string; match_ids?: string[] }) =>
     apiRequest<PersonalTrend>("/api/ingest/players/personal-trend", {
       method: "POST",
       body: JSON.stringify(payload),
