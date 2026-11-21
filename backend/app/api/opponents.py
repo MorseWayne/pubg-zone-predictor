@@ -44,10 +44,13 @@ def encounters(
 
 
 class TeamEncounterRequest(BaseModel):
-    player_ids: list[AccountId] = Field(min_length=2, max_length=4)
+    player_ids: list[AccountId] = Field(min_length=1, max_length=4)
+    full_team: bool = False
 
     @model_validator(mode="after")
     def distinct_members(self):
+        if not self.full_team and len(self.player_ids) < 2:
+            raise ValueError("队员对比至少需要两名成员")
         if len(set(self.player_ids)) != len(self.player_ids):
             raise ValueError("每个成员只能选择一次")
         return self
@@ -62,7 +65,8 @@ def team_match_encounters(
     settings: SettingsDep,
 ) -> dict:
     return team_encounters(
-        connection, pubg_client, settings.telemetry_cache_dir, match_id, request.player_ids
+        connection, pubg_client, settings.telemetry_cache_dir, match_id, request.player_ids,
+        full_team=request.full_team,
     )
 
 

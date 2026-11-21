@@ -4,7 +4,7 @@ import { Selector } from "@astryxdesign/core/Selector";
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { ArrowDownLeft, ArrowUpRight, Crosshair, Search } from "lucide-react";
-import { median, type MatchResult, type OpponentReport } from "../opponentAnalysis";
+import { kdBands, kdBandIndex, median, type MatchResult, type OpponentReport } from "../opponentAnalysis";
 import {
   filterContacts,
   opponentGroups,
@@ -55,19 +55,12 @@ function contextLabel(match: MatchResult) {
     .join(" · ");
 }
 
-const kdBands = [
-  { label: "< 1", color: "bg-teal-300" },
-  { label: "1 – < 2", color: "bg-sky-300" },
-  { label: "2 – < 3", color: "bg-amber-300" },
-  { label: "≥ 3", color: "bg-rose-300" },
-];
-
 function StrengthSummary({ contacts }: { contacts: Contact[] }) {
   const human = contacts.filter((c) => c.person.kind === "human");
   const kds = (items: Contact[]) => items.flatMap((c) => (c.stats?.kd != null ? [c.stats.kd] : []));
   const values = kds(human);
   const counts = [0, 0, 0, 0];
-  for (const value of values) counts[value < 1 ? 0 : value < 2 ? 1 : value < 3 ? 2 : 3]++;
+  for (const value of values) counts[kdBandIndex(value)]++;
 
   return (
     <div className="opp-strength">

@@ -255,13 +255,12 @@ export function TeamDashboard() {
                 </div>
               </Card>}
 
-              {comparing ? (
                 <TeamOpponentComparison
-                  key={JSON.stringify([dashboard.selected_players.map(p => p.player_id), dashboard.matches.map(m => m.match_id)])}
-                  members={dashboard.selected_players}
+                  key={JSON.stringify([selectedPlayerId, selectedTeammates, dashboard.matches.map(m => m.match_id)])}
+                  members={comparing ? dashboard.selected_players : []}
                   matchIds={dashboard.matches.map(m => m.match_id)}
                 />
-              ) : (
+              {!comparing && (
               <Card padding={0} className="flex flex-col gap-4 border-border bg-card shadow-sm">
                 <header className="grid gap-1.5 px-4 pt-4">
                   <h3 className="font-semibold text-sm">成员明细</h3>

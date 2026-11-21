@@ -305,3 +305,39 @@ export function median(values: number[]) {
   const mid = Math.floor(sorted.length / 2);
   return ((sorted[mid] + sorted[Math.floor((sorted.length - 1) / 2)]) / 2).toFixed(2);
 }
+
+export const kdBands = [
+  { label: "< 1", color: "bg-teal-300" },
+  { label: "1 – < 2", color: "bg-sky-300" },
+  { label: "2 – < 3", color: "bg-amber-300" },
+  { label: "≥ 3", color: "bg-rose-300" },
+];
+
+export function kdBandIndex(value: number) {
+  return value < 1 ? 0 : value < 2 ? 1 : value < 3 ? 2 : 3;
+}
+
+export function teamOpponentDistribution(report: TeamComparison) {
+  const kd = kdBands.map((band) => ({ ...band, count: 0 }));
+  const levels = new Map<string, { tier: number; start: number; count: number }>();
+  let total = 0;
+  for (const sample of report.samples) {
+    const group = profileGroup(sample.season, sample.game_mode, sample.match_type);
+    const opponents = new Set(Object.values(sample.opponents).flat());
+    total += opponents.size;
+    for (const id of opponents) {
+      const value = report.stats[`${group}/${id}`]?.kd;
+      if (value != null) kd[kdBandIndex(value)].count++;
+      const mastery = report.mastery[id];
+      if (mastery?.tier == null || mastery.level == null) continue;
+      const start = Math.floor(mastery.level / 100) * 100;
+      const key = `${mastery.tier}/${start}`;
+      const band = levels.get(key) ?? { tier: mastery.tier, start, count: 0 };
+      band.count++;
+      levels.set(key, band);
+    }
+  }
+  const levelBands = [...levels.values()]
+    .sort((a, b) => a.tier - b.tier || a.start - b.start);
+  return { kd, levels: levelBands, total };
+}

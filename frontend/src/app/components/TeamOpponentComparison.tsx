@@ -18,6 +18,8 @@ import {
   type TeamComparison,
 } from "../opponentAnalysis";
 
+import { TeamOpponentCharts } from "./TeamOpponentCharts";
+
 function comparisonColumn(player: TeamDashboardPlayer, report: TeamComparison | null) {
   const contacts = report ? memberOpponents(report, player.player_id) : [];
   const kds = contacts.flatMap((c) => (c.stats?.kd != null ? [c.stats.kd] : []));
@@ -62,7 +64,7 @@ export function TeamOpponentComparison({
   members: TeamDashboardPlayer[];
   matchIds: string[];
 }) {
-  const { rangeLabel } = usePlayerWorkspace();
+  const { rangeLabel, player } = usePlayerWorkspace();
   const [report, setReport] = useState<TeamComparison | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
@@ -85,7 +87,7 @@ export function TeamOpponentComparison({
     try {
       await compareTeamOpponents(
         matchIds,
-        members.map((p) => p.player_id),
+        members.length ? members.map((p) => p.player_id) : [player.player_id],
         run.signal,
         setReport,
         setStatus,
@@ -110,13 +112,13 @@ export function TeamOpponentComparison({
   return (
     <Card padding={4} className="min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="font-semibold">队员表现与交手强度</h3>
+        <h3 className="font-semibold">全队交战对手分布</h3>
         {matchIds.length > 0 &&
           (busy ? (
             <Button label="停止分析" size="sm" onClick={() => active.current?.abort()} />
           ) : (
             <Button
-              label={report ? "重新对比" : "分析交手强度"}
+              label={report ? "重新分析" : "分析交手强度"}
               variant="primary"
               size="sm"
               onClick={compare}
@@ -125,41 +127,45 @@ export function TeamOpponentComparison({
       </div>
       {matchIds.length === 0 ? (
         <p className="mt-3 text-sm text-secondary">
-          {rangeLabel}中没有所选成员全员同队出场的比赛。减少勾选人数可以扩大样本。
+          {members.length ? `${rangeLabel}中没有所选成员全员同队出场的比赛。减少勾选人数可以扩大样本。` : `${rangeLabel}中没有可分析的组队比赛。`}
         </p>
       ) : (
         <>
           <p className="my-3 text-sm text-secondary">
-            {members.length} 人共同出场 {matchIds.length} 局
+            {members.length ? `所选 ${members.length} 人共同出场` : "当前玩家组队出场"} {matchIds.length} 局
             {report && ` · 已读交手遥测 ${report.samples.length}/${matchIds.length} 局`}
           </p>
-          <Table density="compact" aria-label="队员横向对比">
-            <TableHeader>
-              <TableRow isHeaderRow>
-                <TableHeaderCell scope="col">指标</TableHeaderCell>
-                {members.map((p) => (
-                  <TableHeaderCell scope="col" key={p.player_id}>
-                    {p.player_name || p.player_id}
-                  </TableHeaderCell>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {metrics.map((label, index) => (
-                <TableRow key={label}>
-                  <TableHeaderCell scope="row">{label}</TableHeaderCell>
-                  {columns.map((column, i) => (
-                    <TableCell key={members[i].player_id}>{column[index]}</TableCell>
+          <p className="mb-3 text-xs text-secondary">汇总每局全队实际交手的真人。同一对手每局计一次，多名队员交手也只计一次。</p>
+          {report && <TeamOpponentCharts report={report} />}
+          {members.length > 0 && <>
+            <Table density="compact" aria-label="队员横向对比">
+              <TableHeader>
+                <TableRow isHeaderRow>
+                  <TableHeaderCell scope="col">指标</TableHeaderCell>
+                  {members.map((p) => (
+                    <TableHeaderCell scope="col" key={p.player_id}>
+                      {p.player_name || p.player_id}
+                    </TableHeaderCell>
                   ))}
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <p className="mt-3 text-xs text-secondary">
-            本人 KD 为共同对局的总淘汰 ÷ 总死亡。对手仅统计本人实际交手的真人，每人每局计一次。
-            括号为有该项数据的人次 / 已识别的交手人次。普通局对手 KD 用击杀 ÷ 败场估算，排位用击杀 ÷
-            死亡。
-          </p>
+              </TableHeader>
+              <TableBody>
+                {metrics.map((label, index) => (
+                  <TableRow key={label}>
+                    <TableHeaderCell scope="row">{label}</TableHeaderCell>
+                    {columns.map((column, i) => (
+                      <TableCell key={members[i].player_id}>{column[index]}</TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <p className="mt-3 text-xs text-secondary">
+              本人 KD 为共同对局的总淘汰 ÷ 总死亡。对手仅统计本人实际交手的真人，每人每局计一次。
+              括号为有该项数据的人次 / 已识别的交手人次。普通局对手 KD 用击杀 ÷ 败场估算，排位用击杀 ÷
+              死亡。
+            </p>
+          </>}
         </>
       )}
       {report && (report.cacheHits.season > 0 || report.cacheHits.mastery > 0) && (

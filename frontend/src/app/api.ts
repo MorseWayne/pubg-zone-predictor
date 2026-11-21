@@ -13,6 +13,8 @@ export type OpponentHistory = {
   matches: OpponentMatch[];
   warnings: string[];
 };
+export type BoundPlayer = Pick<OpponentHistory, "player_id" | "player_name">;
+export type PlayerBindings = { active: string; players: BoundPlayer[] };
 
 export type Encounter = {
   player_id: string;
@@ -414,6 +416,16 @@ export function apiErrorMessage(error: unknown) {
 }
 
 export const api = {
+  playerBindings: (signal: AbortSignal) =>
+    apiRequest<PlayerBindings>("/api/player-bindings", { signal, cache: "no-store" }),
+  importPlayerBindings: (bindings: PlayerBindings, signal: AbortSignal) =>
+    apiRequest<PlayerBindings>("/api/player-bindings/import", {
+      method: "POST", body: JSON.stringify(bindings), signal,
+    }),
+  selectPlayer: (player: BoundPlayer) =>
+    apiRequest<PlayerBindings>("/api/player-bindings/active", {
+      method: "PUT", body: JSON.stringify(player),
+    }),
   listMaps: async () => apiRequest<{ maps: MapConfig[] }>("/api/config/maps"),
   getZonePhases: async (mapId: string) =>
     apiRequest<ZonePhaseConfig>(`/api/config/zone-phases${toQuery({ map_id: mapId })}`),
@@ -494,7 +506,7 @@ export const api = {
     ),
   teamMatchEncounters: (matchId: string, playerIds: string[], signal: AbortSignal) =>
     apiRequest<TeamMatchEncounters>(`/api/opponents/matches/${encodeURIComponent(matchId)}/team`, {
-      method: "POST", signal, body: JSON.stringify({ player_ids: playerIds }),
+      method: "POST", signal, body: JSON.stringify({ player_ids: playerIds, full_team: true }),
     }),
   cachedOpponentProfiles: (ids: string[], group: { season: string; mode: string; ranked: boolean } | undefined, signal: AbortSignal) =>
     apiRequest<{ stats: Record<string, OpponentStats | null>; mastery: Record<string, Mastery> }>(

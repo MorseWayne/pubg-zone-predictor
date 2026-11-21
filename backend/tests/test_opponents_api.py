@@ -288,7 +288,7 @@ def test_team_comparison_uses_all_selected_members_on_same_team(
     members = ["account.me", "account.b", "account.c"]
     db = migrated_connection
     games = {
-        "shared": [(member, "1") for member in members],
+        "shared": [(member, "1") for member in [*members, "account.fourth"]],
         "partial": [(members[0], "1"), (members[1], "1")],
         "opposing": [(members[0], "1"), (members[1], "1"), (members[2], "2")],
         "outside-window": [(member, "1") for member in members],
@@ -328,6 +328,7 @@ def test_team_comparison_uses_all_selected_members_on_same_team(
         damage(ME, RIVAL),
         damage(RIVAL, ME),
         damage(dict(ME, accountId=members[1]), RIVAL),
+        damage(dict(ME, accountId="account.fourth"), dict(RIVAL, accountId="account.another")),
         damage(ME, dict(ME, accountId=members[1])),
         damage(BOT, ME),
         damage(None, ME),
@@ -357,6 +358,14 @@ def test_team_comparison_uses_all_selected_members_on_same_team(
         "match_type": "official",
         "opponents": {members[0]: ["account.rival"], members[1]: ["account.rival"], members[2]: []},
     }
+    for selected in ([members[0]], members):
+        full = api.post(
+            "/api/opponents/matches/shared/team", json={"player_ids": selected, "full_team": True}
+        )
+        assert full.status_code == 200
+        assert full.json()["opponents"] == {
+            **sample.json()["opponents"], "account.fourth": ["account.another"],
+        }
     for match_id in ("partial", "opposing"):
         response = api.post(f"/api/opponents/matches/{match_id}/team", json={"player_ids": members})
         assert response.status_code == 400

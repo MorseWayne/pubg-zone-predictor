@@ -93,10 +93,13 @@ def team_encounters(
     cache_dir: Path,
     match_id: str,
     player_ids: list[str],
+    *,
+    full_team: bool = False,
 ) -> dict:
     match = db.execute(
         """
-        SELECT m.game_mode, m.match_type FROM match_rosters r JOIN matches m USING(match_id)
+        SELECT r.team_id, m.game_mode, m.match_type
+        FROM match_rosters r JOIN matches m USING(match_id)
         WHERE r.match_id = ? AND m.shard_id = 'steam' AND r.team_id != 'unknown'
           AND m.game_mode IN ('duo', 'duo-fpp', 'squad', 'squad-fpp')
           AND r.player_id IN (SELECT value FROM json_each(?))
@@ -106,6 +109,13 @@ def team_encounters(
     ).fetchone()
     if not match:
         raise AppError("NO_SHARED_TEAM", "所选成员未在这场对局中全员同队出场", 400)
+    if full_team:
+        player_ids = [
+            row["player_id"] for row in db.execute(
+                "SELECT player_id FROM match_rosters WHERE match_id = ? AND team_id = ?",
+                (match_id, match["team_id"]),
+            )
+        ]
     members = _match_members(db, client, cache_dir, match_id, player_ids)
     season = members[player_ids[0]]["season"]
     return {

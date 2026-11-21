@@ -13,10 +13,10 @@ import { Button } from "@astryxdesign/core/Button";
 import { Selector } from "@astryxdesign/core/Selector";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router";
-import { api, apiErrorMessage, type IngestMatch, type OpponentHistory } from "./api";
+import {
+  api, apiErrorMessage, type BoundPlayer, type IngestMatch, type OpponentHistory, type PlayerBindings,
+} from "./api";
 
-export type BoundPlayer = Pick<OpponentHistory, "player_id" | "player_name">;
-type Bindings = { active: string; players: BoundPlayer[] };
 type Workspace = {
   player: BoundPlayer;
   matches: IngestMatch[];
@@ -28,19 +28,19 @@ type Workspace = {
 const STORAGE = "pzp_steam_player_bindings";
 export const usePlayerWorkspace = () => useOutletContext<Workspace>();
 
-function readBindings(): Bindings {
+function readLegacyBindings(): PlayerBindings | undefined {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE) ?? "null");
     const players: BoundPlayer[] = stored.players.filter(
       (p: BoundPlayer) =>
-        typeof p?.player_name === "string" && /^account\.[\w-]+$/.test(p.player_id),
+        typeof p?.player_name === "string" && p.player_name.length > 0 &&
+        /^account\.[\w-]+$/.test(p.player_id),
     );
     if (players.some((p) => p.player_id === stored.active))
       return { active: stored.active, players };
   } catch {
     /* First visit or unavailable browser storage. */
   }
-  return { active: "", players: [] };
 }
 
 function PlayerSession({
@@ -152,7 +152,8 @@ function PlayerSession({
 }
 
 export function PlayerWorkspace() {
-  const [bindings, setBindings] = useState(readBindings);
+  const [bindings, setBindings] = useState<PlayerBindings>();
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [range, setRange] = useState(readMatchRange);
   const matchDate = range.mode === "day" ? range.day : undefined;
   function changeRange(next: MatchRange) {
@@ -164,44 +165,78 @@ export function PlayerWorkspace() {
       setError("浏览器无法保存筛选，本次会话仍可使用。");
     }
   }
-  const current = bindings.players.find((p) => p.player_id === bindings.active);
-  const [adding, setAdding] = useState(!current);
+  const current = bindings?.players.find((p) => p.player_id === bindings.active);
+  const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [initialHistory, setInitialHistory] = useState<OpponentHistory>();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  function select(player: BoundPlayer, history?: OpponentHistory) {
-    const next = {
-      active: player.player_id,
-      players: [...bindings.players.filter((p) => p.player_id !== player.player_id), player],
-    };
-    setBindings(next);
-    setInitialHistory(matchDate ? undefined : history);
-    setQuery("");
-    setAdding(false);
-    setError("");
-    try {
-      localStorage.setItem(STORAGE, JSON.stringify(next));
-    } catch {
-      setError("浏览器无法保存绑定，本次会话仍可使用。");
+  useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    async function load() {
+      setError("");
+      const legacy = readLegacyBindings();
+      try {
+        const saved = legacy
+          ? await api.importPlayerBindings(legacy, signal)
+          : await api.playerBindings(signal);
+        if (signal.aborted) return;
+        setBindings(saved);
+        if (legacy) {
+          try {
+            localStorage.removeItem(STORAGE);
+          } catch {
+            // Repeating the import preserves the server's current selection.
+          }
+        }
+      } catch (err) {
+        if (!signal.aborted) setError(apiErrorMessage(err));
+      }
     }
-    if (current && current.player_id !== player.player_id) navigate(pathname, { replace: true });
-  }
-  async function bind(e: FormEvent) {
-    e.preventDefault();
-    if (busy || !query.trim()) return;
+    void load();
+    return () => controller.abort();
+  }, [loadAttempt]);
+
+  async function select(player?: BoundPlayer) {
+    if (busy || (!player && !query.trim())) return;
     setBusy(true);
     setError("");
     try {
-      const history = await api.playerHistory(query.trim());
-      select({ player_id: history.player_id, player_name: history.player_name }, history);
+      let history: OpponentHistory | undefined;
+      if (!player) {
+        history = await api.playerHistory(query.trim());
+        player = { player_id: history.player_id, player_name: history.player_name };
+      }
+      const saved = await api.selectPlayer(player);
+      setBindings(saved);
+      setInitialHistory(matchDate ? undefined : history);
+      setAdding(false);
+      setQuery("");
+      if (current && current.player_id !== player.player_id) navigate(pathname, { replace: true });
     } catch (err) {
       setError(apiErrorMessage(err));
     } finally {
       setBusy(false);
     }
+  }
+  function bind(e: FormEvent) {
+    e.preventDefault();
+    void select();
+  }
+  if (!bindings) {
+    return (
+      <div className="m-auto flex flex-col items-center gap-3">
+        {error ? (
+          <>
+            <p role="alert">读取玩家绑定失败：{error}</p>
+            <Button label="重试" onClick={() => setLoadAttempt((n) => n + 1)} />
+          </>
+        ) : <p role="status">正在读取玩家绑定…</p>}
+      </div>
+    );
   }
   return (
     <>
@@ -216,7 +251,7 @@ export function PlayerWorkspace() {
           <div>
             <h1 className="text-xl font-semibold">绑定游戏账号</h1>
             <p className="mt-2 text-sm text-secondary">
-              自动同步最近 20 局，用于对局回放、个人历史和团队看板。绑定保存在此浏览器。
+              绑定后自动同步最近 20 局。其他设备打开同一服务器时也能使用已绑定的玩家。
             </p>
           </div>
         )}
@@ -231,7 +266,7 @@ export function PlayerWorkspace() {
               options={bindings.players.map((p) => ({ value: p.player_id, label: p.player_name }))}
               onChange={(id) => {
                 const p = bindings.players.find((p) => p.player_id === id);
-                if (p) select(p);
+                if (p) void select(p);
               }}
             />
             <Button
@@ -239,7 +274,7 @@ export function PlayerWorkspace() {
               size="sm"
               variant="secondary"
               onClick={() => setAdding(true)}
-              isDisabled={adding}
+              isDisabled={adding || busy}
             />
             {["/analysis", "/personal-trend", "/team-dashboard", "/opponents"].includes(pathname) && (
               <>
@@ -269,7 +304,7 @@ export function PlayerWorkspace() {
             )}
           </div>
         )}
-        {adding && (
+        {(!current || adding) && (
           <form onSubmit={bind} className="flex flex-wrap items-end gap-3">
             <TextInput
               label={
