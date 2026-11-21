@@ -1,151 +1,85 @@
 # PUBG Zone Predictor
 
-本项目是一个本地单机 Web 工具，用于 PUBG 圈型预测、历史热点叠加和战队宏观转移路线分析。
+用 Steam 昵称或 PUBG 账号 ID 绑定玩家，就能在本地复盘对局、比较同队选手表现，并查看实际交手对手的强度。后端还提供圈型预测、历史热点和转移路线分析 API。
 
-## 技术栈
+## 快速开始
 
-- 后端：FastAPI + SQLite
-- 前端采用 React 19、Vite 和 TypeScript。侧栏和全部业务页面共用 Astryx 组件、Neutral 深色主题和简体中文控件。
-- 配置：根目录 `config/`，运行时由后端统一读取
-- 数据库：默认 `data/pubg_zone_predictor.sqlite3`，通过迁移脚本初始化
-- 本地数据：默认写入 `data/`，不提交到 git
-
-## 本地开发
-
-安装 Python 3.12 或更高版本、Node.js、npm 和 Make 后，在仓库根目录运行
+准备 Python 3.12 或更高版本、Node.js、npm 和 Make。在仓库根目录执行以下命令，已有 `.env` 时会保留原配置。
 
 ```bash
+cp -n .env.example .env
 make setup
+```
+
+要同步官方对局，请在 `.env` 中填写 `PUBG_API_KEY`，然后启动服务。
+
+```bash
 make dev
 ```
 
-首次开发或依赖更新后运行 `make setup` 安装前后端依赖。日常启动只需运行 `make dev`。如果缺少 Uvicorn 或 Vite，启动命令会提示运行 `make setup`。后端启动时会自动初始化 SQLite 数据库并应用待执行的迁移。需要单独调试时可运行 `make backend` 或 `make frontend`。
+打开 [本地回放中心](http://127.0.0.1:5173)，输入 Steam 游戏昵称或以 `account.` 开头的账号 ID。绑定后默认同步最近 20 局，页面顶部会显示同步进度、失败场次或本地存档回退情况。
 
-单独构建前端时，在仓库根目录运行 `make build` 即可生成 `frontend/dist/`。首次构建或前端依赖清单、锁文件更新后，该命令会按锁文件安装依赖。后续构建会复用已安装的依赖。
+后续启动只需 `make dev`。后端会自动初始化 SQLite 数据库并执行迁移。安装或更新依赖时再运行 `make setup`。
 
-### 1. 安装后端依赖
+## 复盘一支队伍
 
-```bash
-npm run setup:backend
-```
+1. 在顶部选择“当前玩家”。要复盘某一天，选择“指定日期”。日期按**北京时间的开局时间**计算，切换页面、玩家或刷新浏览器后会保留筛选。
+2. 打开“团队看板”查看所选范围内的双排、四排。勾选 1–3 位队友后，只统计当前玩家与所有勾选成员实际同队的比赛。
+3. 点击“分析交手强度”，查看这些比赛中**全队**遇到的真人对手。勾选队友还可以并排比较各成员的 KD、场均伤害、击倒，以及各自对手的赛季 KD 中位数、场均伤害中位数和最高生存等级。
+4. 想看某次团战的经过，打开“对局回放”选择该场。回放默认跟随当前玩家。
 
-### 2. 安装前端依赖
+**如何读强度分布**　双方发生过伤害、击倒或淘汰即算交手。同一名对手在一局内与多名队员交手，全队分布只计一人次。赛季 KD 和生存等级分别显示已知与缺失人次，百分比按各自的已知人次计算。普通局 KD 用击杀数除以败场估算，排位局用实际死亡数计算。
 
-```bash
-npm run setup:frontend
-```
+### 其他页面
 
-### 3. 初始化数据库
-
-```bash
-npm run db:migrate
-```
-
-默认数据库路径：`data/pubg_zone_predictor.sqlite3`。
-
-### 4. 启动后端
-
-```bash
-npm run dev:backend
-```
-
-后端健康检查：<http://127.0.0.1:8000/api/health>
-
-常用基础 API：
-
-- `GET /api/config/maps`：读取已配置地图。
-- `GET /api/config/zone-phases?map_id=miramar&game_mode=default`：读取 Zone 半径配置。
-- `POST /api/config/maps/{map_id}/coordinates/convert`：在 world / normalized / pixel 坐标间转换。
-- `GET /api/assets/maps/{map_id}`：查看地图资源缓存状态。
-- `POST /api/assets/maps/{map_id}/ensure`：按需下载并校验地图资源。
-- `GET /api/assets/maps/{map_id}/image`：返回本地缓存地图 PNG。
-- `POST /api/ingest/samples/squad?platform=steam`：从普通 match samples 采集默认 squad 对局，自动下载 telemetry 并解析入库。
-- `POST /api/ingest/matches/{match_id}/telemetry`：下载指定 match 的 telemetry 到本地缓存。
-- `POST /api/ingest/matches/{match_id}/telemetry/parse`：解析本地 telemetry 缓存并写入圈阶段、roster、位置样本和 life events。
-- `GET /api/ingest/jobs/{job_id}`：查看采集任务状态。
-- `POST /api/ingest/jobs/{job_id}/retry`：按任务类型重试可重试采集任务。
-- `POST /api/hotspots/generate?map_id=miramar&phase=1`：基于玩家位置样本生成热点网格。
-- `GET /api/hotspots?map_id=miramar&phase=1`：读取最近一次生成的热点网格。
-- `POST /api/training/runs?map_id=miramar`：基于圈阶段样本训练统计基线并写入评估指标。
-- `GET /api/training/runs`：查看最近训练运行。
-- `GET /api/training/runs/{run_id}`：查看单次训练运行及指标。
-- `GET /api/training/runs/{run_id}/metrics`：查看单次训练运行的中心误差指标。
-- `POST /api/predict`：根据地图、当前 Zone、圈心、战队位置和路线策略生成预测圈、路线、热点摘要和解释。
-
-### 5. 启动前端
-
-另开一个终端：
-
-```bash
-npm run dev:frontend
-```
-
-前端地址：<http://127.0.0.1:5173>
-
-
-首次打开页面时，先用 Steam 游戏昵称或 PUBG 账号 ID（`account.…`）绑定玩家。绑定列表和当前玩家保存在后端 SQLite 数据库中。在其他设备打开或刷新连接到同一后端的页面，即可继续使用当前玩家。升级后，打开原来绑定过玩家的浏览器会自动合并旧绑定；服务器已有当前玩家时保留其选择。通过顶部“绑定其他玩家”添加账号，使用“当前玩家”切换。默认使用最近 20 局。绑定、切换或重新打开页面时，系统会按当前筛选范围同步，并复用已解析的回放。同步进度、部分失败和本地存档回退会显示在顶部。
-
-在对局回放、个人历史或团队看板顶部选择“最近 20 局”或“指定日期”。日期按北京时间的开局时间计算，当天所有可查比赛都纳入范围。切换页面、玩家或刷新浏览器会保留筛选。官方近期数据与本地存档按对局 ID 合并；超出官方近 14 天范围的日期仅显示已存档的比赛。团队看板及队员对比在这个范围内进一步筛选同队场次。
-
-对局回放默认关注当前玩家。个人历史使用同一批对局，团队看板只统计其中的双排和四排，勾选 1–3 位队友后，仅统计当前玩家与所有勾选成员在同一队的对局。在团队看板点击“分析交手强度”可查看每局全队所有真人交手对手的赛季 KD 和生存等级分布。多名队员遇到同一对手时每局计一次，勾选队友只筛选共同出场的对局。两项分布分别显示已知与缺失人次，占比按该项已知人次计算。勾选队友后还可并排查看本人 KD、场均伤害和击倒，以及各成员实际交手真人的赛季 KD 中位数、场均伤害中位数和最高生存等级。页面显示共同场次、遥测读取局数和每项战绩的覆盖人次。采集页默认填入当前玩家，也可以指定其他玩家；从采集记录打开回放不会改变绑定。
-
-在侧栏选择“交手对手”，可分析当前玩家最近 15 或 20 局，也可在顶部选择“指定日期”，选好日期后点击“分析”。按日期分析会统计北京时间当天开局的所有可查对局，强度分布和交手明细都只包含这些对局的对手。双方造成过伤害、击倒或淘汰即计入交手，同一局按账号去重。战绩按比赛所属赛季和模式查询。普通局以击杀数除以败场估算 KD，排位局使用实际死亡数。默认按账号汇总对手名单，按 KD、交手局数或时间排序，也可以按昵称、账号和淘汰方向筛选。切换到“按对局”，可按开局时间、地图选择单场，单独查看本局的对手强度分布和完整交手明细。切换到“交手记录”会按时间平铺所有交手，保留每局对应的赛季战绩和完整动作。顶部展示真人交手样本的 KD 分布和数据覆盖情况。
-
-官方近期列表覆盖最近 14 天，本地存档可补充更早的比赛。在线查询需配置后端 `PUBG_API_KEY`。页面先显示逐局交手记录，再补齐战绩和生存等级，并在限流时显示等待时间。
-
-### PUBG 本地缓存
-
-PUBG 查询缓存保存在后端主数据库旁，默认文件为 `data/pubg_zone_predictor.pubg-cache.sqlite3`。绑定、切换玩家、单人分析和团队对比都复用这些数据，重启服务后仍可命中。
-
-| 数据 | 复用时间和范围 |
+| 页面 | 用途 |
 | --- | --- |
-| 玩家近期对局列表 | 10 分钟，按平台和账号复用，昵称和账号 ID 查询互通。顶部“重新同步”会主动向官方核对当前账号的列表。 |
-| 赛季战绩 | 6 小时，按赛季、账号和普通/排位分别保存。普通局按模式只批量补查缺少的账号，排位响应复用其中的各模式数据。 |
-| 生存等级 | 24 小时，按账号跨对局复用。明确缺失的资料短暂缓存 5 分钟。 |
-| 对局元数据、交手明细 | 缓存 14 天。交手明细按对局、参与账号和遥测文件版本保存；原始遥测继续使用本地文件存档。 |
+| 个人历史 | 查看当前玩家在同一批对局中的个人表现和趋势。 |
+| 交手对手 | 分析个人最近 15 局、20 局或指定日期的交手。按账号汇总可看重复遇到的对手，按对局可看单场强度，按交手记录可查看动作和时间。支持按昵称、账号和淘汰方向筛选。 |
+| 数据采集 | 按 Steam 玩家采集普通局和排位，保存对局信息、下载遥测并解析回放。默认填入当前玩家，也可指定其他玩家。 |
 
-分析先展示命中的战绩和等级，再联网补齐缺项。已按当前版本完整解析的回放会直接计入同步结果。官方返回配额用尽或 429 后，服务按该 Key 的恢复时间暂停新的受限请求；期间仍能读取有效缓存。首次分析大量陌生对手时，补齐资料可能需要多个配额窗口。
+绑定列表和当前玩家保存在后端数据库中。通过“绑定其他玩家”添加账号，连接同一后端的设备可共用绑定。旧版本用户首次打开原浏览器时会自动合并旧绑定，并保留服务器已有的当前玩家。
 
-## 本地纵切联调流程
+## 数据范围与缓存
 
-P10 后，前端工作台只通过 FastAPI 完成核心本地纵切：
+官方近期对局列表覆盖最近 14 天。按日期查询会将官方数据与本地存档按对局 ID 合并，更早的日期可以查看已存档的比赛。“重新同步”会向官方重新核对当前账号的列表，已完成解析的回放可直接复用。
 
-1. 初始化数据库：`npm run db:migrate`。
-2. 启动后端：`npm run dev:backend`。
-3. 启动前端：`npm run dev:frontend`。
-4. 打开前端后选择地图；工作台会调用 `POST /api/assets/maps/{map_id}/ensure` 准备底图。
-5. 如果数据库中已有解析后的 `player_position_samples`，点击“生成当前 Zone 热点”。
-6. 如果数据库中已有 `circle_phases` 训练样本，点击“训练当前地图模型”。
-7. 在底图上设置当前圈中心和战队位置，选择路线策略，然后点击“生成预测”。
-8. 若热点或模型样本不足，前端会展示 warnings；预测仍可通过规则基线和无热点路线降级返回。
+| 缓存内容 | 有效期和范围 |
+| --- | --- |
+| 玩家近期对局列表 | 10 分钟。按平台和账号复用，昵称和账号 ID 查询互通。 |
+| 赛季战绩 | 6 小时。区分赛季和普通／排位模式，普通局按模式批量补查缺少的账号。 |
+| 生存等级 | 24 小时。按账号跨局复用，已确认缺失的资料缓存 5 分钟。 |
+| 对局信息和交手明细 | 14 天。交手明细按对局、参与账号和遥测文件版本保存，原始遥测另存为本地文件。 |
 
-在“数据采集”中指定 Steam 玩家后，可批量采集最近对局，包含普通局和排位。采集会保存对局元数据、缓存 telemetry 并解析回放。
+交手记录可以先于战绩和生存等级显示。遇到官方限流时，页面会显示等待时间，已有缓存仍可读取。首次分析大量对手时，资料可能分批补齐。
 
-## 验证命令
+## 圈型预测与 API
 
-```bash
-npm run db:migrate
-npm run test:backend
-npm --prefix frontend run typecheck
-npm run build:frontend
-```
+启动后端后，打开 [交互式 API 文档](http://127.0.0.1:8000/docs) 可查看参数并试调接口。[健康检查](http://127.0.0.1:8000/api/health) 可用于确认服务已启动。
 
-## 环境变量
+| 任务 | 接口 |
+| --- | --- |
+| 准备地图 | `GET /api/config/maps` 查看可用地图；`POST /api/assets/maps/{map_id}/ensure` 下载并校验底图。 |
+| 生成和读取热点 | 有玩家位置样本后，调用 `POST /api/hotspots/generate`，再用 `GET /api/hotspots` 按地图和圈阶段读取。 |
+| 训练并评估模型 | 有圈阶段样本后，调用 `POST /api/training/runs`，通过 `GET /api/training/runs/{run_id}/metrics` 查看圈心误差。 |
+| 预测圈型和路线 | 调用 `POST /api/predict`，传入地图、当前圈阶段、圈心、战队位置和路线策略，返回预测圈、路线、热点摘要和解释。样本不足时会使用规则基线并返回提示。 |
 
-复制 `.env.example` 为 `.env` 后按需填写：
+## 配置与本地开发
 
-```bash
-cp .env.example .env
-```
+前端使用 React 19、Vite、TypeScript 和 Astryx，后端使用 FastAPI 和 SQLite。地图和圈阶段配置位于 `config/`，运行数据默认写入 `data/`。完整环境变量见 [.env.example](.env.example)。
 
-重要约束：
+| 配置项 | 用途或默认位置 |
+| --- | --- |
+| `PUBG_API_KEY`、`PUBG_API_BASE_URL` | 后端查询官方数据使用的密钥和地址，默认地址为 `https://api.pubg.com`。 |
+| `APP_DATABASE_PATH` | 主数据库默认为 `data/pubg_zone_predictor.sqlite3`。查询缓存位于同目录的 `pubg_zone_predictor.pubg-cache.sqlite3`，重启后可复用。 |
+| `PUBG_TELEMETRY_CACHE_DIR`、`APP_MODEL_DIR` | 原始遥测默认保存到 `data/telemetry/`，训练产物保存到 `data/models/`。 |
+| `PUBG_ASSETS_CACHE_DIR`、`PUBG_ASSETS_TIMEOUT_SECONDS` | 官方地图缓存默认为 `data/assets/pubg-api-assets/`，下载超时默认 120 秒。 |
+| `LLM_ENABLED`、`LLM_API_KEY` | 配置可选的预测解释服务。默认使用规则解释，外部服务失败时也会回退到规则解释。 |
 
-- `PUBG_API_KEY` 只由后端读取，不进入前端；真实采集普通 samples 时必须配置。
-- `PUBG_API_BASE_URL` 默认是 `https://api.pubg.com`。
-- `PUBG_TELEMETRY_CACHE_DIR` 默认是 `data/telemetry`，用于保存下载后的 telemetry JSON。
-- `APP_MODEL_DIR` 默认是 `data/models`，用于保存本地训练产物 JSON。
-- `PUBG_ASSETS_CACHE_DIR` 默认是 `data/assets/pubg-api-assets`，用于缓存官方地图资源。
-- `PUBG_ASSETS_BASE_URL` 默认指向官方 `pubg/api-assets` raw 资源；遇到 Git LFS 指针时后端会自动切到 media 资源下载实际 PNG。
-- `PUBG_ASSETS_TIMEOUT_SECONDS` 默认 `120`，high-res 地图文件较大，网络较慢时可调高。
-- `LLM_API_KEY` 只用于可选解释层，失败时必须降级为规则解释。
-- CI 默认不调用 PUBG API、GitHub 官方资源或外部 LLM。
+| 开发任务 | 在仓库根目录执行 |
+| --- | --- |
+| 分别启动前后端 | 在两个终端分别运行 `make backend` 和 `make frontend` |
+| 手动执行迁移 | `make migrate` |
+| 运行后端测试 | `make test` |
+| 检查前端类型 | `npm --prefix frontend run typecheck` |
+| 构建前端 | `make build`，按需安装锁定版本的依赖，输出到 `frontend/dist/` |
