@@ -8,6 +8,7 @@ from typing import Any
 
 from app.core.errors import AppError
 from app.db.repository import SQLiteRepository
+from app.services.seasons import definition_season
 
 UNKNOWN_TEAM_ID = "unknown"
 PARSE_PROFILE_FULL = "full"
@@ -121,6 +122,12 @@ class TelemetryParser:
             events_to_parse = [event for event in events if isinstance(event, dict)]
             if len(events_to_parse) != len(events):
                 warnings.append("skipped non-object telemetry events")
+            season = next((s for e in events_to_parse if (s := definition_season(e))), None)
+            if season:
+                self.connection.execute(
+                    "UPDATE matches SET season_id=? WHERE match_id=? AND season_id IS NULL",
+                    (season, match_id),
+                )
             timeline = TelemetryTimeline.from_events(events_to_parse)
             counts = {
                 "circle_phase_count": 0,

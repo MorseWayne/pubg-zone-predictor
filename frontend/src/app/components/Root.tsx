@@ -1,13 +1,12 @@
 import { Link, useLocation } from "react-router";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { SideNav, SideNavItem } from "@astryxdesign/core/SideNav";
-import { Database, RadioTower, Route, Swords, TrendingUp, Users } from "lucide-react";
+import { Database, RadioTower, Route, TrendingUp, Users } from "lucide-react";
 import { PlayerWorkspace } from "../playerWorkspace";
 
 const pages = [
   { href: "/analysis", label: "对局回放", icon: Route },
   { href: "/collection", label: "数据采集", icon: Database },
-  { href: "/opponents", label: "交手对手", icon: Swords },
   { href: "/personal-trend", label: "个人历史", icon: TrendingUp },
   { href: "/team-dashboard", label: "团队看板", icon: Users },
 ];

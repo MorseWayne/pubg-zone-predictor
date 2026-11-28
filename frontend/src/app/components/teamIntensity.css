@@ -1,0 +1,487 @@
+.team-intensity-page {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Compact squad / mode popover trigger */
+.team-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0 0.7rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 4%);
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.team-filter-trigger:hover {
+  background: rgb(255 255 255 / 8%);
+  border-color: rgb(255 255 255 / 20%);
+}
+
+.team-filter-trigger[aria-expanded="true"] {
+  border-color: rgb(57 135 229 / 60%);
+  background: rgb(57 135 229 / 14%);
+}
+
+.team-filter-popover {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: 0;
+  z-index: 30;
+  width: min(23rem, calc(100vw - 2rem));
+  padding: 0.875rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  background: var(--color-background-card, #181c22);
+  box-shadow: 0 14px 36px rgb(0 0 0 / 50%);
+}
+
+.team-squad-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.85rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  background: rgb(255 255 255 / 4%);
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.team-squad-chip:hover:not(:disabled) {
+  background: rgb(255 255 255 / 9%);
+  color: var(--color-text-primary);
+}
+
+.team-squad-chip[aria-pressed="true"] {
+  border-color: rgb(57 135 229 / 65%);
+  background: rgb(57 135 229 / 18%);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.team-squad-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Multi-day date selector bar */
+.team-date-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.625rem;
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 2.5%);
+}
+
+.team-date-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.7rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 3%);
+  color: var(--color-text-secondary);
+  font-size: 0.74rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 130ms ease, border-color 130ms ease, color 130ms ease;
+}
+
+.team-date-chip:hover:not(:disabled) {
+  background: rgb(255 255 255 / 8%);
+  border-color: rgb(255 255 255 / 20%);
+  color: var(--color-text-primary);
+}
+
+.team-date-chip[aria-pressed="true"] {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.team-date-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Series legend toggle pills in overview chart */
+.team-series-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 4%);
+  color: var(--color-text-primary);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.team-series-toggle:hover {
+  background: rgb(255 255 255 / 9%);
+  border-color: rgb(255 255 255 / 20%);
+}
+
+.team-series-toggle[aria-pressed="false"] {
+  opacity: 0.42;
+  color: var(--color-text-secondary);
+  background: transparent;
+}
+
+.team-squad-chip:focus-visible,
+.team-date-chip:focus-visible,
+.team-series-toggle:focus-visible,
+.team-pill-btn:focus-visible,
+.team-filter-trigger:focus-visible,
+.team-kpi-card:focus-visible,
+.team-tab-btn:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
+}
+
+/* Segmented pills */
+.team-pill-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 0.5rem;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 8%);
+}
+
+.team-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.65rem;
+  padding: 0 0.6rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.team-pill-btn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.team-pill-btn[aria-pressed="true"] {
+  background: rgb(255 255 255 / 14%);
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.team-pill-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Dynamic color dot for any selected day */
+.team-day-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+/* Delta badge */
+.team-delta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.08rem 0.38rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.team-delta-badge--up {
+  background: rgb(245 158 11 / 16%);
+  color: #fbbf24;
+  border: 1px solid rgb(245 158 11 / 28%);
+}
+
+.team-delta-badge--down {
+  background: rgb(56 189 248 / 14%);
+  color: #7dd3fc;
+  border: 1px solid rgb(56 189 248 / 26%);
+}
+
+.team-delta-badge--flat {
+  background: rgb(255 255 255 / 7%);
+  color: var(--color-text-secondary);
+  border: 1px solid rgb(255 255 255 / 10%);
+}
+
+/* Compact 4-card overview strip inside hero card */
+.team-kpi-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 0.625rem;
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 2.2%);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.team-kpi-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: transparent;
+  transition: background-color 140ms ease;
+}
+
+.team-kpi-card:hover {
+  background: rgb(255 255 255 / 5%);
+  border-color: rgb(255 255 255 / 18%);
+}
+
+.team-kpi-card--active {
+  border-color: rgb(56 189 248 / 55%);
+  background: linear-gradient(180deg, rgb(56 189 248 / 10%) 0%, rgb(56 189 248 / 3%) 100%);
+  box-shadow: 0 0 0 1px rgb(56 189 248 / 18%);
+}
+
+.team-kpi-card--active::before {
+  background: var(--kpi-accent, #38bdf8);
+}
+
+/* Quiet background fill capsule in toolbar */
+.team-fill-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  padding: 0 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 4%);
+  font-size: 0.74rem;
+  color: var(--color-text-secondary);
+}
+
+.team-fill-capsule-action {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  background: rgb(255 255 255 / 6%);
+  color: var(--color-text-primary);
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.team-fill-capsule-action:hover:not(:disabled) {
+  background: rgb(255 255 255 / 14%);
+}
+
+.team-fill-capsule-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 3-Tab header bar */
+.team-tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  border-bottom: 1px solid rgb(255 255 255 / 9%);
+  padding: 0 1rem;
+}
+
+.team-tab-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.825rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.team-tab-btn:hover {
+  color: var(--color-text-primary);
+}
+
+.team-tab-btn[aria-selected="true"] {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.team-tab-btn[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0.65rem;
+  right: 0.65rem;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: #3987e5;
+}
+
+/* Multi-day KD grouped histogram */
+.team-multi-hist {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.team-multi-hist-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.team-multi-hist-track {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.28rem;
+  width: 100%;
+  height: 8.75rem;
+  padding: 1.6rem 0.25rem 0;
+  border-bottom: 1px solid rgb(255 255 255 / 22%);
+  background: repeating-linear-gradient(
+    to top,
+    transparent 0 calc(25% - 1px),
+    rgb(255 255 255 / 6%) calc(25% - 1px) 25%
+  );
+}
+
+.team-multi-hist-track--dense {
+  gap: 0.18rem;
+  padding: 1.5rem 0.1rem 0;
+}
+
+.team-multi-hist-bar {
+  position: relative;
+  flex: 1 1 0;
+  max-width: 2.1rem;
+  min-width: 0.55rem;
+  border-radius: 0.25rem 0.25rem 0 0;
+  transition: height 220ms ease, filter 120ms ease;
+}
+
+.team-multi-hist-bar:hover {
+  filter: brightness(1.16);
+}
+
+.team-multi-hist-bar--single {
+  max-width: 3rem;
+}
+
+.team-multi-hist-bar strong {
+  position: absolute;
+  bottom: calc(100% + 0.18rem);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.66rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+
+.team-multi-hist-track--dense .team-multi-hist-bar strong {
+  font-size: 0.6rem;
+}
+
+.team-multi-hist-label {
+  margin-top: 0.42rem;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+/* Sticky first column for multi-day comparison table */
+.team-compare-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--color-background-card, #181c22);
+}
+
+/* Trend chart interactive points */
+.team-trend-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.team-trend-node:focus-visible .team-trend-focus-ring {
+  opacity: 1;
+}
+
+.team-trend-tooltip {
+  pointer-events: none;
+  position: absolute;
+  z-index: 20;
+  min-width: 14.5rem;
+  max-width: 18.5rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 0.625rem;
+  border: 1px solid rgb(255 255 255 / 16%);
+  background: rgb(16 20 26 / 96%);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 50%);
+  backdrop-filter: blur(8px);
+}
+
+/* Compact inline search input */
+.team-search-input {
+  width: 12rem;
+  height: 1.85rem;
+  padding: 0 1.7rem 0 1.8rem;
+  border-radius: 0.45rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 4%);
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+  outline: none;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.team-search-input::placeholder {
+  color: var(--color-text-secondary);
+  opacity: 0.75;
+}
+
+.team-search-input:focus {
+  border-color: rgb(57 135 229 / 65%);
+  background: rgb(255 255 255 / 7%);
+}

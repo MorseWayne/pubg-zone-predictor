@@ -6,7 +6,7 @@ import pytest
 from app.db.connection import connect_database
 from app.db.migrations import initialize_database
 
-EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006", "007", "008", "009"]
+EXPECTED_MIGRATIONS = ["001", "002", "003", "004", "005", "006", "007", "008", "009", "010"]
 
 
 def test_initialize_database_applies_initial_schema(database_path: Path) -> None:
@@ -32,8 +32,7 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
 
     with connect_database(database_path) as connection:
         model_metric_columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(model_metrics)").fetchall()
+            row["name"] for row in connection.execute("PRAGMA table_info(model_metrics)").fetchall()
         }
     assert "split" in model_metric_columns
 
@@ -50,9 +49,7 @@ def test_initialize_database_applies_initial_schema(database_path: Path) -> None
     with connect_database(database_path) as connection:
         position_columns = {
             row["name"]
-            for row in connection.execute(
-                "PRAGMA table_info(player_position_samples)"
-            ).fetchall()
+            for row in connection.execute("PRAGMA table_info(player_position_samples)").fetchall()
         }
     assert "health" in position_columns
     assert "movement_mode" in position_columns
@@ -90,6 +87,39 @@ def test_initialize_database_is_idempotent(database_path: Path) -> None:
 
     assert [migration.version for migration in first_run] == EXPECTED_MIGRATIONS
     assert second_run == []
+
+
+def test_existing_009_data_upgrades_atomically(database_path, monkeypatch):
+    from app.db import migrations
+
+    files = migrations.discover_migrations()
+    with monkeypatch.context() as mp:
+        mp.setattr(migrations, "discover_migrations", lambda: files[:-1])
+        initialize_database(database_path)
+    with connect_database(database_path) as db:
+        db.execute("INSERT INTO matches(match_id,map_name) VALUES('old','map')")
+        db.execute(
+            "INSERT INTO player_life_events(match_id,elapsed_time,event_type) "
+            "VALUES('old',1,'test')"
+        )
+    assert [m.version for m in initialize_database(database_path)] == ["010"]
+    with connect_database(database_path) as db:
+        assert db.execute("SELECT season_id FROM matches").fetchone()[0] is None
+        assert db.execute("SELECT event_count FROM match_intensity_event_counts").fetchone()[0] == 1
+        assert db.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='idx_match_rosters_player_match'"
+        ).fetchone()
+        for table in (
+            "opponent_season_day_snapshots",
+            "opponent_mastery_day_snapshots",
+            "match_season_backfill_checks",
+            "team_day_intensity_summaries",
+        ):
+            assert (
+                "WITHOUT ROWID"
+                in db.execute("SELECT sql FROM sqlite_schema WHERE name=?", (table,)).fetchone()[0]
+            )
+    assert initialize_database(database_path) == []
 
 
 def test_foreign_keys_are_enforced(migrated_connection: sqlite3.Connection) -> None:

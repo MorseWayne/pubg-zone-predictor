@@ -24,9 +24,16 @@ type Workspace = {
   matchDate?: string;
   rangeLabel: string;
   syncing: boolean;
+  bindings: PlayerBindings;
 };
+
+export type TeamWorkspaceContext = {
+  bindings: PlayerBindings;
+};
+
 const STORAGE = "pzp_steam_player_bindings";
 export const usePlayerWorkspace = () => useOutletContext<Workspace>();
+export const useWorkspaceBindings = () => useOutletContext<TeamWorkspaceContext>();
 
 function readLegacyBindings(): PlayerBindings | undefined {
   try {
@@ -45,10 +52,12 @@ function readLegacyBindings(): PlayerBindings | undefined {
 
 function PlayerSession({
   player,
+  bindings,
   initialHistory,
   matchDate,
 }: {
   player: BoundPlayer;
+  bindings: PlayerBindings;
   initialHistory?: OpponentHistory;
   matchDate?: string;
 }) {
@@ -143,7 +152,7 @@ function PlayerSession({
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <Outlet
           context={
-            { player, matches, statMatchIds, syncing, matchDate, rangeLabel } satisfies Workspace
+            { player, matches, statMatchIds, syncing, matchDate, rangeLabel, bindings } satisfies Workspace
           }
         />
       </div>
@@ -276,7 +285,7 @@ export function PlayerWorkspace() {
               onClick={() => setAdding(true)}
               isDisabled={adding || busy}
             />
-            {["/analysis", "/personal-trend", "/team-dashboard", "/opponents"].includes(pathname) && (
+            {["/analysis", "/personal-trend"].includes(pathname) && (
               <>
                 <SegmentedControl
                   label="全局对局范围"
@@ -286,7 +295,7 @@ export function PlayerWorkspace() {
                     changeRange({ mode: mode === "day" ? "day" : "recent", day: range.day })
                   }
                 >
-                  <SegmentedControlItem value="recent" label={pathname === "/opponents" ? "最近对局" : "最近 20 局"} />
+                  <SegmentedControlItem value="recent" label="最近 20 局" />
                   <SegmentedControlItem value="day" label="指定日期" />
                 </SegmentedControl>
                 {range.mode === "day" && (
@@ -339,14 +348,20 @@ export function PlayerWorkspace() {
           </p>
         )}
       </header>
-      {current && (
-        <PlayerSession
-          key={`${current.player_id}/${matchDate ?? "recent"}`}
-          player={current}
-          initialHistory={initialHistory}
-          matchDate={matchDate}
-        />
-      )}
+      {current &&
+        (pathname === "/team-dashboard" ? (
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <Outlet context={{ bindings } satisfies TeamWorkspaceContext} />
+          </div>
+        ) : (
+          <PlayerSession
+            key={`${current.player_id}/${matchDate ?? "recent"}`}
+            player={current}
+            bindings={bindings}
+            initialHistory={initialHistory}
+            matchDate={matchDate}
+          />
+        ))}
     </>
   );
 }

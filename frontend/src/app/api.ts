@@ -225,6 +225,241 @@ export type TeamDashboard = {
   matches: TeamDashboardMatch[];
 };
 
+export type TeamDayBinding = {
+  player_id: string;
+  player_name: string;
+  is_active: boolean;
+};
+
+export type TeamDaysViewRequest = {
+  player_ids?: string[] | null;
+  include_random_teammates?: boolean;
+  require_all?: boolean;
+  dates?: string[] | null;
+  date_a?: string | null;
+  date_b?: string | null;
+  trend_limit?: number;
+};
+
+export type TeamDaysEnsureRequest = {
+  player_ids?: string[] | null;
+  include_random_teammates?: boolean;
+  require_all?: boolean;
+  dates: string[];
+  manual_continue?: boolean;
+};
+
+export type TeamDaySummary = {
+  date: string;
+  match_count: number;
+  first_match_at: string | null;
+  last_match_at: string | null;
+  contacts_count: number;
+  unique_opponents: number;
+  enemy_teams: number;
+  maps: Record<string, number>;
+  modes: Record<string, number>;
+  normal_matches: number;
+  ranked_matches: number;
+  wins: number;
+  top3: number;
+};
+
+export type TeamDayDataQuality = {
+  damage_ready_matches: number;
+  missing_damage_matches: number;
+  missing_season_matches: number;
+  season_backfill_pending: boolean;
+};
+
+export type TeamDayKdBand = {
+  label: "<1" | "1–2" | "2–3" | "≥3";
+  count: number;
+};
+
+export type TeamDayProfiles = {
+  total_contacts: number;
+  known_kd: number;
+  known_adr: number;
+  kd_p25: number | null;
+  kd_p50: number | null;
+  kd_p75: number | null;
+  kd_ge_2_count: number;
+  kd_ge_2_rate: number | null;
+  kd_ge_3_count: number;
+  kd_ge_3_rate: number | null;
+  kd_bands: TeamDayKdBand[];
+  adr_p50: number | null;
+  adr_p75: number | null;
+  observed_min_at: number | null;
+  observed_max_at: number | null;
+  missing_fillable_count: number;
+  unfillable_count: number;
+};
+
+export type TeamDayPressure = {
+  opponent_damage_p50: number | null;
+  opponent_damage_p75: number | null;
+  opponent_avg_kills: number | null;
+  high_firepower_teams: number;
+  high_firepower_team_total: number;
+  high_firepower_team_rate: number | null;
+  team_kills_vs_humans: number;
+  team_deaths_to_humans: number;
+  team_damage_taken_per_match: number | null;
+  team_damage_dealt_per_match: number | null;
+};
+
+export type TeamDayLobby = {
+  total_players: number;
+  human_count: number;
+  bot_count: number;
+  unknown_count: number;
+  bot_rate: number | null;
+  lobby_damage_p50: number | null;
+  lobby_damage_p75: number | null;
+};
+
+export type TeamDayPerformanceMatchPlayer = {
+  player_id: string;
+  player_name: string;
+};
+
+export type TeamDayPerformanceMatch = {
+  match_id: string;
+  created_at: string | null;
+  map_name: string;
+  game_mode: "duo" | "duo-fpp" | "squad" | "squad-fpp";
+  match_type: string | null;
+  team_rank: number | null;
+  kills: number;
+  damage: number | null;
+  players: TeamDayPerformanceMatchPlayer[];
+};
+
+export type TeamDayPerformanceMember = {
+  player_id: string;
+  player_name: string;
+  match_count: number;
+  kills: number;
+  knocks: number;
+  deaths: number;
+  wins: number;
+  top3: number;
+  damage: number | null;
+  avg_rank: number | null;
+};
+
+export type TeamDayOpponentDetail = {
+  player_id: string;
+  player_name: string;
+  encounters: number;
+  kd: number | null;
+  adr: number | null;
+  match_damage_avg: number | null;
+  match_kills_total: number;
+  observed_at: number | null;
+  profile_status: "known" | "partial" | "missing" | "unfillable";
+};
+
+export type TeamDayPayload = {
+  summary: TeamDaySummary;
+  data_quality: TeamDayDataQuality;
+  profiles: TeamDayProfiles;
+  pressure: TeamDayPressure;
+  lobby: TeamDayLobby;
+  team_performance: {
+    matches: TeamDayPerformanceMatch[];
+    members: TeamDayPerformanceMember[];
+  };
+  opponents_detail: TeamDayOpponentDetail[];
+  from_disk_cache: boolean;
+};
+
+export type TeamDayTrendPoint = {
+  date: string;
+  match_count: number;
+  contacts_count: number;
+  unique_opponents: number;
+  maps: Record<string, number>;
+  kd_p50: number | null;
+  kd_known: number;
+  kd_total: number;
+  adr_p50: number | null;
+  opponent_damage_p50: number | null;
+  team_damage_taken_per_match: number | null;
+  bot_rate: number | null;
+  from_disk_cache: boolean;
+};
+
+export type TeamDayWarning = {
+  code:
+    | "SAME_DAY"
+    | "SMALL_SAMPLE"
+    | "NO_MAP_OVERLAP"
+    | "MODE_MIX_DIFFERS"
+    | "LOW_COVERAGE"
+    | "MISSING_SEASON";
+  message: string;
+};
+
+export type TeamDayFillState =
+  | "queued"
+  | "running"
+  | "paused"
+  | "completed"
+  | "no_api_key"
+  | "disabled"
+  | "auth_error"
+  | "busy"
+  | "budget_exhausted"
+  | "cancelled"
+  | "failed";
+
+export type TeamDayFillJob = {
+  job_id: string | null;
+  state: TeamDayFillState;
+  promoted: number;
+  remaining: number;
+  requests_used: number;
+  request_budget: number;
+  revision: number;
+  retry_after: number;
+};
+
+export type TeamDayFillHint = {
+  api_key_configured: boolean;
+  missing_fillable_a: number;
+  missing_fillable_b: number;
+  missing_fillable_total: number;
+  cache_promotable: number;
+  estimated_requests: number;
+  active_job: TeamDayFillJob | null;
+};
+
+export type TeamDaysViewResponse = {
+  timezone: string;
+  bindings: TeamDayBinding[];
+  selected_player_ids: string[];
+  require_all: boolean;
+  min_members: number;
+  selection_warning: string | null;
+  available_dates: string[];
+  selected_dates: string[];
+  days: TeamDayPayload[];
+  date_a: string | null;
+  date_b: string | null;
+  day_a: TeamDayPayload | null;
+  day_b: TeamDayPayload | null;
+  trend: TeamDayTrendPoint[];
+  warnings: TeamDayWarning[];
+  fill_hint: TeamDayFillHint;
+  cache_stats: {
+    hit_days: number;
+    computed_days: number;
+  };
+};
+
 export type PersonalTrendMatch = {
   match_id: string;
   map_name: string;
@@ -519,6 +754,28 @@ export const api = {
     }),
   opponentMastery: (id: string, signal: AbortSignal) =>
     apiRequest<Mastery>(`/api/opponents/mastery/${encodeURIComponent(id)}`, { signal }),
+  teamDaysView: (body: TeamDaysViewRequest, signal?: AbortSignal) =>
+    apiRequest<TeamDaysViewResponse>("/api/opponents/team-days/view", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+  teamDaysEnsure: (body: TeamDaysEnsureRequest, signal?: AbortSignal) =>
+    apiRequest<TeamDayFillJob>("/api/opponents/team-days/ensure", {
+      method: "POST",
+      body: JSON.stringify(body),
+      signal,
+    }),
+  teamDaysFillStatus: (jobId: string, signal?: AbortSignal) =>
+    apiRequest<TeamDayFillJob>(`/api/opponents/team-days/fills/${encodeURIComponent(jobId)}`, {
+      signal,
+      cache: "no-store",
+    }),
+  teamDaysFillCancel: (jobId: string) =>
+    apiRequest<TeamDayFillJob>(
+      `/api/opponents/team-days/fills/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST" },
+    ),
   getPersonalTrend: async (payload: { player_id: string; match_limit?: number; match_date?: string; match_ids?: string[] }) =>
     apiRequest<PersonalTrend>("/api/ingest/players/personal-trend", {
       method: "POST",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from contextlib import nullcontext
 from pathlib import Path
@@ -10,9 +9,9 @@ from app.core.errors import AppError
 from app.services.player_history import PLATFORM, remote_match
 from app.services.pubg_api import PubgApiClient
 from app.services.pubg_cache import MASTERY_TTL, MATCH_TTL, SEASON_TTL
+from app.services.seasons import definition_season
 from app.services.telemetry_files import file_stamp, load_telemetry
 
-SEASON = re.compile(r"^match\.bro\.(?:official|competitive|ranked)\.(pc-2018-\d+)\.")
 KILL_TYPES = {"LogPlayerKill", "LogPlayerKillV2"}
 
 
@@ -23,9 +22,7 @@ def _member_encounters(events: list[dict], player_ids: list[str]) -> tuple[str |
     for index, event in enumerate(events):
         kind = event.get("_T")
         if kind == "LogMatchDefinition":
-            match = SEASON.match(event.get("MatchId") or "")
-            if match:
-                season = f"division.bro.official.{match[1]}"
+            season = definition_season(event) or season
         if index < start:
             continue
         if kind == "LogPlayerTakeDamage":
@@ -111,7 +108,8 @@ def team_encounters(
         raise AppError("NO_SHARED_TEAM", "所选成员未在这场对局中全员同队出场", 400)
     if full_team:
         player_ids = [
-            row["player_id"] for row in db.execute(
+            row["player_id"]
+            for row in db.execute(
                 "SELECT player_id FROM match_rosters WHERE match_id = ? AND team_id = ?",
                 (match_id, match["team_id"]),
             )
@@ -194,12 +192,12 @@ def summarize_stats(data: dict, ranked: bool) -> dict | None:
     }
 
 
-def _season_resource(season: str, mode: str, ranked: bool) -> str:
+def season_resource(season: str, mode: str, ranked: bool) -> str:
     # Ranked returns every mode for one player; ordinary stats are batched by mode.
     return f"{PLATFORM}/ranked/{season}" if ranked else f"{PLATFORM}/season/{season}/{mode}"
 
 
-def season_stats(
+def season_modes(
     client: PubgApiClient,
     season: str,
     mode: str,
@@ -236,13 +234,24 @@ def season_stats(
                 results[pid] = {mode: summary} if summary is not None else {}
         return results
 
-    resource = _season_resource(season, mode, ranked)
+    resource = season_resource(season, mode, ranked)
     if cached_only:
-        values = client.cache.read(resource, ids) if client.cache else {}
-    elif client.cache:
-        values = client.cache.resolve(resource, ids, SEASON_TTL, fetch)
-    else:
-        values = fetch(ids)
+        return client.cache.read(resource, ids) if client.cache else {}
+    if client.cache:
+        return client.cache.resolve(resource, ids, SEASON_TTL, fetch)
+    return fetch(ids)
+
+
+def season_stats(
+    client: PubgApiClient,
+    season: str,
+    mode: str,
+    ranked: bool,
+    ids: list[str],
+    *,
+    cached_only: bool = False,
+) -> dict:
+    values = season_modes(client, season, mode, ranked, ids, cached_only=cached_only)
     # A cache-only lookup distinguishes a known absence (null) from a miss (no key).
     return {
         pid: modes.get(mode) if modes else None

@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Iterable
 from contextlib import closing
 from pathlib import Path
-from threading import RLock
+from threading import Lock, RLock
 from typing import Any
 
 from app.core.errors import AppError
@@ -29,8 +29,14 @@ class PubgCache:
         # and match/telemetry downloads do not wait for an authenticated request.
         self.fill_lock = RLock()
         self.match_locks = [RLock() for _ in range(32)]
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(path)) as db:
+        self._initialized = False
+        self._schema_lock = Lock()
+
+    def _initialize_for_write(self) -> None:
+        if self._initialized:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(self.path)) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS entries (
@@ -41,21 +47,37 @@ class PubgCache:
                 CREATE INDEX IF NOT EXISTS entries_expiry ON entries(expires);
             """)
 
-    def read(
+        self._initialized = True
+
+    def read_stamped(
         self, resource: str, ids: Iterable[str], *, since: float = -float("inf")
-    ) -> dict[str, Any]:
-        with closing(sqlite3.connect(self.path)) as db:
+    ) -> dict[str, tuple[Any, float, bool]]:
+        if not self.path.is_file():
+            return {}
+        uri = self.path.resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as db:
+            if not db.execute("SELECT 1 FROM sqlite_schema WHERE name='entries'").fetchone():
+                return {}
             rows = db.execute(
                 """
-                SELECT id, payload FROM entries WHERE origin=? AND resource=? AND expires>?
+                SELECT id, payload, updated FROM entries WHERE origin=? AND resource=? AND expires>?
                     AND updated > ? AND id IN (SELECT value FROM json_each(?))
             """,
                 (self.origin, resource, self.clock(), since, json.dumps(list(ids))),
             )
-            return {key: json.loads(payload) for key, payload in rows}
+            return {
+                key: (value, updated, not value)
+                for key, payload, updated in rows
+                for value in [json.loads(payload)]
+            }
+
+    def read(self, resource: str, ids: Iterable[str], *, since: float = -float("inf")) -> dict:
+        return {k: v[0] for k, v in self.read_stamped(resource, ids, since=since).items()}
 
     def write(self, resource: str, values: dict, ttl: float) -> None:
         now = self.clock()
+        with self._schema_lock:
+            self._initialize_for_write()
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("DELETE FROM entries WHERE expires <= ?", (now,))
             db.executemany(
@@ -78,6 +100,8 @@ class PubgCache:
             )
 
     def forget(self, resource: str, key: str) -> None:
+        if not self.path.is_file():
+            return
         with closing(sqlite3.connect(self.path)) as db, db:
             db.execute(
                 "DELETE FROM entries WHERE origin=? AND resource=? AND id=?",

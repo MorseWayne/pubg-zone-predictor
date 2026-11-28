@@ -18,7 +18,7 @@ export const router = createBrowserRouter([
         path: "analysis",
         lazy: async () => ({ Component: (await import("./components/PlayerMatchAnalysis")).PlayerMatchAnalysis }),
       },
-      { path: "opponents", lazy: async () => ({ Component: (await import("./components/OpponentAnalysis")).OpponentAnalysis }) },
+      { path: "opponents", element: <Navigate to="/team-dashboard" replace /> },
       {
         path: "personal-trend",
         lazy: async () => {
